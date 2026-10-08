@@ -1189,7 +1189,7 @@
             }
           },
           "422": {
-            "description": "A field failed validation - an unrecognised `target`, a term that is empty after whitespace cleaning, or a changelog note that does not meet FR-37. Two distinct body shapes occur here: a typed domain error (`ErrorResponse`) or a pydantic validation failure (FastAPI's own `HTTPValidationError`).",
+            "description": "A field failed validation - an unrecognised `target`, the retired `use` on an amendment, a term that is empty after whitespace cleaning, or a changelog note that does not meet FR-37. Two distinct body shapes occur here: a typed domain error (`ErrorResponse`) or a pydantic validation failure (FastAPI's own `HTTPValidationError`).",
             "content": {
               "application/json": {
                 "schema": {
@@ -2080,7 +2080,7 @@
             }
           },
           "422": {
-            "description": "A field failed validation - an unrecognised `target`, a term that is empty after whitespace cleaning, or a changelog note that does not meet FR-37. Two distinct body shapes occur here: a typed domain error (`ErrorResponse`) or a pydantic validation failure (FastAPI's own `HTTPValidationError`).",
+            "description": "A field failed validation - an unrecognised `target`, the retired `use` on an amendment, a term that is empty after whitespace cleaning, or a changelog note that does not meet FR-37. Two distinct body shapes occur here: a typed domain error (`ErrorResponse`) or a pydantic validation failure (FastAPI's own `HTTPValidationError`).",
             "content": {
               "application/json": {
                 "schema": {
@@ -2219,7 +2219,7 @@
             }
           },
           "422": {
-            "description": "A field failed validation - an unrecognised `target`, a term that is empty after whitespace cleaning, or a changelog note that does not meet FR-37. Two distinct body shapes occur here: a typed domain error (`ErrorResponse`) or a pydantic validation failure (FastAPI's own `HTTPValidationError`).",
+            "description": "A field failed validation - an unrecognised `target`, the retired `use` on an amendment, a term that is empty after whitespace cleaning, or a changelog note that does not meet FR-37. Two distinct body shapes occur here: a typed domain error (`ErrorResponse`) or a pydantic validation failure (FastAPI's own `HTTPValidationError`).",
             "content": {
               "application/json": {
                 "schema": {
@@ -2362,7 +2362,7 @@
             }
           },
           "422": {
-            "description": "A field failed validation - an unrecognised `target`, a term that is empty after whitespace cleaning, or a changelog note that does not meet FR-37. Two distinct body shapes occur here: a typed domain error (`ErrorResponse`) or a pydantic validation failure (FastAPI's own `HTTPValidationError`).",
+            "description": "A field failed validation - an unrecognised `target`, the retired `use` on an amendment, a term that is empty after whitespace cleaning, or a changelog note that does not meet FR-37. Two distinct body shapes occur here: a typed domain error (`ErrorResponse`) or a pydantic validation failure (FastAPI's own `HTTPValidationError`).",
             "content": {
               "application/json": {
                 "schema": {
@@ -2493,7 +2493,7 @@
             }
           },
           "422": {
-            "description": "A field failed validation - an unrecognised `target`, a term that is empty after whitespace cleaning, or a changelog note that does not meet FR-37. Two distinct body shapes occur here: a typed domain error (`ErrorResponse`) or a pydantic validation failure (FastAPI's own `HTTPValidationError`).",
+            "description": "A field failed validation - an unrecognised `target`, the retired `use` on an amendment, a term that is empty after whitespace cleaning, or a changelog note that does not meet FR-37. Two distinct body shapes occur here: a typed domain error (`ErrorResponse`) or a pydantic validation failure (FastAPI's own `HTTPValidationError`).",
             "content": {
               "application/json": {
                 "schema": {
@@ -5018,7 +5018,7 @@
           "expected_row_version"
         ],
         "title": "AmendDesignationRequest",
-        "description": "The body of `POST .../designations/amendment`. `term` addresses the\ndesignation to edit; `new_term` is what it becomes. Editing in place\n(rather than retire-and-re-add) is `nptc.catalogue.designations.\namend_designation`'s own choice - see that function's docstring.\n\n`term` also addresses the entry's *own* preferred term, which is\nnot a designation row at all (ADR-0022) - see the module docstring for\nthe dispatch and `expected_row_version` for the lock it requires."
+        "description": "The body of `POST .../designations/amendment`. `term` addresses the\ndesignation to edit; `new_term` is what it becomes. Editing in place\n(rather than retire-and-re-add) is `nptc.catalogue.designations.\namend_designation`'s own choice - see that function's docstring.\n\n`term` also addresses the entry's *own* preferred term, which is\nnot a designation row at all (ADR-0022) - see the module docstring for\nthe dispatch and `expected_row_version` for the lock it requires.\n\nA body naming `use`, the field `target` replaced, is refused. Ignoring it would\nchange which row is written: an old `use=\"preferred\"` would rename a shadowing\nsynonym, and an old `use=\"synonym\"` with no matching synonym would rename the\nentry's preferred term where the old route answered 404. A tab still running the\nprevious bundle during a deploy sends exactly that. Other unnamed fields stay\nignored, because a client may post a `Designation` back with its `length` (FR-24)."
       },
       "AmendDesignationResult": {
         "properties": {

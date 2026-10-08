@@ -10,9 +10,9 @@ preferred-term-shaped strings live in three places:
 - The SNOMED CT Fully Specified Name is `code_binding.fsn`, as served with its semantic tag, and
   never editable.
 
-So `designation` holds only catalogue-authored synonyms, all in en-AU. Copying a served label here
-would make it editable and break FR-82. A row has no `use` or `language`, so it cannot be a preferred
-term, and the entry's own is never duplicated here.
+So `designation` holds only catalogue-authored synonyms, all in en-AU. Copying a served label
+here would make it editable and break FR-82. A row has no `use` or `language`, so it cannot be a
+preferred term, and the entry's own is never duplicated here.
 
 **`length` has no column.** FR-85's `Length` is the character count of the catalogue's preferred
 term (PRD §6.5; see `CatalogueEntry.length`). `Designation.length` applies the same computation to a
@@ -26,7 +26,8 @@ privilege-level guarantee.
 
 **`retired_at`.** As `code_binding.retired_at` (FR-17): mandatory when `status = 'retired'`,
 forbidden otherwise (`_RETIRED_AT_CHECK_SQL`), set by `retire_designation` and cleared by
-`reinstate_designation`. It orders retired rows that share one `entry_id` and `term_key` (`retired_at DESC`, then `id ASC`). It is `__audit_ignored_fields__`, as on `code_binding`.
+`reinstate_designation`. It orders retired rows that share one `entry_id` and `term_key`
+(`retired_at DESC`, then `id ASC`). It is `__audit_ignored_fields__`, as on `code_binding`.
 
 **`term_key` is FR-05's comparison form, stored and indexed.** The `@validates("term")` hook that
 cleans the term also derives `term_key` with `nptc_shared.similarity.collision_key`: casefolded,
@@ -89,8 +90,9 @@ class Designation(Base):
         CheckConstraint(_STATUS_CHECK_SQL, name="status"),
         CheckConstraint(_TERM_NOT_BLANK_SQL, name="term_not_blank"),
         CheckConstraint(_RETIRED_AT_CHECK_SQL, name="retired_at"),
-        # Explicit name: NAMING_CONVENTION's `ix` rule keys off `column_0_label` alone, so a second
-        # partial index leading with `entry_id` would autogenerate the same name.
+        # Explicit name: NAMING_CONVENTION's `ix` rule keys off `column_0_label` alone, so this
+        # partial index, which leads with `entry_id`, would autogenerate `ix_designation_entry_id`,
+        # the name `index=True` on `entry_id` already takes.
         # No duplicate active (entry_id, term_key): the same synonym attached twice (doubled
         # delimiter, whitespace, case or punctuation variant; PRD Appendix A.4) collapses to one
         # row. Keyed on `term_key` so surface forms that fold together count as one synonym,

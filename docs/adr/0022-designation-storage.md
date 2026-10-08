@@ -178,8 +178,9 @@ The API changes with it. `Designation` and the acknowledgement response lose `la
 `Designation` loses `use`, and the add, retire, reinstate and acknowledge requests lose
 `language` and `use`. The amendment request replaces `use` with an optional
 `target` (`preferred_term` or `synonym`), which still reaches an entry's own preferred term when
-a synonym on the same entry shadows it. The request models ignore a field they do not name, so
-an old client that sends `language` or `use` is not refused, and `use` no longer has any effect.
+a synonym on the same entry shadows it. The amendment route refuses a body that names `use` (422),
+because ignoring it would change which row is written. Other request models ignore a field they do
+not name, so an old client that sends `language` is not refused, and the field has no effect.
 **This breaks old clients that read `language` or `use`.** The OpenAPI breaking-change gate flags
 the removed response fields, and the maintainer approves it, as ADR-0044 did for its own break.
 The `preferred_variant` label provenance goes too: nothing can produce it. The import dataset

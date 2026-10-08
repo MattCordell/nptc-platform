@@ -982,6 +982,13 @@ export interface components {
          *     `term` also addresses the entry's *own* preferred term, which is
          *     not a designation row at all (ADR-0022) - see the module docstring for
          *     the dispatch and `expected_row_version` for the lock it requires.
+         *
+         *     A body naming `use`, the field `target` replaced, is refused. Ignoring it would
+         *     change which row is written: an old `use="preferred"` would rename a shadowing
+         *     synonym, and an old `use="synonym"` with no matching synonym would rename the
+         *     entry's preferred term where the old route answered 404. A tab still running the
+         *     previous bundle during a deploy sends exactly that. Other unnamed fields stay
+         *     ignored, because a client may post a `Designation` back with its `length` (FR-24).
          */
         AmendDesignationRequest: {
             /** Term */
@@ -3318,7 +3325,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"] | components["schemas"]["DesignationCollisionResponse"] | components["schemas"]["VersionConflictResponse"];
                 };
             };
-            /** @description A field failed validation - an unrecognised `target`, a term that is empty after whitespace cleaning, or a changelog note that does not meet FR-37. Two distinct body shapes occur here: a typed domain error (`ErrorResponse`) or a pydantic validation failure (FastAPI's own `HTTPValidationError`). */
+            /** @description A field failed validation - an unrecognised `target`, the retired `use` on an amendment, a term that is empty after whitespace cleaning, or a changelog note that does not meet FR-37. Two distinct body shapes occur here: a typed domain error (`ErrorResponse`) or a pydantic validation failure (FastAPI's own `HTTPValidationError`). */
             422: {
                 headers: {
                     [name: string]: unknown;
@@ -3869,7 +3876,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"] | components["schemas"]["DesignationCollisionResponse"] | components["schemas"]["VersionConflictResponse"];
                 };
             };
-            /** @description A field failed validation - an unrecognised `target`, a term that is empty after whitespace cleaning, or a changelog note that does not meet FR-37. Two distinct body shapes occur here: a typed domain error (`ErrorResponse`) or a pydantic validation failure (FastAPI's own `HTTPValidationError`). */
+            /** @description A field failed validation - an unrecognised `target`, the retired `use` on an amendment, a term that is empty after whitespace cleaning, or a changelog note that does not meet FR-37. Two distinct body shapes occur here: a typed domain error (`ErrorResponse`) or a pydantic validation failure (FastAPI's own `HTTPValidationError`). */
             422: {
                 headers: {
                     [name: string]: unknown;
@@ -3952,7 +3959,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"] | components["schemas"]["VersionConflictResponse"];
                 };
             };
-            /** @description A field failed validation - an unrecognised `target`, a term that is empty after whitespace cleaning, or a changelog note that does not meet FR-37. Two distinct body shapes occur here: a typed domain error (`ErrorResponse`) or a pydantic validation failure (FastAPI's own `HTTPValidationError`). */
+            /** @description A field failed validation - an unrecognised `target`, the retired `use` on an amendment, a term that is empty after whitespace cleaning, or a changelog note that does not meet FR-37. Two distinct body shapes occur here: a typed domain error (`ErrorResponse`) or a pydantic validation failure (FastAPI's own `HTTPValidationError`). */
             422: {
                 headers: {
                     [name: string]: unknown;
@@ -4035,7 +4042,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"] | components["schemas"]["DesignationCollisionResponse"] | components["schemas"]["VersionConflictResponse"];
                 };
             };
-            /** @description A field failed validation - an unrecognised `target`, a term that is empty after whitespace cleaning, or a changelog note that does not meet FR-37. Two distinct body shapes occur here: a typed domain error (`ErrorResponse`) or a pydantic validation failure (FastAPI's own `HTTPValidationError`). */
+            /** @description A field failed validation - an unrecognised `target`, the retired `use` on an amendment, a term that is empty after whitespace cleaning, or a changelog note that does not meet FR-37. Two distinct body shapes occur here: a typed domain error (`ErrorResponse`) or a pydantic validation failure (FastAPI's own `HTTPValidationError`). */
             422: {
                 headers: {
                     [name: string]: unknown;
@@ -4118,7 +4125,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description A field failed validation - an unrecognised `target`, a term that is empty after whitespace cleaning, or a changelog note that does not meet FR-37. Two distinct body shapes occur here: a typed domain error (`ErrorResponse`) or a pydantic validation failure (FastAPI's own `HTTPValidationError`). */
+            /** @description A field failed validation - an unrecognised `target`, the retired `use` on an amendment, a term that is empty after whitespace cleaning, or a changelog note that does not meet FR-37. Two distinct body shapes occur here: a typed domain error (`ErrorResponse`) or a pydantic validation failure (FastAPI's own `HTTPValidationError`). */
             422: {
                 headers: {
                     [name: string]: unknown;

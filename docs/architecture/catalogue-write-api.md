@@ -472,9 +472,11 @@ with a silent wrong outcome. The optional `target` on the request resolves it:
 | `synonym` | A `designation` row, never the entry. A term that is only the preferred term is a 404. |
 
 Until migration `0026` this field was `use` (`preferred` | `synonym`), paired with a
-`language`. Neither is a request field now. The request models ignore a field they do not
-name, so a client still sending `use` or `language` is not refused, and `use` has no
-effect: an old request meaning the preferred term resolves to a synonym if one shadows it.
+`language`. Neither is a request field now. `/amendment` refuses a body that names `use` (422),
+because ignoring it would change which row is written: an old `use="preferred"` would rename a
+shadowing synonym, and an old `use="synonym"` with no matching synonym would rename the preferred
+term. A body that names `language` is still accepted, and the field has no effect, as does any
+other field a request model does not name.
 
 **`target` narrows which storage home to look in; it never excuses the caller from naming
 the term.** `term` is required, and its job on this route is to address the thing being
@@ -561,7 +563,7 @@ so there is no route to withdraw one.
 | 403 | Authenticated but missing the route's required permission, or (for `catalogue.edit_published` routes only) holding it without MFA. |
 | 404 | No catalogue entry with this `business_key`; a `term` that is neither an *active* designation nor (on `/amendment`) the entry's own preferred term; or (on `/reinstatement`) a `term` with no *retired* designation. |
 | 409 | An error-severity collision against another live entry (FR-05, names the colliding entry's `business_key`/`preferred_term`), a duplicate active term on this same entry, a designation already retired, a term already active with nothing to reinstate (`/reinstatement` only), or a concurrent acknowledgement of the same collision. On every route except `/acknowledgement`, also a stale `expected_row_version` (FR-38) - a richer body, see "`expected_row_version`" above. |
-| 422 | An unrecognised `target`, a term left empty after whitespace cleaning, more than 100 terms in one batch, a changelog note that fails FR-37, or a missing `expected_row_version` (FastAPI's own `HTTPValidationError`, matching the code-binding routes - there is no longer a route-specific missing-token error here). |
+| 422 | An unrecognised `target`, `use` on `/amendment`, a term left empty after whitespace cleaning, more than 100 terms in one batch, a changelog note that fails FR-37, or a missing `expected_row_version` (FastAPI's own `HTTPValidationError`, matching the code-binding routes - there is no longer a route-specific missing-token error here). |
 
 **Two 409 bodies carry more than `detail`, and are declared as such.** Most refusals are
 an `ErrorResponse` - one sentence, and deliberately nothing else. FR-05's collision and

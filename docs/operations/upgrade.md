@@ -561,10 +561,16 @@ WHERE a.language <> 'en-AU';
 
 If either query returns a row, decide what each row is. No API route edits `use` or
 `language`, so correcting a row is a direct SQL update by an operator. A row that is really an
-en-AU synonym needs `use = 'synonym'` and `language = 'en-AU'`. A row that must not survive as an
-en-AU synonym should be retired through the API first, so it stays only as retired history, and
-then have its columns corrected the same way. The migration checks every row, retired ones
-included. Run it again once both queries return nothing.
+en-AU synonym needs `use = 'synonym'` and `language = 'en-AU'`.
+
+**That update skips FR-05's collision check.** Set on an active row, it can leave a synonym equal
+to another live entry's preferred term, which the API would have refused. Retire the row through
+the API first (naming its language in the request), then correct its columns. A retired row is
+not compared, it stays as history, and reinstating it later runs the check. Correct an active
+row in place only after checking its term against the other entries' preferred terms.
+
+The migration checks every row, retired ones included. Run it again once both queries return
+nothing.
 
 **No data is lost on an en-AU database.** Every row, retired ones included, keeps its term,
 `status` and history. The audit events already written still name `use` and `language` in their
@@ -572,9 +578,9 @@ included. Run it again once both queries return nothing.
 
 **The API changes with it.** `Designation` and the acknowledgement response lose `language`,
 `Designation` loses `use`, and the requests lose `language` and `use`. The amendment request
-takes an optional `target` (`preferred_term` or `synonym`) in place of `use`. A client that reads
-`language` or `use` must change. A client that still sends them is not refused, and they have no
-effect.
+takes an optional `target` (`preferred_term` or `synonym`) in place of `use`, and refuses a body
+that still names `use` with a 422. A client that reads `language` or `use` must change. The other
+requests ignore a `language` or `use` they are sent, and the field has no effect.
 
 **Re-emit any import dataset made before this release.** The dataset moves to `schema_version` 4,
 and the loader refuses a version 3 file with a message that names the version. See the

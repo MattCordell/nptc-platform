@@ -77,7 +77,8 @@ def test_a_designation_has_no_use_or_language_column(db: Connection) -> None:
     columns = set(
         db.execute(
             text(
-                "SELECT column_name FROM information_schema.columns WHERE table_name = 'designation'"
+                "SELECT column_name FROM information_schema.columns "
+                "WHERE table_name = 'designation'"
             )
         ).scalars()
     )

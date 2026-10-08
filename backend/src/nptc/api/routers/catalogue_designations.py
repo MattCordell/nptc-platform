@@ -42,7 +42,7 @@ from enum import StrEnum
 from typing import Annotated, Any, Final, Literal
 
 from fastapi import APIRouter, Body, Depends, Response
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 from sqlalchemy.orm import Session
 
 from nptc.api.dependencies import ApiSettingsDep, AuditContextDep, get_session, permission_dep
@@ -114,10 +114,9 @@ _RESPONSE_409: Final[dict[str, Any]] = {
     "description": (
         "The request is well-formed but conflicts with the current state of the "
         "system - an error-severity collision against another entry (FR-05), a "
-        "duplicate active term on this same entry, a designation already "
-        "retired (or, for reinstatement, "
-        "already active), or a concurrent acknowledgement of the same "
-        "collision. Add, amend and retire address a designation by its "
+        "duplicate active term on this same entry, a designation already retired "
+        "(or, for reinstatement, already active), or a concurrent acknowledgement "
+        "of the same collision. Add, amend and retire address a designation by its "
         "currently-*active* term, so a retired one is simply not addressable that "
         "way any more (404, not 409); reinstatement addresses one by its "
         "currently-*retired* term instead, so a term that was never retired is its "
@@ -126,13 +125,14 @@ _RESPONSE_409: Final[dict[str, Any]] = {
 }
 #: Two 422 body shapes occur: a typed domain error (`ErrorResponse`), or a
 #: pydantic failure that never reaches the route body (`HTTPValidationError`),
-#: such as a bad `target`. Declaring only
-#: `"model": ErrorResponse` would suppress the second.
+#: such as a bad `target`. Declaring only `"model": ErrorResponse` would suppress
+#: the second.
 _RESPONSE_422: Final[dict[str, Any]] = {
     "description": (
-        "A field failed validation - an unrecognised `target`, a term that is empty "
-        "after whitespace cleaning, or a changelog note that does not meet FR-37. Two "
-        "distinct body shapes occur here: a typed domain error "
+        "A field failed validation - an unrecognised `target`, the retired `use` on "
+        "an amendment, a term that is empty after whitespace cleaning, or a changelog "
+        "note that does not meet FR-37. Two distinct body shapes occur here: a typed "
+        "domain error "
         "(`ErrorResponse`) or a pydantic validation failure (FastAPI's own "
         "`HTTPValidationError`)."
     ),
@@ -360,9 +360,23 @@ class AmendDesignationRequest(BaseModel):
 
     `term` also addresses the entry's *own* preferred term, which is
     not a designation row at all (ADR-0022) - see the module docstring for
-    the dispatch and `expected_row_version` for the lock it requires."""
+    the dispatch and `expected_row_version` for the lock it requires.
+
+    A body naming `use`, the field `target` replaced, is refused. Ignoring it would
+    change which row is written: an old `use="preferred"` would rename a shadowing
+    synonym, and an old `use="synonym"` with no matching synonym would rename the
+    entry's preferred term where the old route answered 404. A tab still running the
+    previous bundle during a deploy sends exactly that. Other unnamed fields stay
+    ignored, because a client may post a `Designation` back with its `length` (FR-24)."""
 
     model_config = ConfigDict(frozen=True)
+
+    @model_validator(mode="before")
+    @classmethod
+    def _refuse_the_retired_use(cls, data: Any) -> Any:
+        if isinstance(data, dict) and "use" in data:
+            raise ValueError("`use` was replaced by `target` (`preferred_term` or `synonym`)")
+        return data
 
     term: str
     new_term: str = Field(min_length=1)

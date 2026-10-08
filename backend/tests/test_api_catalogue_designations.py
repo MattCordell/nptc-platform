@@ -1183,6 +1183,50 @@ def test_target_synonym_amends_the_synonym_that_shadows_the_preferred_term(
 
 @pytest.mark.req("FR-36")
 @pytest.mark.integration
+def test_an_amendment_naming_use_preferred_is_422_and_renames_nothing(api: ApiTestApp) -> None:
+    """A tab still running the previous bundle sends `use`. Ignored, `use="preferred"` would
+    rename the synonym that shadows the preferred term: the case `use` existed to handle."""
+    business_key = _seed_entry(api, preferred_term="Full blood count")
+    token = api.admin_token(subject="sub-pt-stale-use-preferred")
+    added = _add(api, business_key, token, terms=["Full blood count"])
+    assert added.status_code == 201, added.text
+    version = _row_version(api, business_key, token)
+    before = _audit_event_count(api)
+
+    response = _amend(api, business_key, token, use="preferred", expected_row_version=version)
+
+    assert response.status_code == 422, response.text
+    assert "`use` was replaced by `target`" in str(response.json()["detail"])
+    assert _audit_event_count(api) == before
+    detail = api.get(f"/catalogue/admin/entries/{business_key}", token=token).json()
+    assert detail["preferred_term"] == "Full blood count"
+    assert {d["term"] for d in detail["designations"]} == {"Full blood count"}
+    assert detail["row_version"] == version
+
+
+@pytest.mark.req("FR-36")
+@pytest.mark.integration
+def test_an_amendment_naming_use_synonym_is_422_not_a_preferred_term_rename(
+    api: ApiTestApp,
+) -> None:
+    """Ignored, `use="synonym"` with no matching synonym would fall back to the entry's preferred
+    term and rename it, where the old route answered 404."""
+    business_key = _seed_entry(api, preferred_term="Full blood count")
+    token = api.admin_token(subject="sub-pt-stale-use-synonym")
+    version = _row_version(api, business_key, token)
+    before = _audit_event_count(api)
+
+    response = _amend(api, business_key, token, use="synonym", expected_row_version=version)
+
+    assert response.status_code == 422, response.text
+    assert _audit_event_count(api) == before
+    detail = api.get(f"/catalogue/admin/entries/{business_key}", token=token).json()
+    assert detail["preferred_term"] == "Full blood count"
+    assert detail["row_version"] == version
+
+
+@pytest.mark.req("FR-36")
+@pytest.mark.integration
 def test_target_synonym_never_falls_back_to_the_preferred_term(api: ApiTestApp) -> None:
     """The disambiguator has to work in both directions, or it is only half
     a fix: a caller who says `synonym` and names a term that is only the
