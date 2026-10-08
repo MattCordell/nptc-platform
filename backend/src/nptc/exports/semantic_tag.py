@@ -1,11 +1,10 @@
 """FR-83's sanctioned semantic-tag strip, and the label trims that sit beside it.
 
-`render_display_term` is called by the export renderer and by the list read model
-(`nptc.api.routers.catalogue_shared`, which strips an entry's FSN for the catalogue
-list). `backend/tests/test_catalogue_bindings.py` asserts that it and the shared
-`semantic_tag`/`strip_semantic_tag` are referenced from no other module across
-`backend/src`, `transform/src` and `shared/src`. The exceptions are the shared
-package's re-export and two FR-97 seeding-reconciliation call sites (ADR-0006).
+The export renderer and the list read model (`nptc.api.routers.catalogue_shared`) call
+`render_display_term`. `backend/tests/test_catalogue_bindings.py` asserts that it and the
+shared `semantic_tag`/`strip_semantic_tag` are referenced from no other module across
+`backend/src`, `transform/src` and `shared/src`, bar the shared package's re-export and
+two FR-97 seeding-reconciliation sites (ADR-0006).
 
 **Why not call `nptc_shared.terminology.strip_semantic_tag` alone.** It returns
 its input unchanged when there is no trailing parenthesised group, which suits a
@@ -78,11 +77,9 @@ def render_display_term(fsn: str) -> str:
 
 
 def trim_specimen_suffix(term: str) -> str:
-    """`term` without a trailing "specimen" word, for a list column where every value
-    is a specimen already ("Serum specimen" shows as "Serum").
+    """`term` without a trailing "specimen" word ("Serum specimen" shows as "Serum").
 
-    The word alone is returned as it is, so a bare "Specimen" (the root concept's
-    preferred term) never trims to an empty label.
+    A bare "Specimen", the root concept's term, is returned as it is, never empty.
     """
     trimmed = _SPECIMEN_SUFFIX.sub("", term)
     return trimmed or term

@@ -20,9 +20,7 @@ FSN string. It is the only reader of that setting. `binding_from_row` and
 `ConceptLookup` both call it, so no caller can observe two opinions about
 whether an FSN's tag is intact.
 
-**The catalogue list's `fsn` is the one stripped copy** (FR-83), so
-`LIST_FSN_PROVENANCE` is a constant: the list assembler strips every FSN it
-serves and has no setting to consult.
+The public list's `fsn` is always stripped (FR-83): `LIST_FSN_PROVENANCE`.
 """
 
 from __future__ import annotations
@@ -104,8 +102,6 @@ PREFERRED_VARIANT_PROVENANCE = LabelProvenance(
 )
 
 
-#: The `fsn` on a list, search or detail summary: stripped by the list assembler
-#: (`nptc.api.routers.catalogue_shared`) and never otherwise.
 LIST_FSN_PROVENANCE = LabelProvenance(
     designation=DesignationType.FSN,
     semantic_tag=SemanticTagState.STRIPPED,
