@@ -167,6 +167,32 @@ def test_queued_requests_coalesce_until_the_run_starts(
 
 
 @pytest.mark.req("FR-13")
+def test_a_submit_that_raises_does_not_stop_later_requests_from_queueing(
+    monkeypatch: pytest.MonkeyPatch,
+    reconciliation_submissions: list[Callable[[], object]],
+) -> None:
+    """A worker that refuses new work (the interpreter is shutting down) must not leave `_queued`
+    set, or every later request in this process would coalesce into a run that never starts."""
+
+    class _Refusing:
+        def submit(self, fn: Callable[[], object], /) -> None:
+            raise RuntimeError("cannot schedule new futures after shutdown")
+
+    monkeypatch.setattr(dispatch, "_executor", _Refusing())
+    with pytest.raises(RuntimeError):
+        dispatch._enqueue()
+
+    class _Recording:
+        def submit(self, fn: Callable[[], object], /) -> None:
+            reconciliation_submissions.append(fn)
+
+    monkeypatch.setattr(dispatch, "_executor", _Recording())
+    dispatch._enqueue()
+
+    assert len(reconciliation_submissions) == 1
+
+
+@pytest.mark.req("FR-13")
 @pytest.mark.req("NFR-08")
 @pytest.mark.integration
 def test_a_failure_is_recorded_as_a_system_audit_event(

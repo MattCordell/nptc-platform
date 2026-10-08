@@ -56,14 +56,10 @@ _log = logging.getLogger(__name__)
 
 
 def after_commit(session: Session, action: Callable[[], None]) -> None:
-    """Queues `action` to run once, after `session_scope` has committed this session. A request
-    that rolls back discards it.
+    """Queues `action` to run after `session_scope` commits this session; a rollback discards it.
 
-    Not FastAPI's `BackgroundTasks`: those run while the request's session is still open, before
-    its commit, so a task that reads what the request just wrote sees the old rows.
-
-    `action` must not use `session`, and must return quickly: it runs on the request's thread
-    after the response has been sent.
+    FastAPI's `BackgroundTasks` run before that commit. `action` runs on the request's thread, so
+    it must return quickly and must not use `session`.
     """
     session.info.setdefault(_POST_COMMIT_KEY, []).append(action)
 
@@ -73,9 +69,7 @@ def discard_after_commit_actions(session: Session) -> None:
 
 
 def run_after_commit_actions(session: Session) -> None:
-    """Runs and clears the queued actions. One that raises is logged and does not stop the rest,
-    because the commit has already happened and cannot be undone by failing the request.
-    """
+    """Runs and clears the queued actions. A failing one is logged and skipped: the commit is done."""
     for action in session.info.pop(_POST_COMMIT_KEY, []):
         try:
             action()
@@ -87,8 +81,6 @@ def session_scope() -> Iterator[Session]:
     """One session per request, committed on success and rolled back on any exception. The commit
     lives here, not in each route, so a state change and the `audit_event` row recording it commit
     atomically, which `append_audit_event` assumes (it takes no commit of its own).
-
-    Actions queued with `after_commit` run after the commit.
     """
     session = get_sessionmaker()()
     try:

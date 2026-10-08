@@ -43,7 +43,7 @@ from nptc.db.session import after_commit, get_sessionmaker
 
 __all__ = ["request_reconciliation", "run_reconciliation"]
 
-#: Attempts to get the advisory lock, and the pause between them: about ten seconds in all, longer
+#: Attempts to get the advisory lock, and the pause between them: about eight seconds in all, longer
 #: than one reconciliation of a handful of indexes takes on the catalogue's size.
 LOCK_ATTEMPTS: Final[int] = 5
 LOCK_RETRY_SECONDS: Final[float] = 2.0
@@ -78,7 +78,12 @@ def _enqueue() -> None:
         if _queued:
             return
         _queued = True
-    _executor.submit(run_reconciliation)
+    try:
+        _executor.submit(run_reconciliation)
+    except BaseException:
+        with _queued_lock:
+            _queued = False
+        raise
 
 
 def run_reconciliation() -> None:

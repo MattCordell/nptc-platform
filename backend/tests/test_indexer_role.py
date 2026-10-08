@@ -132,3 +132,24 @@ def test_indexer_login_is_refused_outside_property_value(
         indexer_connection.execute(text(statement))
 
     assert getattr(refused.value.orig, "sqlstate", None) == "42501"
+
+
+@pytest.mark.req("FR-13")
+@pytest.mark.integration
+@pytest.mark.parametrize(
+    "statement",
+    [
+        "CREATE INDEX app_role_probe ON property_value (entry_id)",
+        "ALTER TABLE property_value ADD COLUMN app_role_probe text",
+        "DROP TABLE property_value",
+        "TRUNCATE property_value",
+    ],
+)
+def test_app_login_still_cannot_change_property_value_structure(
+    app_db: Connection, statement: str
+) -> None:
+    """Moving ownership to the index owner role must not hand the runtime login any DDL."""
+    with pytest.raises(ProgrammingError) as refused:
+        app_db.execute(text(statement))
+
+    assert getattr(refused.value.orig, "sqlstate", None) == "42501"
