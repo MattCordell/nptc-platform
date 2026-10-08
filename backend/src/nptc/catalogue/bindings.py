@@ -40,7 +40,7 @@ from sqlalchemy.orm import Session
 
 from nptc.audit.diffing import ChangeKind
 from nptc.audit.recording import record_change
-from nptc.audit.writer import AuditContext
+from nptc.audit.writer import AuditContext, acquire_append_lock
 from nptc.catalogue.changelog import validate_changelog_note
 from nptc.db.errors import unique_violation_constraint
 from nptc.db.models.catalogue_entry import CatalogueEntry
@@ -223,6 +223,7 @@ def create_binding(
     validated_code = SCTID(code).value
     validated_edition_hint = _validate_edition_hint(edition_hint)
     validated_system = _validate_system(system)
+    acquire_append_lock(session)
 
     # A new, unflushed `entry` has no identity, so its `id` would be baked
     # into the `where(...)` below as a stale value and the check would find
@@ -322,10 +323,11 @@ def retire_binding(
     retired-code collisions by it (ADR-0033). It is written with `func.now()`,
     the database clock, not the application's: it orders rows written by
     different app instances, whose clocks need not agree."""
+    validated_reason = validate_changelog_note(reason)
+    acquire_append_lock(session)
     if binding.status == str(CodeBindingStatus.RETIRED):
         raise CodeBindingAlreadyRetiredError(f"code binding {binding.id} is already retired")
 
-    validated_reason = validate_changelog_note(reason)
     binding.status = str(CodeBindingStatus.RETIRED)
     binding.retirement_reason = validated_reason
     binding.retired_at = func.now()
@@ -361,6 +363,8 @@ def link_replacement(
     an API request can reach, and assigning it would write `NULL` into
     `replaced_by_binding_id` because `CodeBinding.id` has only a
     `server_default=func.gen_random_uuid()`."""
+    validated_reason = validate_changelog_note(reason)
+    acquire_append_lock(session)
     if superseded.status != str(CodeBindingStatus.RETIRED):
         raise CodeBindingNotRetiredError(
             f"code binding {superseded.id} must be retired before it can name a successor"
@@ -375,7 +379,6 @@ def link_replacement(
             "silently write NULL into replaced_by_binding_id"
         )
 
-    validated_reason = validate_changelog_note(reason)
     superseded.replaced_by_binding_id = successor.id
     record_change(
         session,
