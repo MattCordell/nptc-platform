@@ -198,11 +198,10 @@ def test_designations_endpoint_serves_active_designations_only(
     items = response.json()["items"]
     terms = {item["term"] for item in items}
     assert _seed.CANONICAL_SYNONYM in terms
-    # The non-en-AU preferred variant is present, and is `use=preferred`.
-    assert {"preferred", "synonym"} <= {item["use"] for item in items}
+    assert all("use" not in item and "language" not in item for item in items)
     assert all(item["status"] == "active" for item in items)
     assert _seed.RETIRED_SYNONYM not in terms
-    # ADR-0022: the catalogue's own en-AU preferred term is never a
+    # ADR-0022: the catalogue's own preferred term is never a
     # designation row, so it must not appear here even though a client
     # needs it - it is on the entry.
     assert _seed.CANONICAL_TERM not in terms

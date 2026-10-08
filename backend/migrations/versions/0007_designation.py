@@ -42,13 +42,9 @@ this migration to create. Giving it a column at all, even one nothing
 ever writes to, would leave a seam a future migration could accidentally
 populate - the absence is deliberate, not an oversight to backfill later.
 
-`ck_designation_language`'s regex is imported from `nptc_shared.language.
-LANGUAGE_TAG_PATTERN` rather than hand-copied, the same
-import-the-shared-source-rather-than-duplicate-it precedent this
-migration already follows for `roles.GRANT_DESIGNATION_SQL` and friends
-below - a hand-copied literal here previously let the deployed `CHECK`
-silently drift from the model's own `_LANGUAGE_CHECK_SQL` (both built from
-the same pattern, but never actually compared against each other).
+`ck_designation_language`'s regex is written out here, as it stood when this
+revision shipped. The shared module that once held it went with the column
+(migration 0026), so a replay of this revision cannot import it.
 """
 
 from __future__ import annotations
@@ -59,7 +55,6 @@ import sqlalchemy as sa
 from alembic import op
 
 from nptc.db import roles
-from nptc_shared.language import LANGUAGE_TAG_PATTERN
 
 # revision identifiers, used by Alembic.
 revision: str = "0007"
@@ -102,7 +97,7 @@ def upgrade() -> None:
             name=op.f("ck_designation_term_not_blank"),
         ),
         sa.CheckConstraint(
-            f"language ~ '{LANGUAGE_TAG_PATTERN.pattern}'",
+            "language ~ '^[A-Za-z]{2,3}(-[A-Za-z0-9]{2,8})*$'",
             name=op.f("ck_designation_language"),
         ),
         sa.CheckConstraint(

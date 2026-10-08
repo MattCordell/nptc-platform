@@ -47,7 +47,7 @@ from sqlalchemy.orm import Session
 
 from nptc.db.models.catalogue_entry import CatalogueEntry, CatalogueEntryStatus
 from nptc.db.models.code_binding import CodeBinding, CodeBindingStatus
-from nptc.db.models.designation import Designation, DesignationStatus, DesignationUse
+from nptc.db.models.designation import Designation, DesignationStatus
 from nptc.db.models.property_definition import PropertyDefinition
 from nptc.db.models.property_value import PropertyValue
 
@@ -298,19 +298,6 @@ def seed_public_catalogue(session: Session) -> SeededCatalogue:
             Designation(
                 entry_id=canonical.id,
                 term=CANONICAL_SYNONYM,
-                use=DesignationUse.SYNONYM.value,
-                language="en-AU",
-                status=DesignationStatus.ACTIVE.value,
-            ),
-            # A non-en-AU *preferred* variant: permitted (ADR-0022 forbids
-            # only the en-AU one, which lives on the entry itself), and the
-            # shape a response model that assumed `use == "synonym"` would
-            # mishandle.
-            Designation(
-                entry_id=canonical.id,
-                term="Hemoglobin electrophoresis",
-                use=DesignationUse.PREFERRED.value,
-                language="en-US",
                 status=DesignationStatus.ACTIVE.value,
             ),
             # Retired: must not be served, and must not be matched by
@@ -319,8 +306,6 @@ def seed_public_catalogue(session: Session) -> SeededCatalogue:
             Designation(
                 entry_id=canonical.id,
                 term=RETIRED_SYNONYM,
-                use=DesignationUse.SYNONYM.value,
-                language="en-AU",
                 status=DesignationStatus.RETIRED.value,
                 # issue #313: `ck_designation_retired_at` requires this
                 # whenever `status = 'retired'`, mirroring `code_binding`'s
@@ -330,8 +315,6 @@ def seed_public_catalogue(session: Session) -> SeededCatalogue:
             Designation(
                 entry_id=synonym_only.id,
                 term=SYNONYM_ONLY_SYNONYM,
-                use=DesignationUse.SYNONYM.value,
-                language="en-AU",
                 status=DesignationStatus.ACTIVE.value,
             ),
             # issue #228: the `draft` entry needs real children too - the
@@ -340,8 +323,6 @@ def seed_public_catalogue(session: Session) -> SeededCatalogue:
             Designation(
                 entry_id=draft_entry.id,
                 term=DRAFT_SYNONYM,
-                use=DesignationUse.SYNONYM.value,
-                language="en-AU",
                 status=DesignationStatus.ACTIVE.value,
             ),
         ]
@@ -692,8 +673,6 @@ def seed_worked_example(session: Session) -> SeededWorkedExample:
             Designation(
                 entry_id=acth.id,
                 term=term,
-                use=DesignationUse.SYNONYM.value,
-                language="en-AU",
                 status=DesignationStatus.ACTIVE.value,
             )
             for term in WORKED_EXAMPLE_SYNONYMS

@@ -204,7 +204,7 @@ def test_add_designations_returns_201_with_the_batch_as_stored(api: ApiTestApp) 
     body = response.json()
     terms = {d["term"] for d in body["designations"]}
     assert terms == {"FBC", "CBC"}
-    assert all(d["use"] == "synonym" for d in body["designations"])
+    assert all(d["label_provenance"]["designation"] == "synonym" for d in body["designations"])
     assert all(d["status"] == "active" for d in body["designations"])
     assert body["warnings"] == []
     assert _audit_event_count(api) == before + 2
@@ -235,8 +235,6 @@ def test_add_designation_audits_the_created_row_with_reason(api: ApiTestApp) -> 
     assert event.after == {
         "entry_id": str(entry_id),
         "term": "FBC",
-        "use": "synonym",
-        "language": "en-AU",
         "status": "active",
     }
     assert event.reason == reason
@@ -265,28 +263,17 @@ def test_add_designations_location_header_points_at_a_route_that_actually_serves
 @pytest.mark.req("FR-04")
 @pytest.mark.req("FR-98")
 @pytest.mark.integration
-def test_add_a_non_en_au_preferred_designation(api: ApiTestApp) -> None:
+def test_an_added_designation_is_a_synonym_with_no_use_or_language(api: ApiTestApp) -> None:
     business_key = _seed_entry(api)
-    token = api.admin_token(subject="sub-add-preferred")
+    token = api.admin_token(subject="sub-add-shape")
 
-    response = _add(
-        api,
-        business_key,
-        token,
-        terms=["Panui toto katoa"],
-        use="preferred",
-        language="mi-NZ",
-    )
+    response = _add(api, business_key, token, terms=["Panui toto katoa"])
 
     assert response.status_code == 201, response.text
     (designation,) = response.json()["designations"]
-    assert designation["use"] == "preferred"
-    assert designation["language"] == "mi-NZ"
-    # FR-98 (issue #144): a `designation` row with `use="preferred"` is a
-    # non-en-AU preferred variant (ADR-0022), never the catalogue's own
-    # AU preferred term - `designation_from_row`'s own mapping.
+    assert set(designation) == {"term", "status", "length", "label_provenance"}
     assert designation["label_provenance"] == {
-        "designation": "preferred_variant",
+        "designation": "synonym",
         "semantic_tag": "not_applicable",
     }
 
@@ -554,7 +541,7 @@ def test_reinstate_returns_a_warning_for_an_unacknowledged_collision(api: ApiTes
 def test_an_acknowledged_warning_stays_silenced_after_reinstatement(api: ApiTestApp) -> None:
     """Issue #313's own acceptance criterion:
     `designation_collision_acknowledgement` is keyed on `(entry_id,
-    term_key, language)`, independent of any designation row, so an
+    term_key)`, independent of any designation row, so an
     acknowledgement recorded before a retirement still silences the
     warning once the *same* row is reinstated - not only after a fresh
     add, which the test above already covers via a retire-and-re-add
@@ -635,7 +622,6 @@ def test_acknowledge_collision_audits_the_created_row_with_reason(api: ApiTestAp
     assert event.after == {
         "entry_id": str(entry_id),
         "term_key": "ada2",
-        "language": "en-AU",
         "reason": reason,
         "_redacted": ["acknowledged_by_user_id"],
     }
@@ -688,85 +674,21 @@ def test_add_a_duplicate_active_term_on_the_same_entry_is_409(api: ApiTestApp) -
 
 @pytest.mark.req("FR-04")
 @pytest.mark.integration
-def test_a_second_active_preferred_term_in_one_language_is_409(api: ApiTestApp) -> None:
+@pytest.mark.parametrize(("field", "value"), [("use", "preferred"), ("language", "mi-NZ")])
+def test_a_request_naming_the_retired_use_or_language_has_them_ignored(
+    api: ApiTestApp, field: str, value: str
+) -> None:
+    """The request models ignore a field they do not name, so a client written before `use` and
+    `language` were retired still adds its synonym. Nothing stores either value."""
     business_key = _seed_entry(api)
-    token = api.admin_token(subject="sub-second-preferred")
-    _add(api, business_key, token, terms=["Panui toto katoa"], use="preferred", language="mi-NZ")
+    token = api.admin_token(subject=f"sub-stale-{field}")
 
-    response = _add(
-        api, business_key, token, terms=["Tetahi atu kupu"], use="preferred", language="mi-NZ"
-    )
+    response = _add(api, business_key, token, **{field: value})
 
-    assert response.status_code == 409, response.text
-
-
-@pytest.mark.req("FR-04")
-@pytest.mark.integration
-def test_adding_an_en_au_preferred_designation_is_422_not_500(api: ApiTestApp) -> None:
-    """`ck_designation_no_en_au_preferred` (ADR-0022) - refused as a
-    pydantic 422 before the request ever reaches the ORM, not an unmapped
-    `IntegrityError`."""
-    business_key = _seed_entry(api)
-    token = api.admin_token(subject="sub-en-au-preferred")
-
-    response = _add(api, business_key, token, terms=["Full blood count"], use="preferred")
-
-    assert response.status_code == 422, response.text
-
-
-@pytest.mark.req("FR-04")
-@pytest.mark.integration
-def test_adding_a_lowercase_en_au_preferred_designation_is_422_not_201(api: ApiTestApp) -> None:
-    """`en-au` must be caught by the same ADR-0022 exclusion as `en-AU` -
-    the request's `language` field is canonicalised before this check runs
-    (`_WithLanguage`), so a caller cannot bypass it with a differently-cased
-    tag (issue #224 review finding 2)."""
-    business_key = _seed_entry(api)
-    token = api.admin_token(subject="sub-en-au-preferred-lowercase")
-
-    response = _add(
-        api, business_key, token, terms=["Full blood count"], use="preferred", language="en-au"
-    )
-
-    assert response.status_code == 422, response.text
-
-
-@pytest.mark.req("FR-04")
-@pytest.mark.integration
-def test_adding_more_than_one_preferred_term_at_once_is_422(api: ApiTestApp) -> None:
-    business_key = _seed_entry(api)
-    token = api.admin_token(subject="sub-preferred-batch")
-
-    response = _add(
-        api,
-        business_key,
-        token,
-        terms=["Panui toto katoa", "Tetahi atu kupu"],
-        use="preferred",
-        language="mi-NZ",
-    )
-
-    assert response.status_code == 422, response.text
-
-
-@pytest.mark.integration
-def test_add_an_unrecognised_use_is_422_not_500(api: ApiTestApp) -> None:
-    business_key = _seed_entry(api)
-    token = api.admin_token(subject="sub-bad-use")
-
-    response = _add(api, business_key, token, use="not-a-real-use")
-
-    assert response.status_code == 422, response.text
-
-
-@pytest.mark.integration
-def test_add_a_malformed_language_tag_is_422_not_500(api: ApiTestApp) -> None:
-    business_key = _seed_entry(api)
-    token = api.admin_token(subject="sub-bad-language")
-
-    response = _add(api, business_key, token, language="not a bcp47 tag")
-
-    assert response.status_code == 422, response.text
+    assert response.status_code == 201, response.text
+    (designation,) = response.json()["designations"]
+    assert designation["label_provenance"]["designation"] == "synonym"
+    assert field not in designation
 
 
 @pytest.mark.integration
@@ -970,8 +892,7 @@ def test_amending_the_entrys_own_preferred_term_saves_the_entry(api: ApiTestApp)
     assert response.status_code == 200, response.text
     body = response.json()
     assert body["designation"]["term"] == "Full blood count, automated"
-    assert body["designation"]["use"] == "preferred"
-    assert body["designation"]["language"] == "en-AU"
+    assert body["designation"]["label_provenance"]["designation"] == "au_preferred_term"
     assert body["designation"]["status"] == "active"
     assert body["warnings"] == []
     # The token moved, and moved to what the response says it did - so a
@@ -1183,7 +1104,7 @@ def test_a_synonym_matching_the_preferred_term_still_resolves_to_the_synonym(
     assert response.status_code == 200, response.text
     body = response.json()
     # The synonym moved; the preferred term did not.
-    assert body["designation"]["use"] == "synonym"
+    assert body["designation"]["label_provenance"]["designation"] == "synonym"
     # FR-38 (issue #300): a designation write now bumps the entry's own
     # counter too, the same as the preferred-term branch always has.
     assert body["row_version"] == version + 1
@@ -1194,30 +1115,30 @@ def test_a_synonym_matching_the_preferred_term_still_resolves_to_the_synonym(
 @pytest.mark.req("FR-36")
 @pytest.mark.req("FR-98")
 @pytest.mark.integration
-def test_use_preferred_reaches_the_preferred_term_a_synonym_would_shadow(
+def test_target_preferred_term_reaches_the_preferred_term_a_synonym_would_shadow(
     api: ApiTestApp,
 ) -> None:
-    """The other half of the shadowing case (issue #227 review), and the
-    reason `use` exists at all. Designation-first is right for an unqualified
-    request, but on its own it would leave the preferred term *permanently*
-    unreachable once such a synonym exists - and this route creates that
-    state itself. `use="preferred"` says which one was meant."""
+    """The other half of the shadowing case, and the reason `target` exists
+    at all. Designation-first is right for an unqualified request, but on its
+    own it would leave the preferred term *permanently* unreachable once such
+    a synonym exists - and this route creates that state itself.
+    `target="preferred_term"` says which one was meant."""
     business_key = _seed_entry(api, preferred_term="Full blood count")
     token = api.admin_token(subject="sub-pt-use-preferred")
     added = _add(api, business_key, token, terms=["Full blood count"])
     assert added.status_code == 201, added.text
     version = _row_version(api, business_key, token)
 
-    response = _amend(api, business_key, token, use="preferred", expected_row_version=version)
+    response = _amend(
+        api, business_key, token, target="preferred_term", expected_row_version=version
+    )
 
     assert response.status_code == 200, response.text
     body = response.json()
-    assert body["designation"]["use"] == "preferred"
     assert body["designation"]["term"] == "Full blood count, automated"
     assert body["row_version"] == version + 1
-    # FR-98 (issue #144): `_preferred_term_as_designation`'s own branch -
-    # the catalogue's own AU preferred term, not `designation_from_row`'s
-    # `use="preferred"` mapping (which would be `preferred_variant`).
+    # FR-98: `_preferred_term_as_designation`'s own branch - the catalogue's
+    # own AU preferred term, not `designation_from_row`'s synonym mapping.
     assert body["designation"]["label_provenance"] == {
         "designation": "au_preferred_term",
         "semantic_tag": "not_applicable",
@@ -1230,18 +1151,30 @@ def test_use_preferred_reaches_the_preferred_term_a_synonym_would_shadow(
 
 @pytest.mark.req("FR-36")
 @pytest.mark.integration
-def test_use_synonym_never_falls_back_to_the_preferred_term(api: ApiTestApp) -> None:
+def test_an_unrecognised_target_is_422_not_500(api: ApiTestApp) -> None:
+    business_key = _seed_entry(api, preferred_term="Full blood count")
+    token = api.admin_token(subject="sub-pt-bad-target")
+    version = _row_version(api, business_key, token)
+
+    response = _amend(api, business_key, token, target="elsewhere", expected_row_version=version)
+
+    assert response.status_code == 422, response.text
+
+
+@pytest.mark.req("FR-36")
+@pytest.mark.integration
+def test_target_synonym_never_falls_back_to_the_preferred_term(api: ApiTestApp) -> None:
     """The disambiguator has to work in both directions, or it is only half
     a fix: a caller who says `synonym` and names a term that is only the
     entry's preferred term must get a 404, not a silent entry-level write.
-    `expected_row_version` is supplied, so nothing but the `use` check stands
-    between this and a 200."""
+    `expected_row_version` is supplied, so nothing but the `target` check
+    stands between this and a 200."""
     business_key = _seed_entry(api, preferred_term="Full blood count")
     token = api.admin_token(subject="sub-pt-use-synonym")
     version = _row_version(api, business_key, token)
     before = _audit_event_count(api)
 
-    response = _amend(api, business_key, token, use="synonym", expected_row_version=version)
+    response = _amend(api, business_key, token, target="synonym", expected_row_version=version)
 
     assert response.status_code == 404, response.text
     assert _audit_event_count(api) == before
@@ -1251,14 +1184,14 @@ def test_use_synonym_never_falls_back_to_the_preferred_term(api: ApiTestApp) -> 
 
 @pytest.mark.req("FR-36")
 @pytest.mark.integration
-def test_use_preferred_with_a_term_that_is_not_the_preferred_term_is_404(
+def test_target_preferred_term_with_a_term_that_is_not_the_preferred_term_is_404(
     api: ApiTestApp,
 ) -> None:
-    """`use` narrows which storage home to look in; it does not excuse the
-    caller from naming the term (issue #227 review). `term` is required and
-    its documented job here is to address the thing being edited, so a
-    mistyped one alongside `use="preferred"` must 404 rather than rename the
-    preferred term to `new_term`.
+    """`target` narrows which storage home to look in; it does not excuse the
+    caller from naming the term. `term` is required and its documented job
+    here is to address the thing being edited, so a mistyped one alongside
+    `target="preferred_term"` must 404 rather than rename the preferred term
+    to `new_term`.
 
     This costs the escape hatch nothing: a shadowing synonym folds to the
     same comparison key as the preferred term by definition, so a caller
@@ -1272,7 +1205,7 @@ def test_use_preferred_with_a_term_that_is_not_the_preferred_term_is_404(
         api,
         business_key,
         token,
-        use="preferred",
+        target="preferred_term",
         term="Not this entry's term at all",
         expected_row_version=version,
     )
@@ -1284,46 +1217,11 @@ def test_use_preferred_with_a_term_that_is_not_the_preferred_term_is_404(
     assert detail["row_version"] == version
 
 
-@pytest.mark.req("FR-36")
-@pytest.mark.integration
-def test_use_preferred_in_another_language_still_means_a_designation_row(
-    api: ApiTestApp,
-) -> None:
-    """`use="preferred"` only diverts to the entry when the language is
-    en-AU. ADR-0022 permits a preferred variant in another language as a
-    real `designation` row, and `ck_designation_no_en_au_preferred` is
-    exactly what guarantees there is no en-AU row to confuse it with."""
-    business_key = _seed_entry(api, preferred_term="Full blood count")
-    token = api.admin_token(subject="sub-pt-use-mi-nz")
-    added = _add(
-        api, business_key, token, terms=["Full blood count"], use="preferred", language="mi-NZ"
-    )
-    assert added.status_code == 201, added.text
-    version = _row_version(api, business_key, token)
-
-    response = _amend(
-        api,
-        business_key,
-        token,
-        use="preferred",
-        language="mi-NZ",
-        expected_row_version=version,
-    )
-
-    assert response.status_code == 200, response.text
-    assert response.json()["designation"]["language"] == "mi-NZ"
-    # FR-38 (issue #300): a real `designation` row, so this write bumps the
-    # entry's counter too, even though `use="preferred"` was given.
-    assert response.json()["row_version"] == version + 1
-    detail = api.get(f"/catalogue/admin/entries/{business_key}", token=token).json()
-    assert detail["preferred_term"] == "Full blood count"
-
-
 @pytest.mark.req("FR-38")
 @pytest.mark.integration
-def test_use_preferred_still_requires_a_row_version(api: ApiTestApp) -> None:
+def test_target_preferred_term_still_requires_a_row_version(api: ApiTestApp) -> None:
     """The disambiguator does not bypass the lock: reaching the entry by
-    stating `use` rather than by term is still an entry-level write.
+    stating `target` rather than by term is still an entry-level write.
 
     Bypasses `_amend` deliberately - see `test_amending_the_preferred_term_
     without_a_row_version_is_422`'s identical note."""
@@ -1338,7 +1236,7 @@ def test_use_preferred_still_requires_a_row_version(api: ApiTestApp) -> None:
             "term": "Full blood count",
             "new_term": "Full blood count, automated",
             "reason": "Aligning with the current SPIA edition.",
-            "use": "preferred",
+            "target": "preferred_term",
         },
     )
 
@@ -1431,34 +1329,6 @@ def test_a_term_that_is_neither_a_designation_nor_the_preferred_term_is_404(
     )
 
     assert response.status_code == 404, response.text
-
-
-@pytest.mark.req("FR-36")
-@pytest.mark.integration
-def test_a_non_en_au_preferred_variant_is_not_the_entrys_own_preferred_term(
-    api: ApiTestApp,
-) -> None:
-    """The dispatch is gated on en-AU, not on `use='preferred'` alone: a
-    preferred variant in another language *is* a designation row (ADR-0022
-    permits those), and must keep being edited as one."""
-    business_key = _seed_entry(api, preferred_term="Full blood count")
-    token = api.admin_token(subject="sub-pt-mi-nz")
-    added = _add(
-        api, business_key, token, terms=["Full blood count"], use="preferred", language="mi-NZ"
-    )
-    assert added.status_code == 201, added.text
-    version = _row_version(api, business_key, token)
-
-    response = _amend(api, business_key, token, language="mi-NZ", expected_row_version=version)
-
-    assert response.status_code == 200, response.text
-    body = response.json()
-    assert body["designation"]["language"] == "mi-NZ"
-    # FR-38 (issue #300): a real `designation` row, so this write bumps the
-    # entry's counter too.
-    assert body["row_version"] == version + 1
-    detail = api.get(f"/catalogue/admin/entries/{business_key}", token=token).json()
-    assert detail["preferred_term"] == "Full blood count"
 
 
 @pytest.mark.req("NFR-08")
@@ -2186,25 +2056,6 @@ def test_acknowledging_the_same_collision_twice_returns_created_false_the_second
     assert first.json()["created"] is True
     assert second.json()["created"] is False
     assert second.json()["reason"] == _REASON
-
-
-@pytest.mark.req("FR-04")
-@pytest.mark.integration
-def test_acknowledge_with_a_malformed_language_tag_is_422_not_500(api: ApiTestApp) -> None:
-    """Unlike `Designation`, `designation_collision_acknowledgement` has no
-    `@validates("language")` hook - without the request-level check this
-    reached the table's `CHECK` constraint as an unmapped `IntegrityError`
-    (issue #224 review finding 1)."""
-    business_key = _seed_entry(api)
-    token = api.admin_token(subject="sub-ack-bad-language")
-
-    response = api.post(
-        f"/catalogue/entries/{business_key}/designations/acknowledgement",
-        token=token,
-        json={"term": "ADA2", "reason": _REASON, "language": "not a bcp47 tag"},
-    )
-
-    assert response.status_code == 422, response.text
 
 
 # --- response hygiene (NFR-04, NFR-26) ------------------------------------

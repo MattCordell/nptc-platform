@@ -8,7 +8,7 @@ Three severities, three postures:
 
 - **Error** (`assert_no_error_collisions`): a synonym that exactly matches
   another live entry's preferred term, or the symmetric case, a preferred
-  term matching another live entry's active synonym or preferred term.
+  term matching another live entry's preferred term or active synonym.
   Raised before any row is constructed, by every write path in
   `designations.py` and `entries.py`, so a rejected save leaves no audit
   event - the posture `bindings.create_binding` already holds.
@@ -71,17 +71,17 @@ from nptc.audit.writer import AuditContext
 from nptc.auth.errors_authorisation import PermissionDeniedError
 from nptc.auth.permissions import Permission
 from nptc.catalogue.changelog import validate_changelog_note
-from nptc.catalogue.term_hygiene import TermCleaningError, validate_language_tag
+from nptc.catalogue.term_hygiene import TermCleaningError
 from nptc.db.errors import unique_violation_constraint
 from nptc.db.models.catalogue_entry import CatalogueEntry
-from nptc.db.models.designation import Designation, DesignationStatus, DesignationUse
+from nptc.db.models.designation import Designation, DesignationStatus
 from nptc.db.models.designation_collision_acknowledgement import (
     DesignationCollisionAcknowledgement,
 )
-from nptc_shared.language import DEFAULT_LANGUAGE
 from nptc_shared.similarity import collision_key
 
 __all__ = [
+    "CandidateKind",
     "Collision",
     "CollisionSeverity",
     "DesignationCollisionAcknowledgementConflictError",
@@ -94,7 +94,7 @@ __all__ = [
 #: The unique index `acknowledge_collision` can lose a race on, matched
 #: against `unique_violation_constraint(exc)` as
 #: `nptc.catalogue.designations.add_designation` matches its own.
-_COLLISION_ACK_CONSTRAINT = "ix_designation_collision_ack_entry_term_language"
+_COLLISION_ACK_CONSTRAINT = "ix_designation_collision_ack_entry_term"
 
 if TYPE_CHECKING:
     from nptc.auth.principal import Principal
@@ -111,6 +111,15 @@ class CollisionSeverity(StrEnum):
     WARNING = "warning"
 
 
+class CandidateKind(StrEnum):
+    """What the term being saved will be. A synonym collides as an error only with another
+    entry's preferred term; the same synonym on another entry is a warning. A preferred term also
+    collides as an error with another entry's synonym."""
+
+    PREFERRED_TERM = "preferred_term"
+    SYNONYM = "synonym"
+
+
 @dataclass(frozen=True)
 class Collision:
     """One collision found against a live entry other than the one being
@@ -121,14 +130,8 @@ class Collision:
     severity: CollisionSeverity
     term: str
     term_key: str
-    language: str
     business_key: str
     preferred_term: str
-    #: 'preferred' | 'synonym' - which designation the *other* entry holds
-    #: under this key. 'preferred' also covers a plain
-    #: `catalogue_entry.preferred_term` match, which has no `Designation`
-    #: row at all (ADR-0022).
-    colliding_use: str
 
 
 class DesignationCollisionError(ValueError):
@@ -151,7 +154,7 @@ class DesignationCollisionError(ValueError):
 
 class DesignationCollisionAcknowledgementConflictError(ValueError):
     """Raised when two truly concurrent `acknowledge_collision` calls for the
-    same `(entry, term_key, language)` both pass the select-first check and
+    same `(entry, term_key)` both pass the select-first check and
     reach the `INSERT`. The loser 409s rather than 500ing; re-reading finds
     the winner's row, since both calls recorded the same decision."""
 
@@ -162,7 +165,7 @@ def _matching_entries(
     session: Session, *, term_key: str, exclude_entry_id: uuid.UUID | None
 ) -> tuple[Collision, ...]:
     """Other live entries whose `preferred_term_key` equals `term_key` -
-    the catalogue's own en-AU preferred term, which lives only on
+    the catalogue's own preferred term, which lives only on
     `catalogue_entry.preferred_term` (ADR-0022), never on a `designation`
     row."""
     conditions = [
@@ -179,29 +182,19 @@ def _matching_entries(
             severity=CollisionSeverity.ERROR,
             term="",
             term_key=term_key,
-            language=DEFAULT_LANGUAGE,
             business_key=row.business_key,
             preferred_term=row.preferred_term,
-            colliding_use=str(DesignationUse.PREFERRED),
         )
         for row in rows
     )
 
 
-def _matching_designations(
-    session: Session,
-    *,
-    term_key: str,
-    language: str,
-    use: str,
-    exclude_entry_id: uuid.UUID | None,
+def _matching_synonyms(
+    session: Session, *, term_key: str, exclude_entry_id: uuid.UUID | None
 ) -> tuple[Collision, ...]:
-    """Other live entries carrying an active `designation` row of `use`
-    matching `term_key`/`language`."""
+    """Other live entries carrying an active synonym matching `term_key`."""
     conditions = [
         Designation.term_key == term_key,
-        Designation.language == language,
-        Designation.use == use,
         Designation.status == str(DesignationStatus.ACTIVE),
         CatalogueEntry.status.in_(_LIVE_STATUSES),
     ]
@@ -218,10 +211,8 @@ def _matching_designations(
             severity=CollisionSeverity.ERROR,
             term="",
             term_key=term_key,
-            language=language,
             business_key=row.business_key,
             preferred_term=row.preferred_term,
-            colliding_use=use,
         )
         for row in rows
     )
@@ -239,8 +230,7 @@ def assert_no_error_collisions(
     *,
     entry: CatalogueEntry | None,
     term: str,
-    language: str,
-    use: str,
+    kind: CandidateKind,
 ) -> None:
     """The mandatory FR-05 error-severity gate. `term` must already be
     cleaned (`nptc.catalogue.term_hygiene.clean_term`); this function only
@@ -254,8 +244,8 @@ def assert_no_error_collisions(
     does not exist yet. A new, unflushed `entry` is flushed first: its `id`
     is otherwise `None` and the comparison would exclude nothing.
 
-    `use` is `'preferred'` for `CatalogueEntry.preferred_term` or a non-en-AU
-    `Designation.use == 'preferred'`, and `'synonym'` for a synonym row.
+    `kind` says whether `term` is the entry's preferred term or a synonym; see
+    `CandidateKind`.
     """
     exclude_entry_id: uuid.UUID | None = None
     if entry is not None:
@@ -263,58 +253,13 @@ def assert_no_error_collisions(
             session.flush()
         exclude_entry_id = entry.id
 
-    # Canonicalised here as well as at the call sites: every
-    # `language == DEFAULT_LANGUAGE` branch below would otherwise disagree with
-    # a caller-supplied `en-au`.
-    language = validate_language_tag(language)
     key = collision_key(term)
     # Serialises the transactions contending for this key before either
     # reads its snapshot (module docstring, "Concurrency").
     session.execute(_ACQUIRE_COLLISION_LOCK_SQL, {"key": key})
-    collisions: tuple[Collision, ...] = ()
-
-    if use == str(DesignationUse.SYNONYM):
-        if language == DEFAULT_LANGUAGE:
-            collisions += _matching_entries(
-                session, term_key=key, exclude_entry_id=exclude_entry_id
-            )
-        collisions += _matching_designations(
-            session,
-            term_key=key,
-            language=language,
-            use=str(DesignationUse.PREFERRED),
-            exclude_entry_id=exclude_entry_id,
-        )
-    else:
-        # `use == 'preferred'`. `CatalogueEntry.preferred_term` is always en-AU
-        # (`ck_designation_no_en_au_preferred` forbids an en-AU preferred
-        # `Designation`), so `_matching_entries` applies only when `language ==
-        # DEFAULT_LANGUAGE`. A non-en-AU variant, such as an `mi-NZ` preferred
-        # designation, must not be compared against an unrelated en-AU
-        # preferred term whose key happens to fold the same.
-        if language == DEFAULT_LANGUAGE:
-            collisions += _matching_entries(
-                session, term_key=key, exclude_entry_id=exclude_entry_id
-            )
-        # Check both designation `use`s: another live entry's *synonym*
-        # (symmetric with the `SYNONYM` branch) and its preferred variant in
-        # the same language. Two entries each holding an `mi-NZ` preferred
-        # designation that folds to one key is the most ambiguous case FR-05
-        # names.
-        collisions += _matching_designations(
-            session,
-            term_key=key,
-            language=language,
-            use=str(DesignationUse.SYNONYM),
-            exclude_entry_id=exclude_entry_id,
-        )
-        collisions += _matching_designations(
-            session,
-            term_key=key,
-            language=language,
-            use=str(DesignationUse.PREFERRED),
-            exclude_entry_id=exclude_entry_id,
-        )
+    collisions = _matching_entries(session, term_key=key, exclude_entry_id=exclude_entry_id)
+    if kind is CandidateKind.PREFERRED_TERM:
+        collisions += _matching_synonyms(session, term_key=key, exclude_entry_id=exclude_entry_id)
 
     if collisions:
         raise DesignationCollisionError(_fill_term(collisions, term))
@@ -325,12 +270,11 @@ def warning_collisions(
     *,
     entry: CatalogueEntry,
     terms: Sequence[str],
-    language: str = DEFAULT_LANGUAGE,
 ) -> tuple[Collision, ...]:
     """FR-05's warning-severity query: for each of `terms` (already-cleaned
     synonym surface forms), every other live entry carrying an active
-    synonym under the same comparison key and `language`, excluding a key
-    `entry` has acknowledged via `acknowledge_collision`.
+    synonym under the same comparison key, excluding a key `entry` has
+    acknowledged via `acknowledge_collision`.
 
     Never raises: a warning permits the save. The edit screen calls it before
     a save and when displaying an entry's synonyms.
@@ -341,41 +285,23 @@ def warning_collisions(
     if not sa_inspect(entry).identity:
         session.flush()
 
-    acknowledged = {
-        (row.term_key, row.language)
-        for row in session.execute(
-            select(
-                DesignationCollisionAcknowledgement.term_key,
-                DesignationCollisionAcknowledgement.language,
-            ).where(DesignationCollisionAcknowledgement.entry_id == entry.id)
-        ).all()
-    }
+    acknowledged = set(
+        session.execute(
+            select(DesignationCollisionAcknowledgement.term_key).where(
+                DesignationCollisionAcknowledgement.entry_id == entry.id
+            )
+        ).scalars()
+    )
 
     found: list[Collision] = []
     for term in terms:
         key = collision_key(term)
-        if (key, language) in acknowledged:
+        if key in acknowledged:
             continue
-        matches = _matching_designations(
-            session,
-            term_key=key,
-            language=language,
-            use=str(DesignationUse.SYNONYM),
-            exclude_entry_id=entry.id,
+        found.extend(
+            replace(m, severity=CollisionSeverity.WARNING, term=term)
+            for m in _matching_synonyms(session, term_key=key, exclude_entry_id=entry.id)
         )
-        if matches:
-            found.extend(
-                Collision(
-                    severity=CollisionSeverity.WARNING,
-                    term=term,
-                    term_key=m.term_key,
-                    language=m.language,
-                    business_key=m.business_key,
-                    preferred_term=m.preferred_term,
-                    colliding_use=m.colliding_use,
-                )
-                for m in matches
-            )
     return tuple(found)
 
 
@@ -386,11 +312,10 @@ def acknowledge_collision(
     acknowledger: Principal,
     entry: CatalogueEntry,
     term_key: str,
-    language: str,
     reason: str,
 ) -> tuple[DesignationCollisionAcknowledgement, bool]:
     """Records that `acknowledger` has seen and accepted the warning-severity
-    collision on `entry` for `(term_key, language)` - FR-05's "resolvable to
+    collision on `entry` for `term_key` - FR-05's "resolvable to
     an acknowledged state so the same warning does not recur every save".
     Requires `Permission.VALIDATION_ACKNOWLEDGE` (FR-44) and raises
     `PermissionDeniedError` before anything is added to the session.
@@ -405,12 +330,12 @@ def acknowledge_collision(
     `created` is `False` for the repeat, and `acknowledgement.reason` is then
     the *stored* note, not necessarily the one just submitted.
 
-    `language` is canonicalised and `term_key` checked non-blank before
-    anything else runs. This table's model has no `@validates` hook, so
-    either would otherwise reach its `CHECK` constraints as a `23514`, which
-    `unique_violation_constraint` does not recognise, and re-raise as an
-    unmapped 500. The router cannot produce a blank `term_key`; the guard
-    covers a caller reaching this function directly.
+    `term_key` is checked non-blank before anything else runs. This table's
+    model has no `@validates` hook, so a blank one would otherwise reach its
+    `CHECK` constraint as a `23514`, which `unique_violation_constraint` does
+    not recognise, and re-raise as an unmapped 500. The router cannot produce
+    a blank `term_key`; the guard covers a caller reaching this function
+    directly.
 
     `reason` is validated before the idempotent-repeat lookup, so whether an
     invalid note is rejected does not depend on whether someone acknowledged
@@ -424,7 +349,7 @@ def acknowledge_collision(
     negative, so a retryable refusal is proportionate and a lock would add
     contention nobody needs.
 
-    The function does not check that `(term_key, language)` is a live
+    The function does not check that `term_key` is a live
     `warning_collisions` finding for `entry`. Acknowledging ahead of a
     warning only suppresses a warning that would otherwise fire, and a
     wrongly suppressed *warning* has no safety consequence of the kind a
@@ -434,7 +359,6 @@ def acknowledge_collision(
             f"permission {Permission.VALIDATION_ACKNOWLEDGE.value!r} is required"
         )
 
-    language = validate_language_tag(language)
     if not term_key:
         raise TermCleaningError(
             "a term with no significant characters after comparison-key folding "
@@ -452,7 +376,6 @@ def acknowledge_collision(
         select(DesignationCollisionAcknowledgement).where(
             DesignationCollisionAcknowledgement.entry_id == entry_id,
             DesignationCollisionAcknowledgement.term_key == term_key,
-            DesignationCollisionAcknowledgement.language == language,
         )
     ).scalar_one_or_none()
     if existing is not None:
@@ -461,7 +384,6 @@ def acknowledge_collision(
     acknowledgement = DesignationCollisionAcknowledgement(
         entry_id=entry_id,
         term_key=term_key,
-        language=language,
         acknowledged_by_user_id=acknowledger.user_id,
         reason=validated_reason,
     )
@@ -479,7 +401,7 @@ def acknowledge_collision(
         if unique_violation_constraint(exc) == _COLLISION_ACK_CONSTRAINT:
             raise DesignationCollisionAcknowledgementConflictError(
                 f"entry {entry_id} was already acknowledged for "
-                f"({term_key!r}, {language!r}) by a concurrent request"
+                f"{term_key!r} by a concurrent request"
             ) from exc
         raise
     return acknowledgement, True

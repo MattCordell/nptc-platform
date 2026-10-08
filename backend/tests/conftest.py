@@ -446,20 +446,7 @@ def make_dataset_document() -> Callable[..., dict[str, Any]]:
                     },
                     "preferred_term": term,
                     "status": "active",
-                    "designations": [
-                        {
-                            "term": term,
-                            "use": "preferred",
-                            "language": "en-AU",
-                            "status": "active",
-                        },
-                        {
-                            "term": f"{term} synonym",
-                            "use": "synonym",
-                            "language": "en-AU",
-                            "status": "active",
-                        },
-                    ],
+                    "designations": [{"term": f"{term} synonym", "status": "active"}],
                     "code_bindings": [
                         {
                             "system": "http://snomed.info/sct",
@@ -483,7 +470,7 @@ def make_dataset_document() -> Callable[..., dict[str, Any]]:
                 }
             )
         return {
-            "schema_version": 3,
+            "schema_version": 4,
             "tool_version": "0.0.0",
             "source": {"filename": "workbook.xlsx", "sha256": "a" * 64},
             "baseline_release": {

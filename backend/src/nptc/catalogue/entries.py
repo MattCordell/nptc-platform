@@ -53,7 +53,7 @@ from nptc.audit.policy import policy_for
 from nptc.audit.recording import record_change
 from nptc.audit.writer import AuditContext, acquire_append_lock
 from nptc.catalogue.changelog import validate_changelog_note
-from nptc.catalogue.collisions import assert_no_error_collisions
+from nptc.catalogue.collisions import CandidateKind, assert_no_error_collisions
 from nptc.catalogue.errors import (
     ConflictReport,
     EntryNotFoundError,
@@ -63,9 +63,7 @@ from nptc.catalogue.errors import (
 from nptc.catalogue.term_hygiene import clean_term, exceeds_maximum_length
 from nptc.db.models.audit import AuditEvent
 from nptc.db.models.catalogue_entry import CatalogueEntry, CatalogueEntryStatus
-from nptc.db.models.designation import DesignationUse
 from nptc.db.models.user import User
-from nptc_shared.language import DEFAULT_LANGUAGE
 
 #: The single Python source of truth for the FR-03 format. `CatalogueEntry`'s
 #: CHECK constraint and migration 0006's sequence default mirror it; they are
@@ -189,11 +187,7 @@ def create_entry(
     cleaned_preferred_term = clean_term(preferred_term)
     acquire_append_lock(session)
     assert_no_error_collisions(
-        session,
-        entry=None,
-        term=cleaned_preferred_term,
-        language=DEFAULT_LANGUAGE,
-        use=str(DesignationUse.PREFERRED),
+        session, entry=None, term=cleaned_preferred_term, kind=CandidateKind.PREFERRED_TERM
     )
     resolved_key = business_key if business_key is not None else allocate_business_key(session)
     entry = CatalogueEntry(
@@ -533,8 +527,7 @@ def save_entry(
             session,
             entry=entry,
             term=clean_term(changes.preferred_term),
-            language=DEFAULT_LANGUAGE,
-            use=str(DesignationUse.PREFERRED),
+            kind=CandidateKind.PREFERRED_TERM,
         )
 
     # The savepoint opens before any attribute changes: opening one autoflushes

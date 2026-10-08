@@ -1,6 +1,6 @@
 """Pure term hygiene shared by `CatalogueEntry.preferred_term` and
 `Designation.term` (FR-24, FR-63, FR-85; ADR-0022): no SQLAlchemy, no audit
-imports, nothing beyond `nptc_shared.text` and `nptc_shared.language`.
+imports, nothing beyond `nptc_shared.text`.
 
 **Why this applies to both fields.** FR-85's computed length is defined
 against the *catalogue's* preferred term (PRD SS6.5: "the character count of
@@ -27,7 +27,6 @@ from __future__ import annotations
 
 from typing import ClassVar
 
-from nptc_shared.language import canonicalize_language_tag, is_well_formed_language_tag
 from nptc_shared.text import escape_invisible, find_invisible_characters, normalise_for_comparison
 
 
@@ -35,19 +34,6 @@ class TermCleaningError(ValueError):
     """Raised by `clean_term` when a term is empty after cleaning, or still
     carries an invisible character with no single deterministic repair
     (FR-63)."""
-
-    http_status: ClassVar[int] = 422
-
-
-class DesignationLanguageError(ValueError):
-    """Raised by `Designation`'s `@validates("language")` hook when a language
-    tag is not a well-formed BCP-47 tag: the Python-level counterpart to
-    `designation.py`'s `_LANGUAGE_CHECK_SQL`, which is the database invariant.
-    `nptc_shared.language.is_well_formed_language_tag` is the single
-    implementation that both the hook and, through
-    `test_designation_language_check_agrees_with_the_shared_pattern` in
-    `backend/tests/test_db_designation.py`, the database `CHECK` are proven to
-    agree with."""
 
     http_status: ClassVar[int] = 422
 
@@ -79,26 +65,6 @@ def clean_term(term: str) -> str:
             "it can be saved"
         )
     return cleaned
-
-
-def validate_language_tag(language: str) -> str:
-    """Raises `DesignationLanguageError` unless `language` is a well-formed
-    BCP-47 tag (`is_well_formed_language_tag`); otherwise returns it
-    *canonicalised* (`canonicalize_language_tag`). `en-au` and `en-AU` must
-    resolve to the one stored and compared form, or every string-equality
-    check downstream (`DEFAULT_LANGUAGE`, the two designation partial unique
-    indexes, `ck_designation_no_en_au_preferred`) treats them as different
-    languages.
-
-    `Designation`'s own `@validates("language")` hook calls this, so every
-    write path that constructs a `Designation` gets it for free. A caller
-    acting on a caller-supplied `language` before a `Designation` exists
-    (`nptc.catalogue.designations.load_active_designation`,
-    `nptc.catalogue.collisions.acknowledge_collision`) must call it itself
-    first."""
-    if not is_well_formed_language_tag(language):
-        raise DesignationLanguageError(f"{language!r} is not a well-formed BCP-47 language tag")
-    return canonicalize_language_tag(language)
 
 
 def preferred_term_length(term: str) -> int:

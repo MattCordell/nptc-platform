@@ -8,7 +8,7 @@ narrow acknowledgement for one finding shape, the same synonym on multiple live 
 `ValidationFinding` is expected to subsume it once its lifecycle lands
 (`docs/architecture/data-model.md`); that migration is not attempted yet.
 
-**Scope: (entry, term_key, language), not (term_key, language) alone.** An acknowledgement silences
+**Scope: (entry, term_key), not term_key alone.** An acknowledgement silences
 the warning for the entry it was made against. A fourth entry joining an acknowledged group (PRD
 A.5's `'ADA2'`) still warns once, on its own save. `nptc.catalogue.collisions.warning_collisions`
 reads this table.
@@ -25,13 +25,12 @@ import uuid
 from datetime import datetime
 from typing import ClassVar
 
-from sqlalchemy import CheckConstraint, DateTime, ForeignKey, Index, Text, text
+from sqlalchemy import CheckConstraint, DateTime, ForeignKey, Index, Text
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column
 from sqlalchemy.sql import func
 
 from nptc.db.base import Base
-from nptc_shared.language import LANGUAGE_TAG_PATTERN
 
 __all__ = ["DesignationCollisionAcknowledgement"]
 
@@ -39,8 +38,6 @@ __all__ = ["DesignationCollisionAcknowledgement"]
 #: forbids an f-string as a SQL call's first argument.
 _TERM_KEY_NOT_BLANK_SQL = "length(btrim(term_key)) > 0"
 _REASON_NOT_BLANK_SQL = "length(btrim(reason)) > 0"
-#: Built from `LANGUAGE_TAG_PATTERN.pattern` so it cannot diverge from `designation.py`'s check.
-_LANGUAGE_CHECK_SQL = f"language ~ '{LANGUAGE_TAG_PATTERN.pattern}'"
 
 
 class DesignationCollisionAcknowledgement(Base):
@@ -51,7 +48,7 @@ class DesignationCollisionAcknowledgement(Base):
     # (changed-by-name only, as in `user_identity.py`): a user reference must not appear verbatim in
     # a diff (NFR-04, NFR-26).
     __audit_fields__: ClassVar[frozenset[str] | None] = frozenset(
-        {"entry_id", "term_key", "language", "reason"}
+        {"entry_id", "term_key", "reason"}
     )
     __audit_withheld_fields__: ClassVar[frozenset[str]] = frozenset({"acknowledged_by_user_id"})
     __audit_ignored_fields__: ClassVar[frozenset[str]] = frozenset(
@@ -61,16 +58,14 @@ class DesignationCollisionAcknowledgement(Base):
     __table_args__ = (
         CheckConstraint(_TERM_KEY_NOT_BLANK_SQL, name="term_key_not_blank"),
         CheckConstraint(_REASON_NOT_BLANK_SQL, name="reason_not_blank"),
-        CheckConstraint(_LANGUAGE_CHECK_SQL, name="language"),
-        # One acknowledgement per (entry, term_key, language). A second attempt is a no-op at the
+        # One acknowledgement per (entry, term_key). A second attempt is a no-op at the
         # service layer (`nptc.catalogue.collisions.acknowledge_collision` selects first and returns
         # the existing row), as in `nptc.auth.grants.grant_role`'s no-op for a role already held:
         # re-acknowledging is not a caller error worth surfacing.
         Index(
-            "ix_designation_collision_ack_entry_term_language",
+            "ix_designation_collision_ack_entry_term",
             "entry_id",
             "term_key",
-            "language",
             unique=True,
         ),
     )
@@ -88,9 +83,6 @@ class DesignationCollisionAcknowledgement(Base):
         active_history=True,
     )
     term_key: Mapped[str] = mapped_column(Text, nullable=False, active_history=True)
-    language: Mapped[str] = mapped_column(
-        Text, nullable=False, server_default=text("'en-AU'"), active_history=True
-    )
     # Nullable: an `AuditContext.system()` acknowledgement (a seeded or backfilled decision) has no
     # human actor, as with `AuditEvent.actor_user_id`.
     acknowledged_by_user_id: Mapped[uuid.UUID | None] = mapped_column(

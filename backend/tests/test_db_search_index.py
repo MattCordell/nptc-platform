@@ -245,12 +245,10 @@ FROM generate_series(1, :count) AS g
 """)
 
 _BULK_DESIGNATIONS_SQL = text("""
-INSERT INTO designation (entry_id, term, use, language, status)
+INSERT INTO designation (entry_id, term, status)
 SELECT
     e.id,
     'synonym ' || md5(e.business_key),
-    'synonym',
-    'en-AU',
     'active'
 FROM catalogue_entry AS e
 WHERE e.business_key LIKE 'NPTC-8%'

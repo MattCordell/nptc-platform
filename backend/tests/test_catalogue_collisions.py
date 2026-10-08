@@ -33,7 +33,7 @@ from nptc.catalogue.collisions import (
 )
 from nptc.catalogue.designations import add_designation, add_synonyms
 from nptc.catalogue.entries import EntryChanges, create_entry, save_entry
-from nptc.catalogue.term_hygiene import DesignationLanguageError, TermCleaningError
+from nptc.catalogue.term_hygiene import TermCleaningError
 from nptc.db.models.audit import AuditEvent
 from nptc.db.models.catalogue_entry import CatalogueEntry, CatalogueEntryStatus
 from nptc.db.models.designation_collision_acknowledgement import (
@@ -167,72 +167,6 @@ def test_create_entry_rejects_a_preferred_term_colliding_with_another_entrys_syn
     with pytest.raises(DesignationCollisionError):
         _new_entry(app_session, "Adrenal Ab")
 
-    assert _audit_event_count(app_session) == before
-
-
-@pytest.mark.req("FR-05")
-@pytest.mark.integration
-def test_a_non_en_au_preferred_variant_does_not_collide_across_languages(
-    app_session: Session,
-) -> None:
-    """`CatalogueEntry.preferred_term` is always en-AU
-    (`ck_designation_no_en_au_preferred`) - a non-en-AU preferred variant
-    (issue #47's own mi-NZ example) folding to the same key as an
-    unrelated entry's en-AU preferred term must not collide just because
-    the two surface forms match; they are not comparable designations at
-    all once language is taken into account."""
-    _new_entry(app_session, "Adrenal Ab")
-    other_entry = _new_entry(app_session, "21-Hydroxylase Ab")
-    app_session.flush()
-
-    add_designation(
-        app_session,
-        AuditContext.system(),
-        entry=other_entry,
-        term="Adrenal Ab",
-        use="preferred",
-        language="mi-NZ",
-        reason="A non-en-AU preferred variant that happens to share a surface form",
-    )
-
-
-@pytest.mark.req("FR-05")
-@pytest.mark.integration
-def test_two_non_en_au_preferred_variants_in_the_same_language_do_collide(
-    app_session: Session,
-) -> None:
-    """The most ambiguous case FR-05 names: two entries each holding an
-    `mi-NZ` preferred designation that folds to the same key. Distinct
-    from the synonym-vs-preferred and preferred-vs-synonym checks above -
-    this is preferred-vs-preferred, on the `Designation` side only (a
-    `CatalogueEntry.preferred_term` is always en-AU, so this case can only
-    arise between two non-en-AU `Designation` rows)."""
-    first_entry = _new_entry(app_session, "Full blood count")
-    second_entry = _new_entry(app_session, "Something else")
-    add_designation(
-        app_session,
-        AuditContext.system(),
-        entry=first_entry,
-        term="Panui toto katoa",
-        use="preferred",
-        language="mi-NZ",
-        reason="First entry's mi-NZ preferred term",
-    )
-    app_session.flush()
-    before = _audit_event_count(app_session)
-
-    with pytest.raises(DesignationCollisionError) as exc_info:
-        add_designation(
-            app_session,
-            AuditContext.system(),
-            entry=second_entry,
-            term="Panui toto katoa",
-            use="preferred",
-            language="mi-NZ",
-            reason="Second entry's colliding mi-NZ preferred term",
-        )
-
-    assert exc_info.value.collisions[0].business_key == first_entry.business_key
     assert _audit_event_count(app_session) == before
 
 
@@ -380,7 +314,6 @@ def test_acknowledged_warning_does_not_recur_for_that_entry(app_session: Session
         acknowledger=reviewer,
         entry=blood,
         term_key=collision_key("ADA2"),
-        language="en-AU",
         reason="Genuinely ambiguous abbreviation, disambiguated by specimen",
     )
     assert created is True
@@ -402,7 +335,7 @@ def test_acknowledged_warning_does_not_recur_for_that_entry(app_session: Session
 @pytest.mark.req("FR-05")
 @pytest.mark.integration
 def test_acknowledging_the_same_collision_twice_is_a_no_op(app_session: Session) -> None:
-    """`ix_designation_collision_ack_entry_term_language`'s `UNIQUE`
+    """`ix_designation_collision_ack_entry_term`'s `UNIQUE`
     constraint is what a second, naive `INSERT` would hit - this asserts
     the service layer returns the existing row instead, writing no second
     audit event, matching `grant_role`'s own "granting a role already
@@ -417,7 +350,6 @@ def test_acknowledging_the_same_collision_twice_is_a_no_op(app_session: Session)
         acknowledger=reviewer,
         entry=entry,
         term_key=collision_key("ADA2"),
-        language="en-AU",
         reason="Genuinely ambiguous abbreviation, disambiguated by specimen",
     )
     assert first_created is True
@@ -430,7 +362,6 @@ def test_acknowledging_the_same_collision_twice_is_a_no_op(app_session: Session)
         acknowledger=reviewer,
         entry=entry,
         term_key=collision_key("ADA2"),
-        language="en-AU",
         reason="Acknowledging the same collision again",
     )
     app_session.flush()
@@ -462,7 +393,6 @@ def test_acknowledging_with_an_invalid_reason_is_rejected_even_on_the_idempotent
         acknowledger=reviewer,
         entry=entry,
         term_key=collision_key("ADA2"),
-        language="en-AU",
         reason="Genuinely ambiguous abbreviation, disambiguated by specimen",
     )
     app_session.flush()
@@ -474,33 +404,7 @@ def test_acknowledging_with_an_invalid_reason_is_rejected_even_on_the_idempotent
             acknowledger=reviewer,
             entry=entry,
             term_key=collision_key("ADA2"),
-            language="en-AU",
             reason="",
-        )
-
-
-@pytest.mark.req("FR-04")
-@pytest.mark.integration
-def test_acknowledge_with_a_malformed_language_tag_raises_a_typed_error_not_an_integrity_error(
-    app_session: Session,
-) -> None:
-    """`designation_collision_acknowledgement` has no `@validates("language")`
-    hook the way `Designation` does, so without this check a malformed tag
-    would reach the table's own `CHECK` constraint as an unmapped
-    `IntegrityError` (issue #224 review finding 1)."""
-    entry = _new_entry(app_session, "Adenosine deaminase")
-    app_session.flush()
-    reviewer = _principal(roles=frozenset({Role.REVIEWER}), user_id=None)
-
-    with pytest.raises(DesignationLanguageError):
-        acknowledge_collision(
-            app_session,
-            AuditContext.system(),
-            acknowledger=reviewer,
-            entry=entry,
-            term_key=collision_key("ADA2"),
-            language="not a bcp47 tag",
-            reason="Attempting to acknowledge with a malformed language tag",
         )
 
 
@@ -527,42 +431,8 @@ def test_acknowledge_with_a_blank_term_key_raises_a_typed_error_not_an_integrity
             acknowledger=reviewer,
             entry=entry,
             term_key="",
-            language="en-AU",
             reason="Attempting to acknowledge with a blank comparison key",
         )
-
-
-@pytest.mark.req("FR-04")
-@pytest.mark.integration
-def test_acknowledge_canonicalises_a_lowercase_language_tag(app_session: Session) -> None:
-    """`en-au` and `en-AU` must resolve to the one stored language - a
-    caller acknowledging with `en-au` still silences the warning recorded
-    against `en-AU` by `add_designation` (issue #224 review finding 2)."""
-    blood = _new_entry(app_session, "Adenosine deaminase")
-    csf = _new_entry(app_session, "Adenosine deaminase CSF")
-    add_designation(
-        app_session, AuditContext.system(), entry=blood, term="ADA2", reason="First ADA2 synonym"
-    )
-    add_designation(
-        app_session, AuditContext.system(), entry=csf, term="ADA2", reason="Second ADA2 synonym"
-    )
-    app_session.flush()
-    reviewer = _principal(roles=frozenset({Role.REVIEWER}), user_id=None)
-
-    acknowledgement, created = acknowledge_collision(
-        app_session,
-        AuditContext.system(),
-        acknowledger=reviewer,
-        entry=blood,
-        term_key=collision_key("ADA2"),
-        language="en-au",
-        reason="Genuinely ambiguous abbreviation, disambiguated by specimen",
-    )
-    app_session.flush()
-
-    assert created is True
-    assert acknowledgement.language == "en-AU"
-    assert warning_collisions(app_session, entry=blood, terms=["ADA2"]) == ()
 
 
 @pytest.mark.req("FR-44")
@@ -583,7 +453,6 @@ def test_acknowledge_without_the_permission_is_refused(app_session: Session) -> 
             acknowledger=member,
             entry=entry,
             term_key=collision_key("ADA2"),
-            language="en-AU",
             reason="Attempting to acknowledge without the permission",
         )
 
@@ -816,7 +685,7 @@ def test_two_concurrent_acknowledgements_of_the_same_collision_are_serialised(
     """`acknowledge_collision`'s own docstring records that it is *not*
     given a `pg_advisory_xact_lock` the way `assert_no_error_collisions`
     is: the select-first is still read-then-write, so two genuinely
-    concurrent acknowledgements of one `(entry, term_key, language)` can
+    concurrent acknowledgements of one `(entry, term_key)` can
     both read "no existing row" before either commits. Unlike the
     advisory-lock case, nothing here blocks the two selects from racing -
     what serialises the outcome is Postgres's own unique-index insert
@@ -848,7 +717,6 @@ def test_two_concurrent_acknowledgements_of_the_same_collision_are_serialised(
                 acknowledger=reviewer,
                 entry=entry_in_session,
                 term_key=racing_term_key,
-                language="en-AU",
                 reason=f"Concurrent acknowledgement attempt {key}",
             )
             session.commit()

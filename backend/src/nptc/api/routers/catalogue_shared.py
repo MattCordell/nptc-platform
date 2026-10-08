@@ -34,7 +34,6 @@ from sqlalchemy.orm import Session
 from nptc.api.labels import (
     AU_PREFERRED_TERM_PROVENANCE,
     LIST_FSN_PROVENANCE,
-    PREFERRED_VARIANT_PROVENANCE,
     SYNONYM_PROVENANCE,
     LabelProvenance,
     fsn_provenance,
@@ -661,13 +660,11 @@ def property_value_from_row(
 
 
 class Designation(BaseModel):
-    """A catalogue-authored synonym, or a preferred variant in a language
-    other than en-AU.
+    """A catalogue-authored synonym.
 
-    The catalogue's own en-AU preferred term is **not** here - it is
-    `EntrySummary.preferred_term`, and ADR-0022 makes its absence from
-    `designation` a database invariant rather than a convention. A client
-    building a term list needs both: `preferred_term`, plus these.
+    The catalogue's own preferred term is **not** here - it is
+    `EntrySummary.preferred_term`, and ADR-0022 keeps it out of `designation`.
+    A client building a term list needs both: `preferred_term`, plus these.
 
     No `id` (matching `Binding`'s own rule, NFR-04/NFR-26): the designation
     write router addresses a designation by term in the request body, not
@@ -677,14 +674,13 @@ class Designation(BaseModel):
     model_config = ConfigDict(frozen=True)
 
     term: str
-    use: str
-    language: str
     status: str
     length: int
     #: FR-98. Singular, not a dict: this model carries exactly one label
-    #: field (`term`), unlike `Binding`/`EntrySummary`. Per-row, not a
-    #: shared constant - it depends on this row's own `use`, see
-    #: `designation_from_row`.
+    #: field (`term`), unlike `Binding`/`EntrySummary`. `SYNONYM_PROVENANCE` on
+    #: every row read from `designation`; the amendment route also returns the
+    #: entry's own preferred term in this shape, with
+    #: `AU_PREFERRED_TERM_PROVENANCE`.
     label_provenance: LabelProvenance
 
 
@@ -694,21 +690,10 @@ class DesignationList(BaseModel):
     items: list[Designation]
 
 
-#: `Designation.use`'s two values, each mapped to its own FR-98 provenance -
-#: ADR-0022 is why `"preferred"` here means `PREFERRED_VARIANT_PROVENANCE`
-#: (a non-en-AU preferred term) rather than the AU preferred term.
-_DESIGNATION_LABEL_PROVENANCE: dict[str, LabelProvenance] = {
-    "synonym": SYNONYM_PROVENANCE,
-    "preferred": PREFERRED_VARIANT_PROVENANCE,
-}
-
-
 def designation_from_row(row: queries.DesignationRow) -> Designation:
     return Designation(
         term=row.term,
-        use=row.use,
-        language=row.language,
         status=row.status,
         length=row.length,
-        label_provenance=_DESIGNATION_LABEL_PROVENANCE[row.use],
+        label_provenance=SYNONYM_PROVENANCE,
     )

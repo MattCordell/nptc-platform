@@ -34,16 +34,10 @@ from nptc.audit.diffing import ChangeKind
 from nptc.audit.recording import record_change
 from nptc.audit.writer import AuditContext, acquire_append_lock
 from nptc.catalogue.changelog import validate_changelog_note
-from nptc.catalogue.collisions import assert_no_error_collisions
-from nptc.catalogue.term_hygiene import (
-    TermCleaningError,
-    clean_term,
-    preferred_term_length,
-    validate_language_tag,
-)
+from nptc.catalogue.collisions import CandidateKind, assert_no_error_collisions
+from nptc.catalogue.term_hygiene import TermCleaningError, clean_term, preferred_term_length
 from nptc.db.errors import unique_violation_constraint
 from nptc.db.models.catalogue_entry import CatalogueEntry
-from nptc_shared.language import DEFAULT_LANGUAGE
 from nptc_shared.similarity import collision_key
 
 __all__ = [
@@ -51,7 +45,6 @@ __all__ = [
     "DesignationNotFoundError",
     "DesignationNotRetiredError",
     "DuplicateActiveTermError",
-    "PreferredDesignationAlreadyActiveError",
     "TermCleaningError",
     "add_designation",
     "add_synonyms",
@@ -66,14 +59,11 @@ __all__ = [
     "retire_designation",
 ]
 
-#: The explicit names given to `Index(...)` in `nptc.db.models.designation`, so
-#: `NAMING_CONVENTION` never renames them. Matched against
+#: The explicit name given to `Index(...)` in `nptc.db.models.designation`, so
+#: `NAMING_CONVENTION` never renames it. Matched against
 #: `unique_violation_constraint(exc)` as `create_binding` does, so a race lost
 #: at flush becomes the domain error the pre-insert check would have raised.
 _NO_DUPLICATE_ACTIVE_TERM_CONSTRAINT = "ix_designation_no_duplicate_active_term"
-_ONE_ACTIVE_PREFERRED_PER_LANGUAGE_CONSTRAINT = (
-    "ix_designation_one_active_preferred_per_entry_language"
-)
 
 if TYPE_CHECKING:
     # Annotation-only: a runtime import would be circular (see the module
@@ -96,7 +86,7 @@ class DesignationNotRetiredError(ValueError):
 
     Also covers the address-level case. A term retired and then re-added creates
     a new active row with the same `term_key`. The original stays retired, but
-    `(entry_id, term_key, language)` already has an active designation, so there
+    `(entry_id, term_key)` already has an active designation, so there
     is nothing to reinstate. The route checks this before resolving a retired row,
     so both cases answer with this type."""
 
@@ -105,7 +95,7 @@ class DesignationNotRetiredError(ValueError):
 
 class DesignationNotFoundError(LookupError):
     """Raised by `load_active_designation` when no active designation on
-    `entry_id` matches `term`/`language`. A term that was retired or never added
+    `entry_id` matches `term`. A term that was retired or never added
     is not addressable this way, which is not a conflicting state (as for
     `CodeBindingNotFoundError`)."""
 
@@ -115,35 +105,20 @@ class DesignationNotFoundError(LookupError):
 class DuplicateActiveTermError(ValueError):
     """Raised when `add_designation`, `amend_designation` or
     `reinstate_designation` would produce a second active designation sharing
-    `(entry_id, term_key, language)`, the comparison-key fold that
+    `(entry_id, term_key)`, the comparison-key fold that
     `ix_designation_no_duplicate_active_term` enforces in the database."""
 
     http_status: ClassVar[int] = 409
 
 
-class PreferredDesignationAlreadyActiveError(ValueError):
-    """Raised when `add_designation` or `reinstate_designation` would give one
-    entry a second active `use='preferred'` designation in the same language, as
-    `ix_designation_one_active_preferred_per_entry_language` forbids. The
-    catalogue's en-AU preferred term is never a `designation` row (ADR-0022,
-    `ck_designation_no_en_au_preferred`), so this only fires for a non-en-AU
-    preferred variant."""
-
-    http_status: ClassVar[int] = 409
-
-
 def find_active_designation(
-    session: Session,
-    *,
-    entry_id: uuid.UUID,
-    term: str,
-    language: str = DEFAULT_LANGUAGE,
+    session: Session, *, entry_id: uuid.UUID, term: str
 ) -> Designation | None:
     """`load_active_designation` without the refusal: `None` where that function
     would raise `DesignationNotFoundError`. It is the one query both share.
 
     Exists for a caller that needs "is there one?" as a question. The amendment
-    route is one: the catalogue's en-AU preferred term lives on
+    route is one: the catalogue's preferred term lives on
     `catalogue_entry.preferred_term`, never a `designation` row (ADR-0022), so the
     route must tell "no such designation, but this is the entry's preferred term"
     from "no such designation at all". Catching `DesignationNotFoundError` would
@@ -154,26 +129,18 @@ def find_active_designation(
     from nptc.db.models.designation import DesignationStatus
 
     key = collision_key(clean_term(term))
-    canonical_language = validate_language_tag(language)
     return session.execute(
         select(_Designation).where(
             _Designation.entry_id == entry_id,
             _Designation.term_key == key,
-            _Designation.language == canonical_language,
             _Designation.status == str(DesignationStatus.ACTIVE),
         )
     ).scalar_one_or_none()
 
 
-def load_active_designation(
-    session: Session,
-    *,
-    entry_id: uuid.UUID,
-    term: str,
-    language: str = DEFAULT_LANGUAGE,
-) -> Designation:
+def load_active_designation(session: Session, *, entry_id: uuid.UUID, term: str) -> Designation:
     """Resolves an active designation from its public address,
-    `(entry_id, term, language)`. A request body supplies the term, never a path
+    `(entry_id, term)`. A request body supplies the term, never a path
     segment or an internal id, since a term can contain `/`.
 
     Looked up by comparison key, not the raw term, because
@@ -181,34 +148,23 @@ def load_active_designation(
     punctuation variant resolves the same row the collision check would call a
     duplicate.
 
-    `use` is not a filter: that index has no `use` column, so
-    `(entry_id, term_key, language)` identifies at most one active row.
-
-    `language` is canonicalised first (`validate_language_tag`), as
-    `Designation`'s `@validates` hook did when the row was written, so `en-au`
-    resolves a row stored as `en-AU`."""
-    designation = find_active_designation(session, entry_id=entry_id, term=term, language=language)
+    `(entry_id, term_key)` identifies at most one active row."""
+    designation = find_active_designation(session, entry_id=entry_id, term=term)
     if designation is None:
-        canonical_language = validate_language_tag(language)
         raise DesignationNotFoundError(
-            f"entry {entry_id} has no active designation for term {term!r} "
-            f"in language {canonical_language!r}"
+            f"entry {entry_id} has no active designation for term {term!r}"
         )
     return designation
 
 
 def find_retired_designation(
-    session: Session,
-    *,
-    entry_id: uuid.UUID,
-    term: str,
-    language: str = DEFAULT_LANGUAGE,
+    session: Session, *, entry_id: uuid.UUID, term: str
 ) -> Designation | None:
     """The retired-row sibling of `find_active_designation`. The active-only query
     hardcodes `status == 'active'`, so it cannot resolve the row a reinstatement
     acts on.
 
-    Several retired rows can share `(entry_id, term_key, language)`: a term
+    Several retired rows can share `(entry_id, term_key)`: a term
     added, retired and re-added repeatedly leaves one per cycle, because
     `ix_designation_no_duplicate_active_term` is active-only. The ordering picks
     the row an editor expects:
@@ -224,13 +180,11 @@ def find_retired_designation(
     from nptc.db.models.designation import DesignationStatus
 
     key = collision_key(clean_term(term))
-    canonical_language = validate_language_tag(language)
     return session.execute(
         select(_Designation)
         .where(
             _Designation.entry_id == entry_id,
             _Designation.term_key == key,
-            _Designation.language == canonical_language,
             _Designation.status == str(DesignationStatus.RETIRED),
         )
         .order_by(
@@ -242,13 +196,7 @@ def find_retired_designation(
     ).scalar_one_or_none()
 
 
-def load_retired_designation(
-    session: Session,
-    *,
-    entry_id: uuid.UUID,
-    term: str,
-    language: str = DEFAULT_LANGUAGE,
-) -> Designation:
+def load_retired_designation(session: Session, *, entry_id: uuid.UUID, term: str) -> Designation:
     """Resolves the most recently retired designation from its public address, or
     raises `DesignationNotFoundError` (404), reused from `load_active_designation`:
     a term never retired on this entry is not addressable this way.
@@ -257,12 +205,10 @@ def load_retired_designation(
     different outcome (`DesignationNotRetiredError`, 409), and the route checks it
     before calling this function, so a 404 is never returned for an address that
     already has an active row."""
-    designation = find_retired_designation(session, entry_id=entry_id, term=term, language=language)
+    designation = find_retired_designation(session, entry_id=entry_id, term=term)
     if designation is None:
-        canonical_language = validate_language_tag(language)
         raise DesignationNotFoundError(
-            f"entry {entry_id} has no retired designation for term {term!r} "
-            f"in language {canonical_language!r}"
+            f"entry {entry_id} has no retired designation for term {term!r}"
         )
     return designation
 
@@ -273,18 +219,14 @@ def add_designation(
     *,
     entry: CatalogueEntry,
     term: str,
-    use: str = "synonym",
-    language: str = DEFAULT_LANGUAGE,
     reason: str,
 ) -> Designation:
-    """Adds one designation row to `entry`. `term` is cleaned here as well as by
+    """Adds one synonym row to `entry`. `term` is cleaned here as well as by
     `Designation`'s `@validates` hook, so FR-05's collision check compares the
-    value that will be stored. `language` is canonicalised before the check for
-    the same reason: `assert_no_error_collisions` branches on
-    `language == DEFAULT_LANGUAGE`, and `en-au` would take the wrong path.
+    value that will be stored.
 
-    `reason`, `term` and `language` are validated before `acquire_append_lock`;
-    none touches the session, so a rejected input takes no lock. Callers are
+    `reason` and `term` are validated before `acquire_append_lock`;
+    neither touches the session, so a rejected input takes no lock. Callers are
     wrapped in `entry_child_write`, which already holds the lock, so the call here
     is a cheap re-assertion. It stays because a direct caller would otherwise take
     the collision lock before the append lock, the reverse of what an
@@ -294,8 +236,7 @@ def add_designation(
     not against this entry's own: two concurrent adds of one term both pass it and
     one loses at insert. `record_change(kind=CREATED)` flushes, which is where the
     loser's `IntegrityError` surfaces. It is translated into
-    `DuplicateActiveTermError` or `PreferredDesignationAlreadyActiveError` rather
-    than reaching the caller as a 500.
+    `DuplicateActiveTermError` rather than reaching the caller as a 500.
 
     `entry_id` is read into a local before the flush. A failed flush expires every
     tracked instance, so touching `entry.id` in the `except` block would reload
@@ -303,18 +244,13 @@ def add_designation(
     of the domain error."""
     validated_reason = validate_changelog_note(reason)
     cleaned_term = clean_term(term)
-    canonical_language = validate_language_tag(language)
     acquire_append_lock(session)
 
     from nptc.db.models.designation import Designation
 
-    assert_no_error_collisions(
-        session, entry=entry, term=cleaned_term, language=canonical_language, use=use
-    )
+    assert_no_error_collisions(session, entry=entry, term=cleaned_term, kind=CandidateKind.SYNONYM)
     entry_id = entry.id
-    designation = Designation(
-        entry_id=entry_id, term=cleaned_term, use=use, language=canonical_language
-    )
+    designation = Designation(entry_id=entry_id, term=cleaned_term)
     session.add(designation)
     try:
         record_change(
@@ -326,16 +262,9 @@ def add_designation(
             reason=validated_reason,
         )
     except IntegrityError as exc:
-        constraint_name = unique_violation_constraint(exc)
-        if constraint_name == _NO_DUPLICATE_ACTIVE_TERM_CONSTRAINT:
+        if unique_violation_constraint(exc) == _NO_DUPLICATE_ACTIVE_TERM_CONSTRAINT:
             raise DuplicateActiveTermError(
-                f"entry {entry_id} already has an active designation for term "
-                f"{cleaned_term!r} in language {canonical_language!r}"
-            ) from exc
-        if constraint_name == _ONE_ACTIVE_PREFERRED_PER_LANGUAGE_CONSTRAINT:
-            raise PreferredDesignationAlreadyActiveError(
-                f"entry {entry_id} already has an active preferred designation "
-                f"in language {canonical_language!r}"
+                f"entry {entry_id} already has an active designation for term {cleaned_term!r}"
             ) from exc
         raise
     return designation
@@ -347,7 +276,6 @@ def add_synonyms(
     *,
     entry: CatalogueEntry,
     terms: Sequence[str],
-    language: str = DEFAULT_LANGUAGE,
     reason: str,
 ) -> list[Designation]:
     """Adds each of `terms` as its own synonym row (FR-04). One changelog note
@@ -383,15 +311,7 @@ def add_synonyms(
             deduplicated.append((key, cleaned))
     deduplicated.sort(key=lambda pair: pair[0])
     return [
-        add_designation(
-            session,
-            ctx,
-            entry=entry,
-            term=cleaned,
-            use="synonym",
-            language=language,
-            reason=validated_reason,
-        )
+        add_designation(session, ctx, entry=entry, term=cleaned, reason=validated_reason)
         for _key, cleaned in deduplicated
     ]
 
@@ -450,10 +370,9 @@ def reinstate_designation(
     an unrelated new row, which re-adding the term produces.
 
     Shaped like `add_designation`, not `retire_designation`. Retiring can never
-    violate a partial unique index; reinstating can violate either
-    `ix_designation_no_duplicate_active_term` or
-    `ix_designation_one_active_preferred_per_entry_language`. So it runs FR-05's
-    collision check and the same `IntegrityError` translation.
+    violate a partial unique index; reinstating can violate
+    `ix_designation_no_duplicate_active_term`. So it runs FR-05's collision check
+    and the same `IntegrityError` translation.
 
     `entry` is required, unlike `retire_designation`, to give
     `assert_no_error_collisions` the entry to exclude, as `amend_designation`
@@ -464,8 +383,8 @@ def reinstate_designation(
     diff and raise `AuditNoOpError`. The route also checks at the address level
     (see `DesignationNotRetiredError`), so only a direct caller reaches this guard.
 
-    `entry_id`, `cleaned_term` and `canonical_language` are captured before the
-    flush, for the reason in `add_designation`. `reason` is validated first, then
+    `entry_id` and `cleaned_term` are captured before the flush, for the reason
+    in `add_designation`. `reason` is validated first, then
     the append lock is taken."""
     validated_reason = validate_changelog_note(reason)
     acquire_append_lock(session)
@@ -477,10 +396,7 @@ def reinstate_designation(
 
     entry_id = entry.id
     cleaned_term = designation.term
-    canonical_language = designation.language
-    assert_no_error_collisions(
-        session, entry=entry, term=cleaned_term, language=canonical_language, use=designation.use
-    )
+    assert_no_error_collisions(session, entry=entry, term=cleaned_term, kind=CandidateKind.SYNONYM)
     designation.status = str(DesignationStatus.ACTIVE)
     designation.retired_at = None
     try:
@@ -493,16 +409,9 @@ def reinstate_designation(
             reason=validated_reason,
         )
     except IntegrityError as exc:
-        constraint_name = unique_violation_constraint(exc)
-        if constraint_name == _NO_DUPLICATE_ACTIVE_TERM_CONSTRAINT:
+        if unique_violation_constraint(exc) == _NO_DUPLICATE_ACTIVE_TERM_CONSTRAINT:
             raise DuplicateActiveTermError(
-                f"entry {entry_id} already has an active designation for term "
-                f"{cleaned_term!r} in language {canonical_language!r}"
-            ) from exc
-        if constraint_name == _ONE_ACTIVE_PREFERRED_PER_LANGUAGE_CONSTRAINT:
-            raise PreferredDesignationAlreadyActiveError(
-                f"entry {entry_id} already has an active preferred designation "
-                f"in language {canonical_language!r}"
+                f"entry {entry_id} already has an active designation for term {cleaned_term!r}"
             ) from exc
         raise
     return designation
@@ -547,14 +456,7 @@ def amend_designation(
 
     # Captured before the flush; see `add_designation`.
     entry_id = entry.id
-    designation_language = designation.language
-    assert_no_error_collisions(
-        session,
-        entry=entry,
-        term=cleaned_term,
-        language=designation_language,
-        use=designation.use,
-    )
+    assert_no_error_collisions(session, entry=entry, term=cleaned_term, kind=CandidateKind.SYNONYM)
     designation.term = cleaned_term
     try:
         record_change(
@@ -566,11 +468,9 @@ def amend_designation(
             reason=validated_reason,
         )
     except IntegrityError as exc:
-        constraint_name = unique_violation_constraint(exc)
-        if constraint_name == _NO_DUPLICATE_ACTIVE_TERM_CONSTRAINT:
+        if unique_violation_constraint(exc) == _NO_DUPLICATE_ACTIVE_TERM_CONSTRAINT:
             raise DuplicateActiveTermError(
-                f"entry {entry_id} already has an active designation for term "
-                f"{cleaned_term!r} in language {designation_language!r}"
+                f"entry {entry_id} already has an active designation for term {cleaned_term!r}"
             ) from exc
         raise
     return designation

@@ -409,14 +409,14 @@ def _write_entry(
         business_key=entry.business_key,
     )
 
-    synonyms_by_language: dict[str, list[str]] = {}
-    for designation in entry.designations:
-        if designation.use == "synonym":
-            synonyms_by_language.setdefault(designation.language, []).append(designation.term)
-    for language, terms in synonyms_by_language.items():
+    if entry.designations:
         tally.synonyms += len(
             add_synonyms(
-                session, ctx, entry=created, terms=terms, language=language, reason=SEED_IMPORT_NOTE
+                session,
+                ctx,
+                entry=created,
+                terms=[designation.term for designation in entry.designations],
+                reason=SEED_IMPORT_NOTE,
             )
         )
 

@@ -237,7 +237,6 @@ _SESSION_FREE_PRECHECKS = frozenset(
     {
         "validate_changelog_note",
         "clean_term",
-        "validate_language_tag",
         "SCTID",
         "_validate_edition_hint",
         "_validate_system",
@@ -843,7 +842,6 @@ def test_save_entry_and_entry_child_write_do_not_deadlock_on_the_same_collision_
                     AuditContext.system(),
                     entry=entry_y_local,
                     term=racing_term,
-                    use="synonym",
                     reason="Adding a synonym via entry_child_write, racing a concurrent rename",
                 )
             session.commit()
@@ -920,7 +918,7 @@ def test_a_valid_note_takes_the_append_lock(
 
 def _call_add_designation(session: Session, entry: CatalogueEntry, reason: str) -> object:
     return add_designation(
-        session, AuditContext.system(), entry=entry, term="Synonym", use="synonym", reason=reason
+        session, AuditContext.system(), entry=entry, term="Synonym", reason=reason
     )
 
 
@@ -980,7 +978,7 @@ def _call_save_property_values_for_entries(
 
 def _unsaved_designation(entry: CatalogueEntry) -> Designation:
     """Never flushed: the note check must reject before the writer reads it."""
-    return Designation(entry_id=entry.id, term="Synonym", use="synonym", language="en")
+    return Designation(entry_id=entry.id, term="Synonym")
 
 
 def _call_amend_designation(session: Session, entry: CatalogueEntry, reason: str) -> object:

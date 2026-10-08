@@ -14,7 +14,6 @@ from pydantic import ValidationError
 
 from nptc.api.labels import (
     AU_PREFERRED_TERM_PROVENANCE,
-    PREFERRED_VARIANT_PROVENANCE,
     SYNONYM_PROVENANCE,
     DesignationType,
     LabelProvenance,
@@ -38,7 +37,6 @@ def test_designation_type_values_are_the_wire_strings() -> None:
     assert DesignationType.FSN == "fsn"
     assert DesignationType.AU_PREFERRED_TERM == "au_preferred_term"
     assert DesignationType.SYNONYM == "synonym"
-    assert DesignationType.PREFERRED_VARIANT == "preferred_variant"
 
 
 @pytest.mark.req("FR-98")
@@ -59,12 +57,11 @@ def test_label_provenance_is_frozen() -> None:
 
 @pytest.mark.req("FR-98")
 def test_fixed_provenance_constants_are_never_applicable_for_a_semantic_tag() -> None:
-    """None of these three designation types is ever an FSN, so none of
-    them has a "the tag is intact/stripped" fact to report."""
+    """Neither of these designation types is ever an FSN, so neither
+    has a "the tag is intact/stripped" fact to report."""
     for constant, expected_designation in (
         (AU_PREFERRED_TERM_PROVENANCE, DesignationType.AU_PREFERRED_TERM),
         (SYNONYM_PROVENANCE, DesignationType.SYNONYM),
-        (PREFERRED_VARIANT_PROVENANCE, DesignationType.PREFERRED_VARIANT),
     ):
         assert constant.designation == expected_designation
         assert constant.semantic_tag == SemanticTagState.NOT_APPLICABLE

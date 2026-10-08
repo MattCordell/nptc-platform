@@ -6,13 +6,6 @@ stripped. This module defines that vocabulary once; response models
 (`nptc.api.routers.catalogue_shared`, `nptc.api.routers.terminology`) attach
 it to their own fields.
 
-**`PREFERRED_VARIANT`, not "rcpa_preferred_term", for a `designation` row
-with `use == "preferred"`.** ADR-0022 keeps the catalogue's en-AU preferred
-term only on `catalogue_entry.preferred_term`, enforced by
-`ck_designation_no_en_au_preferred`. A preferred `designation` row is
-therefore a preferred term in another language (e.g. `mi-NZ`), which
-"preferred variant" names correctly.
-
 **A binding's FSN is served as stored**, so its `SemanticTagState` is
 config-driven, not computed: `fsn_provenance` reports
 `ApiSettings.fsn_semantic_tag` (FR-66's placeholder) and never inspects the
@@ -34,7 +27,6 @@ from nptc.settings import ApiSettings
 __all__ = [
     "AU_PREFERRED_TERM_PROVENANCE",
     "LIST_FSN_PROVENANCE",
-    "PREFERRED_VARIANT_PROVENANCE",
     "SYNONYM_PROVENANCE",
     "DesignationType",
     "LabelProvenance",
@@ -51,7 +43,6 @@ class DesignationType(StrEnum):
     FSN = "fsn"
     AU_PREFERRED_TERM = "au_preferred_term"
     SYNONYM = "synonym"
-    PREFERRED_VARIANT = "preferred_variant"
 
 
 class SemanticTagState(StrEnum):
@@ -87,17 +78,9 @@ AU_PREFERRED_TERM_PROVENANCE = LabelProvenance(
     semantic_tag=SemanticTagState.NOT_APPLICABLE,
 )
 
-#: A catalogue-authored synonym (`Designation.use == "synonym"`). Not an FSN, so
-#: `NOT_APPLICABLE`.
+#: A catalogue-authored synonym. Not an FSN, so `NOT_APPLICABLE`.
 SYNONYM_PROVENANCE = LabelProvenance(
     designation=DesignationType.SYNONYM,
-    semantic_tag=SemanticTagState.NOT_APPLICABLE,
-)
-
-#: A `designation` row with `use == "preferred"` - a preferred term in a
-#: language other than en-AU (ADR-0022). Not an FSN, so `NOT_APPLICABLE`.
-PREFERRED_VARIANT_PROVENANCE = LabelProvenance(
-    designation=DesignationType.PREFERRED_VARIANT,
     semantic_tag=SemanticTagState.NOT_APPLICABLE,
 )
 

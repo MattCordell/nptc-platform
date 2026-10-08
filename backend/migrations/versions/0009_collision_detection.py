@@ -73,7 +73,6 @@ import sqlalchemy as sa
 from alembic import op
 
 from nptc.db import roles
-from nptc_shared.language import LANGUAGE_TAG_PATTERN
 from nptc_shared.similarity import collision_key
 
 # revision identifiers, used by Alembic.
@@ -239,7 +238,7 @@ def upgrade() -> None:
             name=op.f("ck_designation_collision_acknowledgement_reason_not_blank"),
         ),
         sa.CheckConstraint(
-            f"language ~ '{LANGUAGE_TAG_PATTERN.pattern}'",
+            "language ~ '^[A-Za-z]{2,3}(-[A-Za-z0-9]{2,8})*$'",
             name=op.f("ck_designation_collision_acknowledgement_language"),
         ),
         sa.ForeignKeyConstraint(
