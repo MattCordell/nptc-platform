@@ -65,6 +65,7 @@ from nptc.auth.tokens import TokenVerifier
 from nptc.db.models.terms_acceptance import TermsAcceptance
 from nptc.db.models.user import User
 from nptc.db.models.user_identity import UserIdentity
+from nptc.db.session import discard_after_commit_actions, run_after_commit_actions
 from nptc.settings import ApiSettings, AuthSettings
 from nptc.terms.acceptance import has_accepted
 from nptc_shared.terminology import StubTerminologyClient
@@ -254,9 +255,16 @@ def build_api_test_app(
             """Per-request `SAVEPOINT` - see the module docstring. Deliberately
             not `session_scope()` itself: that opens its own `Session` on its
             own connection, which would step outside this fixture's shared,
-            rolled-back-at-teardown transaction entirely."""
-            with session.begin_nested():
-                yield session
+            rolled-back-at-teardown transaction entirely. Queued `after_commit` actions run when
+            the SAVEPOINT releases and are dropped when it rolls back, as `session_scope` does
+            around its commit."""
+            try:
+                with session.begin_nested():
+                    yield session
+            except Exception:
+                discard_after_commit_actions(session)
+                raise
+            run_after_commit_actions(session)
 
         # issue #240: overridden here, in the builder, rather than per test
         # file - the precedent is `get_token_verifier` immediately below.

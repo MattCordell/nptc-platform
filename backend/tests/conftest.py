@@ -67,6 +67,7 @@ from sqlalchemy.engine import Connection, Engine, make_url
 from sqlalchemy.orm import Session
 from testcontainers.community.postgres import PostgresContainer
 
+from nptc.db import property_reconciler_dispatch
 from nptc.db.provision_login import APP_LOGIN_ROLE, provision_app_login
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -269,6 +270,30 @@ def capture_statements() -> StatementCapture:
             event.remove(bind, "before_cursor_execute", _record)
 
     return capture
+
+
+class RecordedReconciliations(list[Callable[[], object]]):
+    def clear(self) -> None:
+        """Forgets the recorded runs and, as a run that has started would, lets the next request
+        queue another. A recorded run never starts, so nothing else clears `_queued`."""
+        super().clear()
+        property_reconciler_dispatch._queued = False
+
+
+@pytest.fixture(autouse=True)
+def reconciliation_submissions(monkeypatch: pytest.MonkeyPatch) -> RecordedReconciliations:
+    """The reconciliations a test's requests queued after commit. Replaces the dispatcher's worker
+    thread with this list, so no test starts a real reconciliation by accident; call an entry to
+    run it."""
+    submitted = RecordedReconciliations()
+
+    class _Recorder:
+        def submit(self, fn: Callable[[], object], /) -> None:
+            submitted.append(fn)
+
+    monkeypatch.setattr(property_reconciler_dispatch, "_executor", _Recorder())
+    monkeypatch.setattr(property_reconciler_dispatch, "_queued", False)
+    return submitted
 
 
 def _wipe_committed_audit_state(owner_engine: Engine) -> None:
