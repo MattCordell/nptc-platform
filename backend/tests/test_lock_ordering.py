@@ -159,9 +159,16 @@ _SCAN_SOURCES: dict[str, str] = _catalogue_sources(Path(catalogue_package.__file
 #: reached only from `seed_baseline`, which holds the lock for the whole run.
 #: The `local_codes` writers and `acknowledge_collision` write tables with no
 #: `catalogue_entry` row lock or collision lock to cycle against.
+#:
+#: `_save_for_one_entry` is the per-target body of `save_property_values_for_entries`
+#: and is called from nowhere else. That caller has already validated `reason` and
+#: taken the lock once, ahead of the loop; the helper is exempt because requiring it
+#: to validate and lock again would run both a second time for every target. The
+#: caller stays checked, since the closure still flows through an exempt function.
 _EXEMPT_FUNCTIONS: frozenset[_FuncKey] = frozenset(
     {
         ("entries", "bump_entry_row_version"),
+        ("property_values", "_save_for_one_entry"),
         ("seed_import", "_resolve_classification"),
         ("seed_import", "_write_entry"),
         ("local_codes", "create_local_code_system"),
