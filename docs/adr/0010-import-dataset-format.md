@@ -149,6 +149,15 @@ design.
   field is gone: `Any` is now the specimen code `123038009`, held alone. The loader refuses a
   version 1 file and names the version. `report.json`'s `schema_version` moved from 8 to 9 for
   the changed finding vocabulary.
+
+## Amendment (2026-10-08, FR-83, FR-98)
+
+- `import-dataset.json`'s `schema_version` moved from 2 to 3. Every property value gains a
+  `display` key. For a specimen it is the code's SNOMED CT-AU preferred term, resolved by the
+  transform's `--check-terminology` pass, so `--emit-dataset` now requires that flag. It is
+  `null` for a discipline or subgroup. The loader stores a specimen's `display` as given, and
+  refuses a version 2 file. `report.json`'s `schema_version` moved from 9 to 10 for the new
+  `SPECIMEN_MAP_NO_PREFERRED_TERM` finding.
 - `SPECIMEN_UNCONSTRAINED_RESOLVED` no longer exists. `SPECIMEN_VALUE_UNMAPPED` is a blocking
   data defect, not informational, because the loader refuses a specimen with no code. The
   decisions above that say otherwise record what was decided at the time.
