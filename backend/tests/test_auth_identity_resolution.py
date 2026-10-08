@@ -15,6 +15,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from nptc.audit.writer import AuditContext
+from nptc.auth import identity as identity_module
 from nptc.auth.claims import OidcIdentityClaims
 from nptc.auth.identity import LinkOutcome, close_account, resolve_user_for_claims
 from nptc.db.models.user import User
@@ -562,6 +563,27 @@ def test_first_registration_reraises_a_non_username_constraint_violation(
             _claims(issuer=_UNTRUSTED, subject="   "),
             trusted_issuers=_TRUSTED,
             audit=AuditContext.system(),
+        )
+
+
+@pytest.mark.req("NFR-04")
+@pytest.mark.integration
+def test_identity_conflict_with_no_row_on_reread_is_reraised(
+    app_db: Connection, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The recovery trusts the winner's committed row. If the re-read finds none
+    (the winner rolled back), the original `IntegrityError` must surface rather than
+    loop or return a user that does not exist. Forced here by hiding the existing
+    row from `_find_identity`, so the insert collides and the re-read comes back empty."""
+    session = Session(bind=app_db)
+    claims = _claims(issuer=_UNTRUSTED, subject="sub-reread-miss")
+    resolve_user_for_claims(session, claims, trusted_issuers=_TRUSTED, audit=AuditContext.system())
+    session.flush()
+    monkeypatch.setattr(identity_module, "_find_identity", lambda *_args, **_kwargs: None)
+
+    with pytest.raises(IntegrityError):
+        resolve_user_for_claims(
+            session, claims, trusted_issuers=_TRUSTED, audit=AuditContext.system()
         )
 
 

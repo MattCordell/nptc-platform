@@ -193,6 +193,21 @@ which screen made the call.
 screen via `AdminLayout`) let an administrator complete this step before walking into a
 403 at all, not only in reaction to one.
 
+### An unhandled error still carries CORS headers
+
+Starlette puts `ServerErrorMiddleware` outside every other layer, `CORSMiddleware`
+included. An exception that no handler in `nptc.api.errors` claims would pass through CORS
+untouched, and that outer layer would write the 500. The response then had no
+`Access-Control-Allow-Origin`, so a cross-origin browser hid the status and the SPA saw an
+opaque network error instead of a 500 it could report.
+
+`UnhandledErrorMiddleware` (`nptc.api.unhandled`) sits just inside `CORSMiddleware`. It
+logs the exception with its traceback and returns a generic JSON 500, which CORS then
+decorates like any other response. The body never carries exception text (NFR-26,
+NFR-35), and only the configured frontend origin receives the header. If the response has
+already started, the error propagates instead, because a second response cannot follow the
+first.
+
 ### Audit attribution has two phases
 
 `resolve_user_for_claims` emits `user_identity.created` (and, on a first login,
@@ -224,6 +239,33 @@ denied, the `user_identity.created` event rolls back with the account it describ
 is correct — the account was not created either — but it means "a first login was
 attempted and refused" leaves no trace in `audit_event`. Keycloak's own event store
 (NFR-11) is where that attempt is recorded.
+
+### Two requests, one new user
+
+A new user's first page load sends several requests at once, and each carries the same
+token. All of them can read `user_identity`, find nothing, and insert. The database
+settles it with `uq_user_identity_issuer`: the first insert commits and the others fail.
+Left alone, the failure surfaced as a 500 on whichever request lost.
+
+`resolve_user_for_claims` recovers by re-reading, not by locking. Both inserts that can
+race run inside a `SAVEPOINT`: the first-login insert in `_create_user`, and the auto-link
+insert. A `uq_user_identity_issuer` violation rolls back only that `SAVEPOINT`, including
+its `user_identity.created` and `user_role.granted` audit events (NFR-08). The loser then
+re-reads the identity, which under READ COMMITTED sees the winner's committed row, and
+returns it as `EXISTING`. The race leaves one user, one identity and one set of audit
+events.
+
+Two details matter:
+
+- When both requests carry the same `preferred_username`, the loser first collides on
+  `uq_app_user_username`, retries with a suffix, and only then hits the identity
+  constraint. Recovery works on either order.
+- If the re-read finds no row, the winner rolled back and the conflict has no
+  explanation. The original `IntegrityError` is re-raised rather than retried. Every
+  other constraint violation is also re-raised unchanged.
+
+Isolation stays READ COMMITTED because the audit writer requires it. Advisory locks or
+`SERIALIZABLE` are not needed here.
 
 ## The realm's browser flow
 
@@ -297,7 +339,11 @@ The TOTP setup page appears on step-up, not on an ordinary sign-in. To see it, r
   registration notice and links, and no acceptance checkbox.
 - `backend/tests/test_api_auth_session.py` — the dependency chain over HTTP.
 - `backend/tests/test_api_error_mapping.py` — the 401/403/409 table above, the
-  `AuthSettings`-derived `acr_values`, and the CORS `expose_headers` assertion.
+  `AuthSettings`-derived `acr_values`, the CORS `expose_headers` assertion, and that an
+  unhandled error is a CORS-readable generic 500 for the frontend origin only.
+- `backend/tests/test_auth_identity_concurrency.py` — two real sessions racing the same
+  new subject, forced so the loser always blocks on the winner's insert, on the
+  first-login and auto-link paths.
 - `frontend/src/auth/*.test.ts(x)` — the browser's own half: `state` validation, the
   single-use transaction, renewal, and what each route renders per status; `stepUp`'s own
   silent-success and never-degrades-the-session-on-refusal behaviour.

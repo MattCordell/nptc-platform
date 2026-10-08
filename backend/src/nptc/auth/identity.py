@@ -94,6 +94,16 @@ def _find_candidate_user_ids(
 
 
 _USERNAME_UNIQUE_CONSTRAINT = "uq_app_user_username"
+_IDENTITY_UNIQUE_CONSTRAINT = "uq_user_identity_issuer"
+
+
+@dataclass(frozen=True)
+class _IdentityConflict:
+    """A concurrent request committed this `(issuer, subject)` first. Returned,
+    not raised, like every other outcome here; it carries the original error so
+    `_recover_from_identity_conflict` can re-raise it if the winner rolled back."""
+
+    error: IntegrityError
 
 
 def _fallback_username(claims: OidcIdentityClaims, suffix: str | None = None) -> str:
@@ -110,14 +120,24 @@ def _fallback_username(claims: OidcIdentityClaims, suffix: str | None = None) ->
 def _is_username_collision(exc: IntegrityError) -> bool:
     """True only for the retryable collision `_create_user` recovers from:
     a duplicate `app_user.username`. A blank `subject`
-    (`ck_user_identity_subject_not_blank`) or a duplicate `(issuer, subject)`
-    from a concurrent first login (`uq_user_identity_issuer`) cannot be fixed
-    by a new username suffix, and reporting them as a username-allocation
-    failure would misdirect whoever reads the error."""
+    (`ck_user_identity_subject_not_blank`) cannot be fixed by a new username
+    suffix, and reporting it as a username-allocation failure would misdirect
+    whoever reads the error. A duplicate `(issuer, subject)` is also not a
+    username problem; `_is_identity_conflict` recognises it and
+    `_recover_from_identity_conflict` handles it."""
     return unique_violation_constraint(exc) == _USERNAME_UNIQUE_CONSTRAINT
 
 
-def _create_user(session: Session, claims: OidcIdentityClaims, *, audit: AuditContext) -> User:
+def _is_identity_conflict(exc: IntegrityError) -> bool:
+    """True only for a duplicate `(issuer, subject)`: another request inserted the
+    same identity between this one's read and its insert. A new username cannot
+    fix it, but a re-read of the committed row can."""
+    return unique_violation_constraint(exc) == _IDENTITY_UNIQUE_CONSTRAINT
+
+
+def _create_user(
+    session: Session, claims: OidcIdentityClaims, *, audit: AuditContext
+) -> User | _IdentityConflict:
     """Creates the `app_user` (plus its first `user_identity` row) for a
     subject seen for the first time.
 
@@ -125,10 +145,11 @@ def _create_user(session: Session, claims: OidcIdentityClaims, *, audit: AuditCo
     collision (see `_is_username_collision`), because real IdPs routinely omit
     or duplicate `preferred_username` and that must not surface as a raw
     `IntegrityError` on first login. Any other constraint violation is
-    re-raised at once. Each attempt runs inside its own `SAVEPOINT`, so a
-    failed attempt aborts only itself, including the `user_identity.created`
-    audit event: a rolled-back retry never leaves a record of an insert that
-    did not happen.
+    re-raised at once, except a duplicate `(issuer, subject)` from a concurrent
+    first login, which is returned as an `_IdentityConflict`. Each attempt runs
+    inside its own `SAVEPOINT`, so a failed attempt aborts only itself, including
+    the `user_identity.created` audit event: a rolled-back retry never leaves a
+    record of an insert that did not happen.
     """
     display_name = claims.display_name or claims.preferred_username
     suffix: str | None = None
@@ -171,6 +192,8 @@ def _create_user(session: Session, claims: OidcIdentityClaims, *, audit: AuditCo
                     audit=audit,
                 )
         except IntegrityError as exc:
+            if _is_identity_conflict(exc):
+                return _IdentityConflict(exc)
             if not _is_username_collision(exc):
                 raise
             suffix = uuid.uuid4().hex[:8]
@@ -179,6 +202,74 @@ def _create_user(session: Session, claims: OidcIdentityClaims, *, audit: AuditCo
     raise RuntimeError(
         f"could not allocate a unique username after {_MAX_USERNAME_ATTEMPTS} attempts"
     )
+
+
+def _resolve_existing(
+    session: Session,
+    existing: UserIdentity,
+    claims: OidcIdentityClaims,
+    *,
+    audit: AuditContext,
+) -> Resolution:
+    user = session.get(User, existing.user_id)
+    if user is None or user.status == UserStatus.CLOSED:
+        # Defence in depth: closure deletes the identity row outright, so
+        # this should not be reachable.
+        return Resolution(outcome=LinkOutcome.MANUAL_LINK_REQUIRED, user=None)
+    # Safe to refresh whether or not claims.issuer is trusted:
+    # `_find_candidate_user_ids` checks this identity's own issuer before
+    # any other user can auto-link against it, so an untrusted issuer
+    # asserting email_verified=True creates no usable auto-link target.
+    identity_changed = (
+        existing.email != claims.email or existing.email_verified != claims.email_verified
+    )
+    name_changed = claims.display_name is not None and user.display_name != claims.display_name
+    existing.email = claims.email
+    existing.email_verified = claims.email_verified
+    if identity_changed:
+        # record_change refuses an empty diff (AuditNoOpError), so an
+        # ordinary repeat login must skip it.
+        record_change(
+            session,
+            audit,
+            action="user_identity.refreshed",
+            instance=existing,
+            kind=ChangeKind.UPDATED,
+        )
+    # Assign `user.display_name` after the identity's record_change, not
+    # before: append_audit_event flushes the session, and a flush discards
+    # the attribute history diff_instance needs, so this event's own diff
+    # would be empty (AuditNoOpError). close_account follows the same order.
+    if name_changed:
+        user.display_name = claims.display_name
+        record_change(
+            session,
+            audit,
+            action="user.renamed",
+            instance=user,
+            kind=ChangeKind.UPDATED,
+        )
+    return Resolution(outcome=LinkOutcome.EXISTING, user=user)
+
+
+def _recover_from_identity_conflict(
+    session: Session,
+    conflict: _IdentityConflict,
+    claims: OidcIdentityClaims,
+    *,
+    audit: AuditContext,
+) -> Resolution:
+    """Resolves the loser of a first-login race to the winner's user.
+
+    The failed insert rolled back inside its own `SAVEPOINT`, so the transaction
+    is still usable. Under READ COMMITTED the re-read sees the winner's committed
+    row. If it does not, the winner rolled back and the conflict has no
+    explanation, so the original error is re-raised instead of retried.
+    """
+    existing = _find_identity(session, claims.issuer, claims.subject)
+    if existing is None:
+        raise conflict.error
+    return _resolve_existing(session, existing, claims, audit=audit)
 
 
 def resolve_user_for_claims(
@@ -190,70 +281,40 @@ def resolve_user_for_claims(
 ) -> Resolution:
     existing = _find_identity(session, claims.issuer, claims.subject)
     if existing is not None:
-        user = session.get(User, existing.user_id)
-        if user is None or user.status == UserStatus.CLOSED:
-            # Defence in depth: closure deletes the identity row outright, so
-            # this should not be reachable.
-            return Resolution(outcome=LinkOutcome.MANUAL_LINK_REQUIRED, user=None)
-        # Safe to refresh whether or not claims.issuer is trusted:
-        # `_find_candidate_user_ids` checks this identity's own issuer before
-        # any other user can auto-link against it, so an untrusted issuer
-        # asserting email_verified=True creates no usable auto-link target.
-        identity_changed = (
-            existing.email != claims.email or existing.email_verified != claims.email_verified
-        )
-        name_changed = claims.display_name is not None and user.display_name != claims.display_name
-        existing.email = claims.email
-        existing.email_verified = claims.email_verified
-        if identity_changed:
-            # record_change refuses an empty diff (AuditNoOpError), so an
-            # ordinary repeat login must skip it.
-            record_change(
-                session,
-                audit,
-                action="user_identity.refreshed",
-                instance=existing,
-                kind=ChangeKind.UPDATED,
-            )
-        # Assign `user.display_name` after the identity's record_change, not
-        # before: append_audit_event flushes the session, and a flush discards
-        # the attribute history diff_instance needs, so this event's own diff
-        # would be empty (AuditNoOpError). close_account follows the same order.
-        if name_changed:
-            user.display_name = claims.display_name
-            record_change(
-                session,
-                audit,
-                action="user.renamed",
-                instance=user,
-                kind=ChangeKind.UPDATED,
-            )
-        return Resolution(outcome=LinkOutcome.EXISTING, user=user)
+        return _resolve_existing(session, existing, claims, audit=audit)
 
     candidate_user_ids = _find_candidate_user_ids(session, claims.email, trusted_issuers)
     if not candidate_user_ids:
-        user = _create_user(session, claims, audit=audit)
-        return Resolution(outcome=LinkOutcome.CREATED, user=user)
+        created = _create_user(session, claims, audit=audit)
+        if isinstance(created, _IdentityConflict):
+            return _recover_from_identity_conflict(session, created, claims, audit=audit)
+        return Resolution(outcome=LinkOutcome.CREATED, user=created)
 
     if len(candidate_user_ids) > 1 or not may_auto_link(claims, trusted_issuers):
         return Resolution(outcome=LinkOutcome.MANUAL_LINK_REQUIRED, user=None)
 
     candidate_user_id = candidate_user_ids[0]
-    identity = UserIdentity(
-        user_id=candidate_user_id,
-        issuer=claims.issuer,
-        subject=claims.subject,
-        email=claims.email,
-        email_verified=claims.email_verified,
-    )
-    session.add(identity)
-    record_change(
-        session,
-        audit,
-        action="user_identity.created",
-        instance=identity,
-        kind=ChangeKind.CREATED,
-    )
+    try:
+        with session.begin_nested():
+            identity = UserIdentity(
+                user_id=candidate_user_id,
+                issuer=claims.issuer,
+                subject=claims.subject,
+                email=claims.email,
+                email_verified=claims.email_verified,
+            )
+            session.add(identity)
+            record_change(
+                session,
+                audit,
+                action="user_identity.created",
+                instance=identity,
+                kind=ChangeKind.CREATED,
+            )
+    except IntegrityError as exc:
+        if not _is_identity_conflict(exc):
+            raise
+        return _recover_from_identity_conflict(session, _IdentityConflict(exc), claims, audit=audit)
     user = session.get(User, candidate_user_id)
     if user is None:
         # Not reachable: candidate_user_id came from a join against app_user in
