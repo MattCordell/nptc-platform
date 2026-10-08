@@ -195,14 +195,7 @@ def _designation_texts(entries: Mapping[str, ConceptDesignations]) -> list[str]:
     """Every folded FSN, display and designation value in ``entries``, across every
     edition: the search space for the specimen visibility filter and the timing
     check."""
-    texts: list[str] = []
-    for entry in entries.values():
-        if entry.fully_specified_name is not None:
-            texts.append(_fold(entry.fully_specified_name))
-        if entry.display is not None:
-            texts.append(_fold(entry.display))
-        texts.extend(_fold(value) for value in entry.values)
-    return texts
+    return [text for entry in entries.values() for text in _concept_texts(entry)]
 
 
 def _specimen_not_modelled_finding(candidate: _Candidate, group: SpecimenGroup) -> Finding:
@@ -248,6 +241,185 @@ def _timing_not_modelled_finding(candidate: _Candidate) -> Finding:
     )
 
 
+@dataclass(frozen=True)
+class _Vocabulary:
+    described_by_code: Mapping[str, ConceptDesignations]
+    group_effective_terms: Mapping[str, frozenset[str]]
+    unresolved_count: int
+    describe_requests: int
+
+
+@dataclass(frozen=True)
+class _Classification:
+    # Keyed by (code, group.key), not code alone: rows asserting different
+    # specimen groups can bind the same SCTID, and agreement is per (code, group).
+    # A code agreeing with group A but not B must not carry B's verdict into A's row.
+    not_modelled: frozenset[tuple[str, str]]
+    differs: frozenset[tuple[str, str]]
+    requests: int
+
+
+def _concept_texts(entry: ConceptDesignations) -> list[str]:
+    texts: list[str] = []
+    if entry.fully_specified_name is not None:
+        texts.append(_fold(entry.fully_specified_name))
+    if entry.display is not None:
+        texts.append(_fold(entry.display))
+    texts.extend(_fold(value) for value in entry.values)
+    return texts
+
+
+def _collect_candidates(
+    sheets: Sequence[Sheet],
+    checkable_locations: set[CellRef],
+    designations_by_label: Mapping[str, Mapping[str, ConceptDesignations]],
+) -> tuple[list[_Candidate], int]:
+    candidates: list[_Candidate] = []
+    rows_excluded = 0
+    for sheet in sheets:
+        for cells in _rows_by_role(sheet).values():
+            code_cell = cells.get(ColumnRole.CODE)
+            if code_cell is None or code_cell.reference not in checkable_locations:
+                rows_excluded += 1
+                continue
+            label_cell = cells.get(ColumnRole.PREFERRED_TERM)
+            if label_cell is None:
+                rows_excluded += 1
+                continue
+            folded_label = _fold(label_cell.text)
+            if not folded_label:
+                rows_excluded += 1
+                continue
+            code = code_cell.text.strip()
+            entries = _entries_for_code(code, designations_by_label)
+            if not entries:
+                # Absent or inactive in every edition: CODE_NOT_FOUND/
+                # CODE_INACTIVE own it (see terminology_check.py).
+                rows_excluded += 1
+                continue
+            candidates.append(
+                _Candidate(
+                    code=code,
+                    cell=label_cell,
+                    label=label_cell.text,
+                    folded_label=folded_label,
+                    entries=entries,
+                    asserted_group=_longest_match(folded_label, SPECIMEN_TABLE),
+                    timing=_extract_timing(folded_label),
+                )
+            )
+    return candidates, rows_excluded
+
+
+def _build_vocabulary(sweep: TerminologySweep, versions: set[str]) -> _Vocabulary:
+    """One ``describe()`` call over the whole specimen table."""
+    table_codes = all_specimen_codes(SPECIMEN_TABLE)
+    described = sweep.describe(table_codes, edition=SNOMED_CT_AU, versions=versions)
+    described_by_code = {entry.code: entry for entry in described}
+    group_effective_terms: dict[str, frozenset[str]] = {}
+    for group in SPECIMEN_TABLE:
+        served = described_by_code.get(group.specimen_code)
+        served_terms = frozenset(_concept_texts(served)) if served is not None else frozenset()
+        group_effective_terms[group.key] = frozenset(group.terms) | served_terms
+    return _Vocabulary(
+        described_by_code=described_by_code,
+        group_effective_terms=group_effective_terms,
+        unresolved_count=len(table_codes) - len(described_by_code),
+        describe_requests=math.ceil(len(table_codes) / sweep.chunk_size) if table_codes else 0,
+    )
+
+
+def _unresolved_asserting_codes(
+    candidates: Sequence[_Candidate], group_effective_terms: Mapping[str, frozenset[str]]
+) -> dict[str, set[str]]:
+    """Codes per specimen group whose asserted group no served designation shows:
+    the rows that still need classification."""
+    asserting_codes: dict[str, set[str]] = defaultdict(set)
+    for candidate in candidates:
+        asserted = candidate.asserted_group
+        if asserted is None:
+            continue
+        is_visible = any(
+            _any_term_matches(text, group_effective_terms[asserted.key])
+            for text in _designation_texts(candidate.entries)
+        )
+        if not is_visible:
+            asserting_codes[asserted.key].add(candidate.code)
+    return dict(asserting_codes)
+
+
+def _classify(
+    sweep: TerminologySweep, asserting_codes: Mapping[str, set[str]], versions: set[str]
+) -> _Classification:
+    groups_by_key = {group.key: group for group in SPECIMEN_TABLE}
+    not_modelled: set[tuple[str, str]] = set()
+    differs: set[tuple[str, str]] = set()
+    requests = 0
+    all_unresolved_codes = sorted({code for codes in asserting_codes.values() for code in codes})
+    if all_unresolved_codes:
+        without_result = frozenset(
+            sweep.codes_without_attribute(
+                all_unresolved_codes,
+                attribute=HAS_SPECIMEN_ATTRIBUTE,
+                edition=SNOMED_CT_AU,
+                versions=versions,
+            )
+        )
+        requests += 1
+        for key, codes in asserting_codes.items():
+            not_modelled.update((code, key) for code in codes if code in without_result)
+        for key, codes in sorted(asserting_codes.items()):
+            agrees = frozenset(
+                sweep.codes_with_attribute_value(
+                    sorted(codes),
+                    attribute=HAS_SPECIMEN_ATTRIBUTE,
+                    root=groups_by_key[key].specimen_code,
+                    edition=SNOMED_CT_AU,
+                    versions=versions,
+                )
+            )
+            requests += 1
+            for code in codes:
+                if (code, key) not in not_modelled and code not in agrees:
+                    differs.add((code, key))
+    return _Classification(
+        not_modelled=frozenset(not_modelled), differs=frozenset(differs), requests=requests
+    )
+
+
+def _timing_visible(
+    candidate: _Candidate, timing: str, described_by_code: Mapping[str, ConceptDesignations]
+) -> bool:
+    if _timing_visible_in(_designation_texts(candidate.entries), timing):
+        return True
+    asserted = candidate.asserted_group
+    if asserted is None:
+        return False
+    described_group = described_by_code.get(asserted.specimen_code)
+    return described_group is not None and _timing_visible_in(
+        _concept_texts(described_group), timing
+    )
+
+
+def _finding_for(
+    candidate: _Candidate,
+    classification: _Classification,
+    described_by_code: Mapping[str, ConceptDesignations],
+) -> Finding | None:
+    asserted = candidate.asserted_group
+    if asserted is not None:
+        key = (candidate.code, asserted.key)
+        if key in classification.not_modelled:
+            return _specimen_not_modelled_finding(candidate, asserted)
+        if key in classification.differs:
+            return _specimen_differs_finding(candidate, asserted)
+    # The specimen aspect is not asserted, agrees, or was suppressed by the
+    # visibility filter; only now does timing get its own check.
+    if candidate.timing is None or _timing_visible(candidate, candidate.timing, described_by_code):
+        return None
+    return _timing_not_modelled_finding(candidate)
+
+
 def check_semantic_drift(
     sheets: Sequence[Sheet],
     *,
@@ -273,162 +445,39 @@ def check_semantic_drift(
         label: {entry.code: entry for entry in result.designations}
         for label, result in results.items()
     }
-
-    candidates: list[_Candidate] = []
-    rows_excluded = 0
-    for sheet in sheets:
-        for cells in _rows_by_role(sheet).values():
-            code_cell = cells.get(ColumnRole.CODE)
-            if code_cell is None or code_cell.reference not in checkable_locations:
-                rows_excluded += 1
-                continue
-            label_cell = cells.get(ColumnRole.PREFERRED_TERM)
-            if label_cell is None:
-                rows_excluded += 1
-                continue
-            folded_label = _fold(label_cell.text)
-            if not folded_label:
-                rows_excluded += 1
-                continue
-            code = code_cell.text.strip()
-            entries = _entries_for_code(code, designations_by_label)
-            if not entries:
-                # Absent or inactive in every edition: CODE_NOT_FOUND/
-                # CODE_INACTIVE own it (see terminology_check.py).
-                rows_excluded += 1
-                continue
-            asserted_group = _longest_match(folded_label, SPECIMEN_TABLE)
-            timing = _extract_timing(folded_label)
-            candidates.append(
-                _Candidate(
-                    code=code,
-                    cell=label_cell,
-                    label=label_cell.text,
-                    folded_label=folded_label,
-                    entries=entries,
-                    asserted_group=asserted_group,
-                    timing=timing,
-                )
-            )
+    candidates, rows_excluded = _collect_candidates(
+        sheets, checkable_locations, designations_by_label
+    )
 
     resolved_versions: set[str] = set()
+    vocabulary = _build_vocabulary(sweep, resolved_versions)
+    asserting_codes = _unresolved_asserting_codes(candidates, vocabulary.group_effective_terms)
+    classification = _classify(sweep, asserting_codes, resolved_versions)
 
-    # -- vocabulary: one describe() call over the whole specimen table -----
-    table_codes = all_specimen_codes(SPECIMEN_TABLE)
-    described = sweep.describe(table_codes, edition=SNOMED_CT_AU, versions=resolved_versions)
-    described_by_code = {entry.code: entry for entry in described}
-    specimen_table_entries_unresolved = len(table_codes) - len(described_by_code)
-    describe_requests = math.ceil(len(table_codes) / sweep.chunk_size) if table_codes else 0
-
-    group_effective_terms: dict[str, frozenset[str]] = {}
-    for group in SPECIMEN_TABLE:
-        served = described_by_code.get(group.specimen_code)
-        served_terms: set[str] = set()
-        if served is not None:
-            if served.fully_specified_name is not None:
-                served_terms.add(_fold(served.fully_specified_name))
-            if served.display is not None:
-                served_terms.add(_fold(served.display))
-            served_terms.update(_fold(value) for value in served.values)
-        group_effective_terms[group.key] = frozenset(group.terms) | served_terms
-
-    # -- visibility filter: which asserted rows still need classification --
-    asserting_codes: dict[str, set[str]] = defaultdict(set)
-    for candidate in candidates:
-        asserted = candidate.asserted_group
-        if asserted is None:
-            continue
-        texts = _designation_texts(candidate.entries)
-        is_visible = any(
-            _any_term_matches(text, group_effective_terms[asserted.key]) for text in texts
-        )
-        if not is_visible:
-            asserting_codes[asserted.key].add(candidate.code)
-
-    groups_by_key = {group.key: group for group in SPECIMEN_TABLE}
-
-    # Keyed by (code, group.key), not code alone: rows asserting different
-    # specimen groups can bind the same SCTID, and agreement is per (code, group).
-    # A code agreeing with group A but not B must not carry B's verdict into A's row.
-    not_modelled: set[tuple[str, str]] = set()
-    differs: set[tuple[str, str]] = set()
-    classification_requests = 0
-    all_unresolved_codes = sorted({code for codes in asserting_codes.values() for code in codes})
-    if all_unresolved_codes:
-        without_result = frozenset(
-            sweep.codes_without_attribute(
-                all_unresolved_codes,
-                attribute=HAS_SPECIMEN_ATTRIBUTE,
-                edition=SNOMED_CT_AU,
-                versions=resolved_versions,
-            )
-        )
-        classification_requests += 1
-        for key, codes in asserting_codes.items():
-            not_modelled.update((code, key) for code in codes if code in without_result)
-        for key, codes in sorted(asserting_codes.items()):
-            group = groups_by_key[key]
-            agrees = frozenset(
-                sweep.codes_with_attribute_value(
-                    sorted(codes),
-                    attribute=HAS_SPECIMEN_ATTRIBUTE,
-                    root=group.specimen_code,
-                    edition=SNOMED_CT_AU,
-                    versions=resolved_versions,
-                )
-            )
-            classification_requests += 1
-            for code in codes:
-                if (code, key) in not_modelled:
-                    continue
-                if code not in agrees:
-                    differs.add((code, key))
-
-    findings: list[Finding] = []
-    term_specimen_not_modelled_count = 0
-    term_specimen_differs_count = 0
-    term_timing_not_modelled_count = 0
-    for candidate in candidates:
-        asserted = candidate.asserted_group
-        if asserted is not None and (candidate.code, asserted.key) in not_modelled:
-            findings.append(_specimen_not_modelled_finding(candidate, asserted))
-            term_specimen_not_modelled_count += 1
-            continue
-        if asserted is not None and (candidate.code, asserted.key) in differs:
-            findings.append(_specimen_differs_finding(candidate, asserted))
-            term_specimen_differs_count += 1
-            continue
-        # The specimen aspect is not asserted, agrees, or was suppressed by the
-        # visibility filter; only now does timing get its own check.
-        if candidate.timing is None:
-            continue
-        own_texts = _designation_texts(candidate.entries)
-        timing_visible = _timing_visible_in(own_texts, candidate.timing)
-        if not timing_visible and asserted is not None:
-            described_group = described_by_code.get(asserted.specimen_code)
-            if described_group is not None:
-                group_texts = []
-                if described_group.fully_specified_name is not None:
-                    group_texts.append(_fold(described_group.fully_specified_name))
-                if described_group.display is not None:
-                    group_texts.append(_fold(described_group.display))
-                group_texts.extend(_fold(value) for value in described_group.values)
-                timing_visible = _timing_visible_in(group_texts, candidate.timing)
-        if not timing_visible:
-            findings.append(_timing_not_modelled_finding(candidate))
-            term_timing_not_modelled_count += 1
+    findings = tuple(
+        finding
+        for candidate in candidates
+        if (finding := _finding_for(candidate, classification, vocabulary.described_by_code))
+        is not None
+    )
 
     return SemanticDriftOutcome(
-        findings=tuple(findings),
+        findings=findings,
         run=DriftRun(
             rows_examined=len(candidates),
             rows_excluded=rows_excluded,
-            term_specimen_not_modelled_count=term_specimen_not_modelled_count,
-            term_specimen_differs_count=term_specimen_differs_count,
-            term_timing_not_modelled_count=term_timing_not_modelled_count,
-            specimen_table_entries_unresolved=specimen_table_entries_unresolved,
-            describe_requests=describe_requests,
-            classification_requests=classification_requests,
+            term_specimen_not_modelled_count=_count(
+                findings, FindingCode.TERM_SPECIMEN_NOT_MODELLED
+            ),
+            term_specimen_differs_count=_count(findings, FindingCode.TERM_SPECIMEN_DIFFERS),
+            term_timing_not_modelled_count=_count(findings, FindingCode.TERM_TIMING_NOT_MODELLED),
+            specimen_table_entries_unresolved=vocabulary.unresolved_count,
+            describe_requests=vocabulary.describe_requests,
+            classification_requests=classification.requests,
             resolved_versions=tuple(sorted(resolved_versions)),
         ),
     )
+
+
+def _count(findings: Iterable[Finding], code: FindingCode) -> int:
+    return sum(1 for finding in findings if finding.code == code)
