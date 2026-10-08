@@ -491,8 +491,8 @@ def seed_baseline(
     roll back: part of the work may already be flushed. `session` must be at READ COMMITTED, which
     `nptc.db.session.get_engine` guarantees and `acquire_append_lock` checks.
     """
-    audit = ctx if ctx is not None else AuditContext.system()
     acquire_append_lock(session)
+    audit = ctx if ctx is not None else AuditContext.system()
     _assert_nothing_seeded(session)
 
     system_properties_created = tuple(seed_system_properties(session))

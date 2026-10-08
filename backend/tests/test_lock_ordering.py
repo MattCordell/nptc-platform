@@ -80,7 +80,7 @@ from __future__ import annotations
 import ast
 import threading
 import uuid
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from pathlib import Path
 from typing import Any
 
@@ -90,10 +90,9 @@ from sqlalchemy.engine import Connection, Engine
 from sqlalchemy.orm import Session
 from sqlalchemy.orm.exc import StaleDataError
 
-import nptc.catalogue.designations as designations_module
-import nptc.catalogue.entries as entries_module
-import nptc.catalogue.property_values as property_values_module
+import nptc.catalogue as catalogue_package
 from nptc.audit.writer import AUDIT_APPEND_LOCK_KEY, AuditContext
+from nptc.catalogue.bindings import create_binding, link_replacement, retire_binding
 from nptc.catalogue.changelog import ChangelogNoteError
 from nptc.catalogue.collisions import DesignationCollisionError
 from nptc.catalogue.designations import (
@@ -119,32 +118,31 @@ from nptc.catalogue.property_values import (
     save_property_values_for_entries,
 )
 from nptc.db.models.catalogue_entry import CatalogueEntry
+from nptc.db.models.code_binding import SNOMED_CT_SYSTEM, CodeBinding
 from nptc.db.models.designation import Designation
 from nptc.db.models.property_definition import PropertyDefinition, PropertyOrigin, PropertyScope
 from nptc.registry.datatypes import build_builtin_handlers
 from nptc.registry.handlers import DatatypeRegistry, HandlerDeps
 from nptc_shared.terminology.stub import StubTerminologyClient
 
-#: The three files issue #281's two lock-ordering cycles concern - every
-#: function whose body calls `assert_no_error_collisions` (the collision
-#: lock), mutates `row_version`, or calls `bump_entry_row_version`/
-#: `record_change`/`record_snapshot_change` (which can flush a pending
-#: `catalogue_entry` row-version mutation) lives in one of these.
-#:
-#: Not every module under `nptc.catalogue`: `bindings.py` (`code_binding`)
-#: and `local_codes.py` (`local_code`/`local_code_system`) each write a
-#: different table with no collision-key lock of their own - neither ever
-#: calls `assert_no_error_collisions` - and `bindings.py`'s own row-lock-
-#: vs-append-lock ordering was already closed by issue #60's
-#: `entry_child_write`, which this scan's own `entries.py` file already
-#: covers. Extending this same derived-guard treatment to those two
-#: modules would be a reasonable follow-up, but it is a different module's
-#: own review history, not this issue's.
-_SCAN_FILES: tuple[Path, ...] = (
-    Path(entries_module.__file__),
-    Path(property_values_module.__file__),
-    Path(designations_module.__file__),
-)
+_FuncDef = ast.FunctionDef | ast.AsyncFunctionDef
+_FuncKey = tuple[str, str]
+
+
+#: Every module in the catalogue package, subpackages included, so a new writer
+#: module is scanned without anyone remembering to list it. None is excluded: a
+#: module with no writer derives nothing. Keyed by dotted path under the package,
+#: so two `__init__` modules do not collide.
+def _catalogue_sources(directory: Path) -> dict[str, str]:
+    return {
+        ".".join(path.relative_to(directory).with_suffix("").parts): path.read_text(
+            encoding="utf-8"
+        )
+        for path in sorted(directory.rglob("*.py"))
+    }
+
+
+_SCAN_SOURCES: dict[str, str] = _catalogue_sources(Path(catalogue_package.__file__).parent)
 
 #: `bump_entry_row_version` itself directly does `entry.row_version += 1`,
 #: which is exactly what `_assigns_row_version` looks for - but it is a
@@ -153,10 +151,28 @@ _SCAN_FILES: tuple[Path, ...] = (
 #: `entry_child_write` on a clean exit"), never a top-level writer callable
 #: on its own, so requiring it to also acquire the lock itself would be
 #: requiring a redundant call inside code that is already inside the lock's
-#: scope by construction - the one documented, named exemption this guard
-#: allows, matching `test_sql_parameterisation.py`'s own convention for a
-#: justified carve-out rather than a silent gap.
-_EXEMPT_FUNCTIONS = frozenset({"bump_entry_row_version"})
+#: scope by construction - a documented, named exemption, matching
+#: `test_sql_parameterisation.py`'s own convention for a justified carve-out
+#: rather than a silent gap.
+#:
+#: The other entries are the same two cases. The two private seed helpers are
+#: reached only from `seed_baseline`, which holds the lock for the whole run.
+#: The `local_codes` writers and `acknowledge_collision` write tables with no
+#: `catalogue_entry` row lock or collision lock to cycle against.
+_EXEMPT_FUNCTIONS: frozenset[_FuncKey] = frozenset(
+    {
+        ("entries", "bump_entry_row_version"),
+        ("seed_import", "_resolve_classification"),
+        ("seed_import", "_write_entry"),
+        ("local_codes", "create_local_code_system"),
+        ("local_codes", "deprecate_local_code_system"),
+        ("local_codes", "create_local_code"),
+        ("local_codes", "create_local_code_unchecked"),
+        ("local_codes", "deprecate_local_code"),
+        ("local_codes", "create_snomed_map_row"),
+        ("collisions", "acknowledge_collision"),
+    }
+)
 
 #: A direct call to any of these, anywhere in a function's body, means that
 #: function can take a lock `acquire_append_lock` must precede -
@@ -173,15 +189,22 @@ _DIRECT_TRIGGER_CALL_NAMES = frozenset(
 )
 
 
-def _call_names(func_def: ast.FunctionDef) -> set[str]:
-    return {
-        node.func.id
-        for node in ast.walk(func_def)
-        if isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
-    }
+def _call_names(func_def: _FuncDef) -> set[str]:
+    """The bare name of every call in `func_def`, whether written `check(...)`
+    or `module.check(...)`: a trigger reached through an attribute must not
+    drop its caller from the derived set."""
+    names: set[str] = set()
+    for node in ast.walk(func_def):
+        if not isinstance(node, ast.Call):
+            continue
+        if isinstance(node.func, ast.Name):
+            names.add(node.func.id)
+        elif isinstance(node.func, ast.Attribute):
+            names.add(node.func.attr)
+    return names
 
 
-def _assigns_row_version(func_def: ast.FunctionDef) -> bool:
+def _assigns_row_version(func_def: _FuncDef) -> bool:
     """Whether `func_def`'s body directly sets some `<object>.row_version`
     - `entry.row_version += 1` inside `bump_entry_row_version`, and
     `save_property_values`'s identical inline bump, are what this catches;
@@ -204,16 +227,24 @@ def _assigns_row_version(func_def: ast.FunctionDef) -> bool:
 #: no lock. Adding a name here is a review decision - confirm the function
 #: never touches a session, directly or through an argument.
 _SESSION_FREE_PRECHECKS = frozenset(
-    {"validate_changelog_note", "clean_term", "validate_language_tag"}
+    {
+        "validate_changelog_note",
+        "clean_term",
+        "validate_language_tag",
+        "SCTID",
+        "_validate_edition_hint",
+        "_validate_system",
+    }
 )
 
 
 def _precheck_call_name(stmt: ast.stmt) -> str | None:
     """The allowed precheck `stmt` calls, or `None` if it is anything else.
 
-    Accepts `name = check(...)`, a bare `check(...)`, and `if reason is not
-    None: check(...)` (`entry_child_write`'s optional note) - each only when
-    no argument names `session`."""
+    Accepts `name = check(...)`, a bare `check(...)`, `name = check(...).attr`
+    (`SCTID(code).value`) and `if reason is not None: check(...)`
+    (`entry_child_write`'s optional note) - each only when no argument names
+    `session`."""
     if isinstance(stmt, ast.If):
         test = stmt.test
         guarded_by_reason = (
@@ -226,9 +257,10 @@ def _precheck_call_name(stmt: ast.stmt) -> str | None:
         if not guarded_by_reason or stmt.orelse or len(stmt.body) != 1:
             return None
         return _precheck_call_name(stmt.body[0])
-    if isinstance(stmt, ast.Assign | ast.Expr) and isinstance(stmt.value, ast.Call):
-        call = stmt.value
-    else:
+    if not isinstance(stmt, ast.Assign | ast.Expr):
+        return None
+    call = stmt.value.value if isinstance(stmt.value, ast.Attribute) else stmt.value
+    if not isinstance(call, ast.Call):
         return None
     if not (isinstance(call.func, ast.Name) and call.func.id in _SESSION_FREE_PRECHECKS):
         return None
@@ -246,7 +278,7 @@ def _is_acquire_append_lock_call(stmt: ast.stmt) -> bool:
     )
 
 
-def _pre_lock_prechecks(func_def: ast.FunctionDef) -> list[str] | None:
+def _pre_lock_prechecks(func_def: _FuncDef) -> list[str] | None:
     """The `_SESSION_FREE_PRECHECKS` `func_def` runs before its bare
     `acquire_append_lock(<something>)` call, after skipping a leading
     docstring; `None` if any other statement precedes the lock, or the lock
@@ -267,11 +299,11 @@ def _pre_lock_prechecks(func_def: ast.FunctionDef) -> list[str] | None:
     return None
 
 
-def _acquires_lock_before_session_use(func_def: ast.FunctionDef) -> bool:
+def _acquires_lock_before_session_use(func_def: _FuncDef) -> bool:
     return _pre_lock_prechecks(func_def) is not None
 
 
-def _validates_reason_before_lock(func_def: ast.FunctionDef) -> bool:
+def _validates_reason_before_lock(func_def: _FuncDef) -> bool:
     """A writer taking a `reason` must validate it ahead of the lock, so a
     rejected note takes no lock. Vacuously true without a `reason`
     parameter."""
@@ -282,12 +314,11 @@ def _validates_reason_before_lock(func_def: ast.FunctionDef) -> bool:
     return prechecks is not None and "validate_changelog_note" in prechecks
 
 
-def _derive_required_functions() -> dict[str, ast.FunctionDef]:
-    """Every function, across `_SCAN_FILES`, that must acquire the append
-    lock before anything else - derived from source rather than hand-
-    listed, so a new writer added to one of these three modules is caught
-    automatically rather than silently sitting outside a maintained
-    allowlist (round-2 review).
+def _derive_from_sources(sources: Mapping[str, str]) -> dict[_FuncKey, _FuncDef]:
+    """Every function, across the given modules (name to source), that must
+    acquire the append lock before anything else - derived from source rather
+    than hand-listed, so a new writer is caught automatically rather than
+    silently sitting outside a maintained allowlist.
 
     Two passes: a function is in the **base** set if `_DIRECT_TRIGGER_
     CALL_NAMES`/`_assigns_row_version` finds it taking a contended lock
@@ -305,29 +336,38 @@ def _derive_required_functions() -> dict[str, ast.FunctionDef]:
     autoflush before it ever reaches its first delegate call - the exact
     class of gap round-2 review found in the narrower "before the row/
     collision lock" placement this issue's fix moved away from.
+
+    Only module-level `def` and `async def` are keyed, by `(module, name)`:
+    a nested `def` is already part of its enclosing function's body, and two
+    modules may reuse a name. The closure matches on the bare called name, so
+    a shared name widens the set rather than narrowing it.
     """
-    func_defs: dict[str, ast.FunctionDef] = {}
-    for path in _SCAN_FILES:
-        tree = ast.parse(path.read_text(encoding="utf-8"))
-        for node in ast.walk(tree):
-            if isinstance(node, ast.FunctionDef):
-                func_defs[node.name] = node
+    func_defs: dict[_FuncKey, _FuncDef] = {}
+    for module, source in sources.items():
+        for node in ast.parse(source).body:
+            if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef):
+                func_defs[(module, node.name)] = node
 
     required = {
-        name
-        for name, func_def in func_defs.items()
+        key
+        for key, func_def in func_defs.items()
         if _call_names(func_def) & _DIRECT_TRIGGER_CALL_NAMES or _assigns_row_version(func_def)
     }
 
     changed = True
     while changed:
         changed = False
-        for name, func_def in func_defs.items():
-            if name not in required and _call_names(func_def) & required:
-                required.add(name)
+        required_names = {name for _, name in required}
+        for key, func_def in func_defs.items():
+            if key not in required and _call_names(func_def) & required_names:
+                required.add(key)
                 changed = True
 
-    return {name: func_defs[name] for name in required - _EXEMPT_FUNCTIONS}
+    return {key: func_defs[key] for key in required - _EXEMPT_FUNCTIONS}
+
+
+def _derive_required_functions() -> dict[_FuncKey, _FuncDef]:
+    return _derive_from_sources(_SCAN_SOURCES)
 
 
 def test_acquire_append_lock_precedes_every_session_touching_statement() -> None:
@@ -362,9 +402,9 @@ def test_reason_is_validated_before_the_append_lock() -> None:
     assert violations == []
 
 
-def _parse_function(source: str) -> ast.FunctionDef:
+def _parse_function(source: str) -> _FuncDef:
     node = ast.parse(source).body[0]
-    assert isinstance(node, ast.FunctionDef)
+    assert isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef)
     return node
 
 
@@ -380,10 +420,21 @@ def test_guard_accepts_session_free_prechecks_before_the_lock() -> None:
 
 
 @pytest.mark.req("NFR-08")
+def test_guard_accepts_an_attribute_read_of_a_precheck_before_the_lock() -> None:
+    func_def = _parse_function(
+        "def write(session, code):\n"
+        "    validated_code = SCTID(code).value\n"
+        "    acquire_append_lock(session)\n"
+    )
+    assert _acquires_lock_before_session_use(func_def)
+
+
+@pytest.mark.req("NFR-08")
 @pytest.mark.parametrize(
     "body",
     [
         "    session.execute(query)\n    acquire_append_lock(session)\n",
+        "    value = session.get(Entry, key).row_version\n    acquire_append_lock(session)\n",
         "    entry = load_entry_for_update(session, key)\n    acquire_append_lock(session)\n",
         "    value = clean_term(session.scalar(query))\n    acquire_append_lock(session)\n",
         "    other = some_helper(reason)\n    acquire_append_lock(session)\n",
@@ -391,6 +442,7 @@ def test_guard_accepts_session_free_prechecks_before_the_lock() -> None:
     ],
     ids=[
         "session-call",
+        "session-attribute-read",
         "session-argument-helper",
         "precheck-reading-session",
         "unlisted-call",
@@ -425,6 +477,104 @@ def test_guard_accepts_a_reason_guarded_precheck_before_the_lock() -> None:
 def test_guard_requires_reason_validation_before_the_lock(body: str) -> None:
     func_def = _parse_function(f"def write(session, term, reason):\n{body}")
     assert not _validates_reason_before_lock(func_def)
+
+
+_UNLOCKED_WRITER = "def write(session):\n    assert_no_error_collisions(session)\n"
+_LOCKED_WRITER = (
+    "def write(session):\n"
+    "    acquire_append_lock(session)\n"
+    "    assert_no_error_collisions(session)\n"
+)
+
+
+def _violations(sources: Mapping[str, str]) -> list[_FuncKey]:
+    return sorted(
+        key
+        for key, func_def in _derive_from_sources(sources).items()
+        if not _acquires_lock_before_session_use(func_def)
+    )
+
+
+@pytest.mark.req("NFR-08")
+def test_guard_derives_an_async_writer() -> None:
+    source = "async def write(session):\n    assert_no_error_collisions(session)\n"
+    assert _violations({"mod": source}) == [("mod", "write")]
+
+
+@pytest.mark.req("NFR-08")
+def test_guard_keeps_same_named_writers_in_different_modules_apart() -> None:
+    assert _violations({"good": _LOCKED_WRITER, "bad": _UNLOCKED_WRITER}) == [("bad", "write")]
+
+
+@pytest.mark.req("NFR-08")
+def test_guard_is_not_masked_by_a_nested_function_sharing_a_writers_name() -> None:
+    source = (
+        _UNLOCKED_WRITER
+        + "\n\ndef other(session):\n"
+        + "    acquire_append_lock(session)\n"
+        + "    def write():\n"
+        + "        pass\n"
+    )
+    assert _violations({"mod": source}) == [("mod", "write")]
+
+
+@pytest.mark.req("NFR-08")
+@pytest.mark.parametrize(
+    "source",
+    [
+        "def write(session):\n    collisions.assert_no_error_collisions(session)\n",
+        "def helper(session):\n    assert_no_error_collisions(session)\n"
+        "\n\ndef write(session):\n    module.helper(session)\n",
+    ],
+    ids=["direct-trigger", "closure-through-a-derived-function"],
+)
+def test_guard_derives_a_writer_that_calls_through_an_attribute(source: str) -> None:
+    assert ("mod", "write") in _derive_from_sources({"mod": source})
+
+
+@pytest.mark.req("NFR-08")
+def test_guard_keeps_the_closure_flowing_through_an_exempt_function() -> None:
+    exempt_module, exempt_name = min(_EXEMPT_FUNCTIONS)
+    source = (
+        f"def {exempt_name}(session):\n    record_change(session)\n"
+        f"\n\ndef caller(session):\n    {exempt_name}(session)\n"
+    )
+    derived = _derive_from_sources({exempt_module: source})
+    assert (exempt_module, exempt_name) not in derived
+    assert (exempt_module, "caller") in derived
+
+
+@pytest.mark.req("NFR-08")
+def test_guard_scans_a_module_nobody_listed(tmp_path: Path) -> None:
+    (tmp_path / "__init__.py").write_text("", encoding="utf-8")
+    (tmp_path / "brand_new_writer.py").write_text(_UNLOCKED_WRITER, encoding="utf-8")
+    assert _violations(_catalogue_sources(tmp_path)) == [("brand_new_writer", "write")]
+
+
+@pytest.mark.req("NFR-08")
+def test_guard_scans_a_module_inside_a_subpackage(tmp_path: Path) -> None:
+    subpackage = tmp_path / "nested"
+    subpackage.mkdir()
+    (tmp_path / "__init__.py").write_text("", encoding="utf-8")
+    (subpackage / "__init__.py").write_text("", encoding="utf-8")
+    (subpackage / "deep_writer.py").write_text(_UNLOCKED_WRITER, encoding="utf-8")
+    assert _violations(_catalogue_sources(tmp_path)) == [("nested.deep_writer", "write")]
+
+
+@pytest.mark.req("NFR-08")
+def test_guard_scans_the_modules_outside_the_original_three() -> None:
+    assert {"bindings", "local_codes", "seed_import"} <= _SCAN_SOURCES.keys()
+
+
+@pytest.mark.req("NFR-08")
+def test_every_exemption_names_a_function_that_exists() -> None:
+    present = {
+        (module, node.name)
+        for module, source in _SCAN_SOURCES.items()
+        for node in ast.parse(source).body
+        if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef)
+    }
+    assert sorted(_EXEMPT_FUNCTIONS - present) == []
 
 
 def _inputs(*values: object) -> list[PropertyValueInput]:
@@ -862,6 +1012,34 @@ def _call_save_entries(session: Session, entry: CatalogueEntry, reason: str) -> 
     )
 
 
+def _call_create_binding(session: Session, entry: CatalogueEntry, reason: str) -> object:
+    return create_binding(
+        session, AuditContext.system(), entry=entry, code="73211009", fsn="Diabetes", reason=reason
+    )
+
+
+def _unsaved_binding(entry: CatalogueEntry) -> CodeBinding:
+    """Never flushed, and never retired: the note check must reject before the
+    writer reads either."""
+    return CodeBinding(entry_id=entry.id, system=SNOMED_CT_SYSTEM, code="73211009", fsn="Diabetes")
+
+
+def _call_retire_binding(session: Session, entry: CatalogueEntry, reason: str) -> object:
+    return retire_binding(
+        session, AuditContext.system(), binding=_unsaved_binding(entry), reason=reason
+    )
+
+
+def _call_link_replacement(session: Session, entry: CatalogueEntry, reason: str) -> object:
+    return link_replacement(
+        session,
+        AuditContext.system(),
+        superseded=_unsaved_binding(entry),
+        successor=_unsaved_binding(entry),
+        reason=reason,
+    )
+
+
 def _call_entry_child_write(session: Session, entry: CatalogueEntry, reason: str) -> object:
     with entry_child_write(session, entry, entry.row_version, reason=reason):
         pass
@@ -876,9 +1054,12 @@ def _call_entry_child_write(session: Session, entry: CatalogueEntry, reason: str
         _call_add_designation,
         _call_add_synonyms,
         _call_amend_designation,
+        _call_create_binding,
         _call_create_entry,
         _call_entry_child_write,
+        _call_link_replacement,
         _call_reinstate_designation,
+        _call_retire_binding,
         _call_retire_designation,
         _call_save_entries,
         _call_save_entry,
