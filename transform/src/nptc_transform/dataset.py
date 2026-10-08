@@ -65,10 +65,9 @@ from nptc_transform.workbook import Cell, ColumnRole, Sheet
 
 DATASET_JSON_NAME = "import-dataset.json"
 
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 
 _SNOMED_SYSTEM = "http://snomed.info/sct"
-_LANGUAGE_EN_AU = "en-AU"
 
 
 class ServedFSNError(ValueError):
@@ -79,12 +78,10 @@ class ServedFSNError(ValueError):
 
 @dataclass(frozen=True)
 class Designation:
-    """One seeded designation - the preferred term itself, or a synonym
-    split out of the ``RCPA Synonyms`` cell (FR-04)."""
+    """One seeded synonym, split out of the ``RCPA Synonyms`` cell (FR-04). The entry's
+    own preferred term is ``ImportEntry.preferred_term``, not a designation (ADR-0022)."""
 
     term: str
-    use: str
-    language: str
     status: str
 
 
@@ -171,24 +168,13 @@ def _optional_cell_text(cell: Cell | None) -> str | None:
 
 
 def _build_designations(row_cells: Mapping[ColumnRole, Cell]) -> tuple[Designation, ...]:
-    designations: list[Designation] = []
-    preferred_cell = row_cells.get(ColumnRole.PREFERRED_TERM)
-    if preferred_cell is not None:
-        designations.append(
-            Designation(
-                term=_cell_text(preferred_cell),
-                use="preferred",
-                language=_LANGUAGE_EN_AU,
-                status="active",
-            )
-        )
     synonyms_cell = row_cells.get(ColumnRole.SYNONYMS)
-    if synonyms_cell is not None:
-        for synonym in split_synonyms(_cell_text(synonyms_cell)):
-            designations.append(
-                Designation(term=synonym, use="synonym", language=_LANGUAGE_EN_AU, status="active")
-            )
-    return tuple(designations)
+    if synonyms_cell is None:
+        return ()
+    return tuple(
+        Designation(term=synonym, status="active")
+        for synonym in split_synonyms(_cell_text(synonyms_cell))
+    )
 
 
 def _build_code_bindings(
@@ -313,8 +299,6 @@ def build_dataset(
 def _designation_payload(designation: Designation) -> dict[str, object]:
     return {
         "term": designation.term,
-        "use": designation.use,
-        "language": designation.language,
         "status": designation.status,
     }
 
