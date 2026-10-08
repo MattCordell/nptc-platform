@@ -1,10 +1,13 @@
 """Creates the ``nptc_app_login`` LOGIN role and makes it a member of
-``nptc_app``, so the deployable stack needs no manual SQL (NFR-41).
+``nptc_app``, and the ``nptc_indexer`` LOGIN role and makes it a member of
+``nptc_property_index_owner``, so the deployable stack needs no manual SQL
+(NFR-41, FR-13).
 
 Run as ``python -m nptc.db.provision_login`` by the ``migrate`` compose
 service, after ``alembic upgrade head``, as the owning role
-(``NPTC_MIGRATION_DATABASE_URL``). It is idempotent: a second run rotates the
-password to whatever ``NPTC_APP_DB_PASSWORD`` now holds.
+(``NPTC_MIGRATION_DATABASE_URL``). It is idempotent: a second run rotates each
+password to whatever ``NPTC_APP_DB_PASSWORD`` and ``NPTC_INDEXER_DB_PASSWORD``
+now hold.
 
 ``CREATE ROLE ... PASSWORD`` cannot take a bound parameter, and NFR-22 forbids
 building the statement from runtime data. So the password travels as a bound
@@ -19,7 +22,7 @@ import sys
 from pydantic import ValidationError
 from sqlalchemy import Engine, create_engine, text
 
-from nptc.settings import AppLoginSettings, MigrationSettings
+from nptc.settings import AppLoginSettings, IndexerLoginSettings, MigrationSettings
 
 APP_LOGIN_ROLE = "nptc_app_login"
 INDEXER_LOGIN_ROLE = "nptc_indexer"
@@ -93,10 +96,12 @@ def main() -> int:
     # in `docker compose logs` (NFR-26).
     try:
         dsn = MigrationSettings().migration_database_url
-        password = AppLoginSettings().app_db_password.get_secret_value()
+        app_password = AppLoginSettings().app_db_password.get_secret_value()
+        indexer_password = IndexerLoginSettings().indexer_db_password.get_secret_value()
         engine = create_engine(dsn)
         try:
-            provision_app_login(engine, password)
+            provision_app_login(engine, app_password)
+            provision_indexer_login(engine, indexer_password)
         finally:
             engine.dispose()
     except ValidationError as exc:

@@ -93,6 +93,24 @@ def test_backend_connects_as_the_least_privilege_login_to_the_compose_database()
     assert "@postgres:5432/" in dsn
 
 
+@pytest.mark.req("FR-13")
+def test_backend_reconciles_indexes_as_the_indexer_login_to_the_compose_database() -> None:
+    dsn = _services()["backend"]["environment"]["NPTC_INDEXER_DATABASE_URL"]
+
+    assert dsn.startswith("postgresql+psycopg://nptc_indexer:")
+    assert "@postgres:5432/" in dsn
+
+
+@pytest.mark.req("FR-13")
+def test_migrate_receives_the_indexer_password_and_backend_does_not() -> None:
+    """The backend gets the DSN built from the password, never the bare variable that
+    `provision_login` reads, so the rotation input stays with the one-shot service."""
+    services = _services()
+
+    assert "NPTC_INDEXER_DB_PASSWORD" in services["migrate"]["environment"]
+    assert "NPTC_INDEXER_DB_PASSWORD" not in services["backend"]["environment"]
+
+
 @pytest.mark.req("NFR-41")
 def test_backend_reads_signing_keys_from_the_internal_keycloak_address() -> None:
     """The issuer stays browser-facing while the API skips discovery."""
