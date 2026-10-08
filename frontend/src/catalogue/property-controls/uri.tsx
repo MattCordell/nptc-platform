@@ -1,4 +1,5 @@
 import { Field } from "../../components/field.tsx";
+import { INPUT_CLASSES } from "../../components/input-classes.ts";
 import type { ControlProps } from "./types.ts";
 
 /**
@@ -13,6 +14,7 @@ export function UriControl({ id, label, hint, error, value, onChange }: ControlP
       {(controlProps) => (
         <input
           {...controlProps}
+          className={INPUT_CLASSES}
           type="url"
           value={typeof value === "string" ? value : ""}
           onChange={(event) => onChange(event.target.value)}

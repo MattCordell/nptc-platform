@@ -4,6 +4,7 @@ import { useState } from "react";
 import type { components } from "../../api/schema.ts";
 import { Button } from "../../components/button.tsx";
 import { Field } from "../../components/field.tsx";
+import { INPUT_CLASSES } from "../../components/input-classes.ts";
 import type { FormError } from "../../components/error-summary.tsx";
 import { groupFieldId, newSlotId, slotFieldId } from "./types.ts";
 import type { ControlProps, PropertyValueSlot } from "./types.ts";
@@ -108,6 +109,7 @@ export function RepeatableValues({
                   {(controlProps) => (
                     <input
                       {...controlProps}
+                      className={INPUT_CLASSES}
                       type="text"
                       value={slot.justification ?? ""}
                       onChange={(event) => {

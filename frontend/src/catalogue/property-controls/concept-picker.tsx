@@ -2,6 +2,7 @@ import { useId, useState } from "react";
 
 import { usePropertyValueOptions } from "../../api/queries.ts";
 import { Field } from "../../components/field.tsx";
+import { INPUT_CLASSES } from "../../components/input-classes.ts";
 import { Select } from "../../components/select.tsx";
 import type { SelectOption } from "../../components/select.tsx";
 import { useDebouncedValue } from "../use-debounced-value.ts";
@@ -80,6 +81,7 @@ export function ConceptPickerControl({
         {(controlProps) => (
           <input
             {...controlProps}
+            className={INPUT_CLASSES}
             type="text"
             value={filterText}
             onChange={(event) => setFilterText(event.target.value)}

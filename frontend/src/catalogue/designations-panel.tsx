@@ -19,6 +19,7 @@ import { Dialog } from "../components/dialog.tsx";
 import type { FormError } from "../components/error-summary.tsx";
 import { Field } from "../components/field.tsx";
 import { Form } from "../components/form.tsx";
+import { INPUT_CLASSES } from "../components/input-classes.ts";
 import { LiveRegion } from "../components/live-region.tsx";
 import { useAnnounce } from "../components/use-announce.ts";
 
@@ -466,6 +467,7 @@ function AddSynonymsForm({
         {(controlProps) => (
           <input
             {...controlProps}
+            className={INPUT_CLASSES}
             type="text"
             value={cell}
             onChange={(event) => setCell(event.target.value)}
@@ -590,6 +592,7 @@ function AmendDialog({
           {(controlProps) => (
             <input
               {...controlProps}
+              className={INPUT_CLASSES}
               type="text"
               value={newTerm}
               onChange={(event) => setNewTerm(event.target.value)}
