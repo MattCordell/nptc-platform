@@ -13,6 +13,8 @@ import { AdminPropertyListPage } from "../pages/admin-property-list.tsx";
 import { AuthCallbackPage } from "../pages/auth-callback.tsx";
 import { CatalogueEntryPage } from "../pages/catalogue-entry.tsx";
 import { CatalogueSearchPage } from "../pages/catalogue-search.tsx";
+import { CodeByTokenPage } from "../pages/code-by-token.tsx";
+import { CodeLookupPage } from "../pages/code-lookup.tsx";
 import { EntryHistoryPage } from "../pages/entry-history.tsx";
 import { createPlaceholderPage } from "../pages/placeholder.tsx";
 import { RegisterPage } from "../pages/register.tsx";
@@ -113,7 +115,7 @@ const catalogueLookupRoute = createRoute({
   getParentRoute: () => catalogueRoute,
   path: "lookup",
   validateSearch: validateLookupSearch as (search: LookupSearchInput) => LookupSearch,
-  component: createPlaceholderPage({ title: "Code lookup", issue: 140 }),
+  component: CodeLookupPage,
   head: titled("Code lookup"),
 });
 
@@ -123,7 +125,7 @@ const catalogueLookupRoute = createRoute({
 const catalogueCodeLookupRoute = createRoute({
   getParentRoute: () => catalogueRoute,
   path: "code/$systemToken/$code",
-  component: createPlaceholderPage({ title: "Code lookup", issue: 140 }),
+  component: CodeByTokenPage,
   head: titled("Code lookup"),
 });
 

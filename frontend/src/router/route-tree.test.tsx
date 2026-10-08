@@ -91,6 +91,18 @@ describe("route table", () => {
     stubApi([
       {
         method: "GET",
+        path: "/catalogue/code/sct/000123",
+        status: 200,
+        body: ENTRY_STUB,
+      },
+      {
+        method: "GET",
+        path: "/catalogue/lookup",
+        status: 200,
+        body: ENTRY_STUB,
+      },
+      {
+        method: "GET",
         path: "/catalogue/entries/NPTC-000247",
         status: 200,
         body: ENTRY_STUB,
@@ -132,6 +144,7 @@ describe("route table", () => {
   it.each(["000123", "900000000000003001"])(
     "round-trips the code %s through the path unchanged",
     async (code) => {
+      stubApi([]);
       const { router } = await renderRoute(`/catalogue/code/sct/${code}`);
       const params = router.state.matches.at(-1)?.params as { code: string };
       expect(params.code).toBe(code);
@@ -139,25 +152,30 @@ describe("route table", () => {
     },
   );
 
-  it("round-trips the code through the ?code= query form unchanged", async () => {
-    const { router } = await renderRoute(
-      "/catalogue/lookup?system=http%3A%2F%2Fsnomed.info%2Fsct&code=900000000000003001",
-    );
-    const search = router.state.matches.at(-1)?.search as {
-      code: string;
-      system: string;
-    };
-    expect(search.code).toBe("900000000000003001");
-    expect(typeof search.code).toBe("string");
-    expect(search.system).toBe("http://snomed.info/sct");
+  it.each(["000123", "900000000000003001"])(
+    "round-trips the code %s through the ?code= query form unchanged",
+    async (code) => {
+      stubApi([]);
+      const { router } = await renderRoute(
+        `/catalogue/lookup?system=http%3A%2F%2Fsnomed.info%2Fsct&code=${code}`,
+      );
+      const search = router.state.matches.at(-1)?.search as {
+        code: string;
+        system: string;
+      };
+      expect(search.code).toBe(code);
+      expect(typeof search.code).toBe("string");
+      expect(search.system).toBe("http://snomed.info/sct");
 
-    // And back out again, in FR-17's unquoted ?code=... contract shape.
-    const href = router.buildLocation({ to: "/catalogue/lookup", search }).href;
-    expect(href).toContain("code=900000000000003001");
-    expect(href).not.toContain("code=%22900000000000003001%22");
-  });
+      // And back out again, in FR-17's unquoted ?code=... contract shape.
+      const href = router.buildLocation({ to: "/catalogue/lookup", search }).href;
+      expect(href).toContain(`code=${code}`);
+      expect(href).not.toContain(`code=%22${code}%22`);
+    },
+  );
 
   it("matches the static /catalogue/lookup route ahead of /catalogue/$businessKey", async () => {
+    stubApi([]);
     await renderRoute("/catalogue/lookup?system=x&code=1");
     expect(
       screen.getByRole("heading", { level: 1, name: /Code lookup/i }),
