@@ -64,3 +64,38 @@ test("not-found page renders and has no axe violations", async ({ page }) => {
   await waitForSessionCheck(page);
   await expectNoA11yViolations(page);
 });
+
+test("code lookup form renders, reports an empty code, and has no axe violations", async ({
+  page,
+}) => {
+  await page.goto("/catalogue/lookup");
+  await expect(
+    page.getByRole("heading", { level: 1, name: "Code lookup" }),
+  ).toBeVisible();
+  await waitForSessionCheck(page);
+  await expectNoA11yViolations(page);
+
+  await page.getByRole("button", { name: "Look up" }).click();
+  await expect(
+    page.getByRole("heading", { level: 2, name: "Enter a code to look up" }),
+  ).toBeVisible();
+  await expectNoA11yViolations(page);
+});
+
+test("a code no entry binds shows the no-match answer, by keyboard alone", async ({
+  page,
+}) => {
+  await page.goto("/catalogue/lookup");
+  await waitForSessionCheck(page);
+
+  await page.getByRole("combobox", { name: "Code system" }).focus();
+  await page.keyboard.press("Tab");
+  await expect(page.getByRole("textbox", { name: "Code" })).toBeFocused();
+  // Leading zeros and an 18-digit SCTID must reach the API as typed (FR-06).
+  await page.keyboard.type("000000999999999999");
+  await page.keyboard.press("Enter");
+
+  await expect(page).toHaveURL(/\/catalogue\/code\/sct\/000000999999999999$/);
+  await expect(page.getByRole("region", { name: "No matching entry" })).toBeVisible();
+  await expectNoA11yViolations(page);
+});

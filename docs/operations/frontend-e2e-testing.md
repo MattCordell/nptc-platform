@@ -16,6 +16,8 @@ of CI yet.
 | Sign-in (`/sign-in`) | The browser lands on the Keycloak authorisation endpoint with `client_id=nptc-frontend`, a `code_challenge` and the right `redirect_uri`, and Keycloak shows its username field. The test does not sign in. |
 | Stub page (`/about`) | The `h1` shows and axe reports no violation |
 | Not found (`/no-such-page`) | The `h1` shows and axe reports no violation |
+| Code lookup form (`/catalogue/lookup`) | The `h1` shows, an empty submit lists its problem, and axe reports no violation on both |
+| Code with no entry (`/catalogue/code/sct/{code}`) | A keyboard alone fills the form and submits it, a long code with leading zeros reaches the path unchanged, **No matching entry** shows, and axe reports no violation. It needs no seeded data. |
 
 Any axe violation fails the test. Axe keeps its default rule set, and the suite disables
 no rule.
