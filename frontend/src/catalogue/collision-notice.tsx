@@ -13,6 +13,16 @@ import type { components } from "../api/schema.ts";
  */
 
 export type CollisionWarning = components["schemas"]["CollisionWarning"];
+export type LengthWarning = components["schemas"]["LengthWarning"];
+
+/**
+ * One item of a designation write's `warnings` list, told apart by `kind`.
+ * Derived from the response schema, so a warning class added server-side
+ * widens this type on the next `generate:api` and the compiler then points at
+ * every place that has to handle it (ADR-0045).
+ */
+export type DesignationWarning =
+  components["schemas"]["AmendDesignationResult"]["warnings"][number];
 
 const FALLBACK_REFUSAL =
   "This could not be saved. Check the details and try again, or contact an administrator " +

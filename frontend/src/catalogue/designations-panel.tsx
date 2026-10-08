@@ -1,7 +1,7 @@
 import { useState } from "react";
 
 import { ChangelogNoteField, useChangelogNote } from "./changelog-note-field.tsx";
-import type { CollisionWarning } from "./collision-notice.tsx";
+import type { CollisionWarning, DesignationWarning } from "./collision-notice.tsx";
 import { RefusalNotice } from "./collision-notice.tsx";
 import { MAX_TERMS_PER_BATCH } from "./limits.ts";
 import { splitSynonyms } from "./split-synonyms.ts";
@@ -71,8 +71,33 @@ const DEFAULT_LANGUAGE = SUPPORTED_LANGUAGES[0];
  * addresses `(entry, language, term)` - so the language has to travel with it
  * rather than be assumed at the point of acknowledgement (review finding 1).
  */
-interface PendingWarning extends CollisionWarning {
-  language: string;
+type PendingWarning = DesignationWarning & { language: string };
+type PendingCollision = CollisionWarning & { language: string };
+
+function withLanguage(
+  warnings: DesignationWarning[],
+  language: string,
+): PendingWarning[] {
+  return warnings.map((warning) => ({ ...warning, language }));
+}
+
+/** The clause an announcement appends so a length warning is heard as well as a duplicate. */
+function warningSummary(warnings: DesignationWarning[]): string {
+  const duplicates = warnings.filter((warning) => warning.kind === "collision").length;
+  const lengths = warnings.length - duplicates;
+  const parts: string[] = [];
+  if (duplicates > 0) {
+    parts.push(`${duplicates} possible duplicate${duplicates === 1 ? "" : "s"}`);
+  }
+  if (lengths > 0) {
+    parts.push(`${lengths} length warning${lengths === 1 ? "" : "s"}`);
+  }
+  return parts.length > 0 ? ` ${parts.join(" and ")} to review.` : "";
+}
+
+/** True for the collision warning an acknowledgement or retirement is about. */
+function isCollisionOn(warning: DesignationWarning, term: string): boolean {
+  return warning.kind === "collision" && warning.term === term;
 }
 
 /** A row in the terms table - a real designation, or the entry's own term. */
@@ -137,7 +162,7 @@ export function DesignationsPanel({ entry }: { entry: EntryDetail }) {
   const [editing, setEditing] = useState<TermRow | null>(null);
   const [retiring, setRetiring] = useState<TermRow | null>(null);
   const [reinstating, setReinstating] = useState<TermRow | null>(null);
-  const [acknowledging, setAcknowledging] = useState<PendingWarning | null>(null);
+  const [acknowledging, setAcknowledging] = useState<PendingCollision | null>(null);
   const { message, politeness, announce } = useAnnounce();
 
   const rows = sortedTermRows(termRows(entry));
@@ -245,16 +270,10 @@ export function DesignationsPanel({ entry }: { entry: EntryDetail }) {
         businessKey={businessKey}
         rowVersion={entry.row_version}
         onSaved={(created, newWarnings) => {
-          setWarnings(
-            newWarnings.map((warning) => ({ ...warning, language: DEFAULT_LANGUAGE })),
-          );
+          setWarnings(withLanguage(newWarnings, DEFAULT_LANGUAGE));
           announce(
             `${created} ${created === 1 ? "term" : "terms"} added.` +
-              (newWarnings.length > 0
-                ? ` ${newWarnings.length} possible duplicate${
-                    newWarnings.length === 1 ? "" : "s"
-                  } to review.`
-                : ""),
+              warningSummary(newWarnings),
           );
         }}
       />
@@ -273,11 +292,9 @@ export function DesignationsPanel({ entry }: { entry: EntryDetail }) {
           row={editing}
           onClose={() => setEditing(null)}
           onSaved={(newWarnings) => {
-            setWarnings(
-              newWarnings.map((warning) => ({ ...warning, language: editing.language })),
-            );
+            setWarnings(withLanguage(newWarnings, editing.language));
             setEditing(null);
-            announce("Term saved.");
+            announce(`Term saved.${warningSummary(newWarnings)}`);
           }}
         />
       )}
@@ -296,7 +313,7 @@ export function DesignationsPanel({ entry }: { entry: EntryDetail }) {
             // possible duplicate makes sense only for a term still live
             // (review finding 4).
             setWarnings((current) =>
-              current.filter((warning) => warning.term !== retiring.term),
+              current.filter((warning) => !isCollisionOn(warning, retiring.term)),
             );
             setRetiring(null);
             announce("Term retired.");
@@ -311,14 +328,9 @@ export function DesignationsPanel({ entry }: { entry: EntryDetail }) {
           row={reinstating}
           onClose={() => setReinstating(null)}
           onSaved={(newWarnings) => {
-            setWarnings(
-              newWarnings.map((warning) => ({
-                ...warning,
-                language: reinstating.language,
-              })),
-            );
+            setWarnings(withLanguage(newWarnings, reinstating.language));
             setReinstating(null);
-            announce("Term reinstated.");
+            announce(`Term reinstated.${warningSummary(newWarnings)}`);
           }}
         />
       )}
@@ -333,7 +345,9 @@ export function DesignationsPanel({ entry }: { entry: EntryDetail }) {
             // write, but the panel is showing the *previous* write's answer
             // and would otherwise keep offering an Acknowledge button for
             // something already acknowledged.
-            setWarnings((current) => current.filter((warning) => warning.term !== term));
+            setWarnings((current) =>
+              current.filter((warning) => !isCollisionOn(warning, term)),
+            );
             setAcknowledging(null);
             announce("Duplicate acknowledged. It will not be reported again.");
           }}
@@ -354,7 +368,7 @@ function AddSynonymsForm({
 }: {
   businessKey: string;
   rowVersion: number;
-  onSaved: (created: number, warnings: CollisionWarning[]) => void;
+  onSaved: (created: number, warnings: DesignationWarning[]) => void;
 }) {
   const [cell, setCell] = useState("");
   const changelogNote = useChangelogNote("add-note");
@@ -483,7 +497,7 @@ function AmendDialog({
   rowVersion: number;
   row: TermRow;
   onClose: () => void;
-  onSaved: (warnings: CollisionWarning[]) => void;
+  onSaved: (warnings: DesignationWarning[]) => void;
 }) {
   const [newTerm, setNewTerm] = useState(row.term);
   const changelogNote = useChangelogNote("amend-note");
@@ -654,7 +668,7 @@ function ReinstateDialog({
   rowVersion: number;
   row: TermRow;
   onClose: () => void;
-  onSaved: (warnings: CollisionWarning[]) => void;
+  onSaved: (warnings: DesignationWarning[]) => void;
 }) {
   const changelogNote = useChangelogNote("reinstate-note");
   const reinstate = useReinstateDesignation(businessKey);
@@ -707,45 +721,94 @@ function ReinstateDialog({
 }
 
 /**
- * Warning-severity collisions (FR-05): the same term active on another live
- * entry. These ride back on a *successful* write - the save happened - so this
- * is a panel to work through, not a refusal.
+ * Warnings that ride back on a *successful* write - the save happened - so this
+ * is a panel to work through, not a refusal. One panel for every warning class
+ * (ADR-0045): a new class adds a `kind` case to `WarningItem`, not a panel.
  */
 function WarningsPanel({
   warnings,
   onAcknowledge,
 }: {
   warnings: PendingWarning[];
-  onAcknowledge: (warning: PendingWarning) => void;
+  onAcknowledge: (warning: PendingCollision) => void;
 }) {
   return (
-    <section aria-labelledby="collision-warnings-heading">
-      <h3 id="collision-warnings-heading">Possible duplicates</h3>
+    <section aria-labelledby="warnings-heading">
+      <h3 id="warnings-heading">Check these terms</h3>
       <p>
-        These terms were saved, and they are also in use on another entry. That is allowed
-        - two entries can legitimately share a synonym. Acknowledge one to confirm it is
-        intended and stop it being reported on every save.
+        These changes were saved. Each warning below is worth a look, and none of them
+        blocks the save.
       </p>
       <ul>
         {warnings.map((warning) => (
-          <li key={`${warning.term}-${warning.business_key}`}>
-            <span>
-              &ldquo;{warning.term}&rdquo; is also on {warning.business_key} —{" "}
-              {warning.preferred_term}
-            </span>{" "}
-            <Button
-              type="button"
-              variant="secondary"
-              aria-label={`Acknowledge ${warning.term}`}
-              onClick={() => onAcknowledge(warning)}
-            >
-              Acknowledge
-            </Button>
-          </li>
+          <WarningItem
+            key={warningKey(warning)}
+            warning={warning}
+            onAcknowledge={onAcknowledge}
+          />
         ))}
       </ul>
     </section>
   );
+}
+
+function warningKey(warning: DesignationWarning): string {
+  switch (warning.kind) {
+    case "collision":
+      return `collision-${warning.term}-${warning.business_key}`;
+    case "length":
+      return "length";
+    default: {
+      const unhandled: never = warning;
+      return unhandled;
+    }
+  }
+}
+
+function WarningItem({
+  warning,
+  onAcknowledge,
+}: {
+  warning: PendingWarning;
+  onAcknowledge: (warning: PendingCollision) => void;
+}) {
+  switch (warning.kind) {
+    case "collision":
+      // FR-05: the same term active on another live entry. Allowed - two
+      // entries can legitimately share a synonym - so the action is to confirm
+      // it is intended.
+      return (
+        <li>
+          <span>
+            &ldquo;{warning.term}&rdquo; is also on {warning.business_key} —{" "}
+            {warning.preferred_term}. Acknowledge it to confirm it is intended and stop it
+            being reported on every save.
+          </span>{" "}
+          <Button
+            type="button"
+            variant="secondary"
+            aria-label={`Acknowledge ${warning.term}`}
+            onClick={() => onAcknowledge(warning)}
+          >
+            Acknowledge
+          </Button>
+        </li>
+      );
+    case "length":
+      // FR-86: the preferred term is over the configured maximum. It has no
+      // action: shortening it is an ordinary edit, and the warning clears on the
+      // next save of a term within the maximum.
+      return (
+        <li>
+          The preferred term is {warning.length} characters long, which is over the
+          maximum of {warning.max_length}. Consider shortening it.
+        </li>
+      );
+    default: {
+      const unhandled: never = warning;
+      return unhandled;
+    }
+  }
 }
 
 function AcknowledgeDialog({
@@ -755,7 +818,7 @@ function AcknowledgeDialog({
   onSaved,
 }: {
   businessKey: string;
-  warning: PendingWarning;
+  warning: PendingCollision;
   onClose: () => void;
   onSaved: (term: string) => void;
 }) {

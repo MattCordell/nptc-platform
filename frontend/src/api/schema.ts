@@ -1035,16 +1035,14 @@ export interface components {
          *     `nptc.catalogue.entries.entry_child_write`, the same way the
          *     preferred-term branch's `save_entry` always has.
          *
-         *     `length_warning` (FR-86) is set only on the preferred-term branch, and
-         *     only when a maximum is configured and exceeded - see `LengthWarning`'s
-         *     own docstring for why it is a separate field rather than a member of
-         *     `warnings`.
+         *     `warnings` carries a `LengthWarning` (FR-86) only on the preferred-term
+         *     branch, and only when a maximum is configured and exceeded. A synonym
+         *     amend can carry only collision warnings.
          */
         AmendDesignationResult: {
             designation: components["schemas"]["Designation"];
             /** Warnings */
-            warnings: components["schemas"]["CollisionWarning"][];
-            length_warning: components["schemas"]["LengthWarning"] | null;
+            warnings: (components["schemas"]["CollisionWarning"] | components["schemas"]["LengthWarning"])[];
             /** Row Version */
             row_version: number;
         };
@@ -1405,6 +1403,11 @@ export interface components {
          *     `EntrySummary.preferred_term`'s own designation type.
          */
         CollisionWarning: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "collision";
             /** Term */
             term: string;
             /** Business Key */
@@ -1643,7 +1646,7 @@ export interface components {
             /** Designations */
             designations: components["schemas"]["Designation"][];
             /** Warnings */
-            warnings: components["schemas"]["CollisionWarning"][];
+            warnings: (components["schemas"]["CollisionWarning"] | components["schemas"]["LengthWarning"])[];
             /** Row Version */
             row_version: number;
         };
@@ -1985,11 +1988,11 @@ export interface components {
          *     `CollisionWarning` - a hard block would make an existing over-length
          *     entry uneditable, the specific failure FR-86 exists to prevent.
          *
-         *     A separate field from `CollisionWarning`/`warnings`, not a member of
-         *     that list: `warning_collisions` only ever looks for another live
-         *     entry's active synonym, which has nothing to do with this entry's own
-         *     length, and `CollisionWarning`'s shape (a colliding entry's business
-         *     key, term, provenance) has no field this could honestly populate.
+         *     A separate union member from `CollisionWarning`, not a widened
+         *     `CollisionWarning`: its shape (a colliding entry's business key, term,
+         *     provenance) has no field this could honestly populate, and this one has
+         *     no colliding entry to name. Both ride the one `warnings` list so a
+         *     further warning class adds a member, not a response field.
          *
          *     Only ever produced on `amend_designation_route`'s preferred-term
          *     branch: FR-85's `length` is defined against the catalogue's own
@@ -1999,6 +2002,11 @@ export interface components {
          *     apply to.
          */
         LengthWarning: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "length";
             /** Length */
             length: number;
             /** Max Length */
@@ -2229,7 +2237,7 @@ export interface components {
         ReinstateDesignationResult: {
             designation: components["schemas"]["Designation"];
             /** Warnings */
-            warnings: components["schemas"]["CollisionWarning"][];
+            warnings: (components["schemas"]["CollisionWarning"] | components["schemas"]["LengthWarning"])[];
             /** Row Version */
             row_version: number;
         };
