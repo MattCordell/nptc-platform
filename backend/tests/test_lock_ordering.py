@@ -129,14 +129,20 @@ _FuncDef = ast.FunctionDef | ast.AsyncFunctionDef
 _FuncKey = tuple[str, str]
 
 
-#: Every module in the catalogue package, so a new writer module is scanned
-#: without anyone remembering to list it. None is excluded: a module with no
-#: writer derives nothing.
-def _catalogue_modules(directory: Path) -> tuple[Path, ...]:
-    return tuple(sorted(directory.glob("*.py")))
+#: Every module in the catalogue package, subpackages included, so a new writer
+#: module is scanned without anyone remembering to list it. None is excluded: a
+#: module with no writer derives nothing. Keyed by dotted path under the package,
+#: so two `__init__` modules do not collide.
+def _catalogue_sources(directory: Path) -> dict[str, str]:
+    return {
+        ".".join(path.relative_to(directory).with_suffix("").parts): path.read_text(
+            encoding="utf-8"
+        )
+        for path in sorted(directory.rglob("*.py"))
+    }
 
 
-_SCAN_FILES: tuple[Path, ...] = _catalogue_modules(Path(catalogue_package.__file__).parent)
+_SCAN_SOURCES: dict[str, str] = _catalogue_sources(Path(catalogue_package.__file__).parent)
 
 #: `bump_entry_row_version` itself directly does `entry.row_version += 1`,
 #: which is exactly what `_assigns_row_version` looks for - but it is a
@@ -360,12 +366,8 @@ def _derive_from_sources(sources: Mapping[str, str]) -> dict[_FuncKey, _FuncDef]
     return {key: func_defs[key] for key in required - _EXEMPT_FUNCTIONS}
 
 
-def _scanned_sources() -> dict[str, str]:
-    return {path.stem: path.read_text(encoding="utf-8") for path in _SCAN_FILES}
-
-
 def _derive_required_functions() -> dict[_FuncKey, _FuncDef]:
-    return _derive_from_sources(_scanned_sources())
+    return _derive_from_sources(_SCAN_SOURCES)
 
 
 def test_acquire_append_lock_precedes_every_session_touching_statement() -> None:
@@ -532,7 +534,7 @@ def test_guard_derives_a_writer_that_calls_through_an_attribute(source: str) -> 
 
 @pytest.mark.req("NFR-08")
 def test_guard_keeps_the_closure_flowing_through_an_exempt_function() -> None:
-    exempt_module, exempt_name = next(iter(_EXEMPT_FUNCTIONS))
+    exempt_module, exempt_name = min(_EXEMPT_FUNCTIONS)
     source = (
         f"def {exempt_name}(session):\n    record_change(session)\n"
         f"\n\ndef caller(session):\n    {exempt_name}(session)\n"
@@ -546,22 +548,30 @@ def test_guard_keeps_the_closure_flowing_through_an_exempt_function() -> None:
 def test_guard_scans_a_module_nobody_listed(tmp_path: Path) -> None:
     (tmp_path / "__init__.py").write_text("", encoding="utf-8")
     (tmp_path / "brand_new_writer.py").write_text(_UNLOCKED_WRITER, encoding="utf-8")
-    sources = {path.stem: path.read_text(encoding="utf-8") for path in _catalogue_modules(tmp_path)}
-    assert _violations(sources) == [("brand_new_writer", "write")]
+    assert _violations(_catalogue_sources(tmp_path)) == [("brand_new_writer", "write")]
+
+
+@pytest.mark.req("NFR-08")
+def test_guard_scans_a_module_inside_a_subpackage(tmp_path: Path) -> None:
+    subpackage = tmp_path / "nested"
+    subpackage.mkdir()
+    (tmp_path / "__init__.py").write_text("", encoding="utf-8")
+    (subpackage / "__init__.py").write_text("", encoding="utf-8")
+    (subpackage / "deep_writer.py").write_text(_UNLOCKED_WRITER, encoding="utf-8")
+    assert _violations(_catalogue_sources(tmp_path)) == [("nested.deep_writer", "write")]
 
 
 @pytest.mark.req("NFR-08")
 def test_guard_scans_the_modules_outside_the_original_three() -> None:
-    scanned = {path.name for path in _SCAN_FILES}
-    assert {"bindings.py", "local_codes.py", "seed_import.py"} <= scanned
+    assert {"bindings", "local_codes", "seed_import"} <= _SCAN_SOURCES.keys()
 
 
 @pytest.mark.req("NFR-08")
 def test_every_exemption_names_a_function_that_exists() -> None:
     present = {
-        (path.stem, node.name)
-        for path in _SCAN_FILES
-        for node in ast.parse(path.read_text(encoding="utf-8")).body
+        (module, node.name)
+        for module, source in _SCAN_SOURCES.items()
+        for node in ast.parse(source).body
         if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef)
     }
     assert sorted(_EXEMPT_FUNCTIONS - present) == []
