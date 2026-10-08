@@ -344,7 +344,7 @@ Validation is then plain string equality against the server, per designation:
 
 **FR-83 (MUST):** Semantic tag removal happens **only in the export renderer and the catalogue list read model**, never in storage or in validation. The list read model strips the FSN it shows in a row, through the same renderer, and stores nothing. The rule is: remove the final parenthesised group from the FSN, exactly once. Because the input is always a server-served FSN, it always carries exactly one tag, and the rule needs no list of known tags.
 
-**The double-strip failure is prevented structurally, not by inspection.** The rule has exactly two call sites, the export renderer and the list read model's row assembler, and the input of both is always read directly from the `fsn` column, which by FR-82 always holds a served FSN. There is no code path that can feed it an already-stripped value. That is the whole reason for storing as served, and it is a stronger guarantee than any output check.
+**The double-strip failure is prevented structurally, not by inspection.** The rule has exactly two call sites, the export renderer and the list read model's row assembler, and the input of both is always read directly from the `fsn` column, which by FR-82 always holds a served FSN. There is no code path that can feed it an already-stripped value. That is the whole reason for storing as served, and it is a stronger guarantee than any output check. The transform's dataset builder also reads the tag, only to refuse an FSN that has none; it strips nothing.
 
 Two defensive assertions on top, because this runs unattended on every release:
 

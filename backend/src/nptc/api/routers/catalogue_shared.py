@@ -589,7 +589,7 @@ def entry_summary_fields(
 ) -> dict[str, Any]:
     """Raises `NotAServedFSNError` or `EmptyDisplayTermError` for a stored FSN FR-83 cannot
     strip. That is stored data written before the transform seeded served FSNs (a workbook label
-    has no tag), so it fails the request loudly (a 500 with a logged warning) rather than show a
+    has no tag), so it fails the request loudly (a 500 with a logged error) rather than show a
     value that may already have been stripped."""
     return {
         **entry_core_fields(business_key, preferred_term, length, status, updated_at, facts),

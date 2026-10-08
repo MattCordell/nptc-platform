@@ -618,7 +618,7 @@ _REFUSALS: Final[dict[type[Exception], _Refusal]] = {
         log_level=logging.ERROR,
         status=500,
     ),
-    # WARNING: unlike every other caller-facing refusal here, this is not a
+    # ERROR: unlike every other caller-facing refusal here, this is not a
     # caller mistake. FR-82 guarantees every stored `fsn` came from the
     # terminology server, so reaching here means a published entry broke that
     # guarantee. Blanking the label and serving a 200 would hide it (FR-83).
@@ -627,13 +627,13 @@ _REFUSALS: Final[dict[type[Exception], _Refusal]] = {
         _DETAIL_DISPLAY_TERM,
         "display term could not be rendered: %s: %s",
         _name_and_exc,
-        log_level=logging.WARNING,
+        log_level=logging.ERROR,
     ),
     EmptyDisplayTermError: _Refusal(
         _DETAIL_DISPLAY_TERM,
         "display term could not be rendered: %s: %s",
         _name_and_exc,
-        log_level=logging.WARNING,
+        log_level=logging.ERROR,
     ),
     ChangelogNoteError: _Refusal(_DETAIL_CHANGELOG_NOTE, "changelog note refused: %s", _name),
     TermCleaningError: _Refusal(_DETAIL_TERM_CLEANING, "term refused: %s", _name),

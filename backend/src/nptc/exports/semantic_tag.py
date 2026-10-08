@@ -3,8 +3,9 @@
 The export renderer and the list read model (`nptc.api.routers.catalogue_shared`) call
 `render_display_term`. `backend/tests/test_catalogue_bindings.py` asserts that it and the
 shared `semantic_tag`/`strip_semantic_tag` are referenced from no other module across
-`backend/src`, `transform/src` and `shared/src`, bar the shared package's re-export and
-two FR-97 seeding-reconciliation sites (ADR-0006).
+`backend/src`, `transform/src` and `shared/src`, bar the shared package's re-export, two
+FR-97 seeding-reconciliation sites (ADR-0006) and the transform's dataset builder, which
+only reads whether a served FSN has a tag.
 
 **Why not call `nptc_shared.terminology.strip_semantic_tag` alone.** It returns
 its input unchanged when there is no trailing parenthesised group, which suits a

@@ -268,8 +268,7 @@ def run(
             write_dataset(dataset, report_dir)
         except ServedFSNError as exc:
             typer.echo(
-                f"{exc}. No dataset was written. Check that the terminology server returns "
-                "designations (ADR-0005), then run again.",
+                f"{exc}. No dataset was written. Run again once that is resolved.",
                 err=True,
             )
             _remove_stale_dataset(report_dir)

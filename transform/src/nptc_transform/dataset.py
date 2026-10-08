@@ -201,10 +201,14 @@ def _build_code_bindings(
     if served_fsns is None:
         fsn = _optional_cell_text(row_cells.get(ColumnRole.FSN))
     elif code not in served_fsns:
-        raise ServedFSNError(f"the terminology server served no FSN for {code}")
+        raise ServedFSNError(
+            f"the terminology server served no FSN for {code}; check that it returns "
+            "designations (ADR-0005)"
+        )
     elif semantic_tag(served_fsns[code]) is None:
         raise ServedFSNError(
-            f"the terminology server served an FSN with no semantic tag for {code}"
+            f"the terminology server served an FSN with no semantic tag for {code}; "
+            "a served FSN always ends in one, so check the server's answer for that code"
         )
     else:
         fsn = served_fsns[code]
