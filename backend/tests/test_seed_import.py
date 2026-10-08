@@ -98,9 +98,7 @@ def test_every_entry_is_written_with_its_designations_bindings_and_properties(
         .scalars()
         .all()
     )
-    assert [(d.term, d.use, d.language, d.status) for d in synonyms] == [
-        ("1,1,1-Trichloroethane synonym", "synonym", "en-AU", "active")
-    ]
+    assert [(d.term, d.status) for d in synonyms] == [("1,1,1-Trichloroethane synonym", "active")]
     binding = app_session.execute(
         select(CodeBinding).where(CodeBinding.entry_id == first.id)
     ).scalar_one()
@@ -178,7 +176,7 @@ def test_provenance_and_the_seed_record_are_stored_verbatim(
         "workbook.xlsx",
         "a" * 64,
     )
-    assert (seed.dataset_schema_version, seed.entry_count) == (3, 2)
+    assert (seed.dataset_schema_version, seed.entry_count) == (4, 2)
     rows = {
         _entry_key(app_session, row.entry_id): row
         for row in app_session.execute(select(EntrySeedProvenance)).scalars()
@@ -532,7 +530,7 @@ def test_a_synonym_equal_to_its_own_preferred_term_is_stored_as_the_workbook_has
     loader neither refuses nor silently drops the row."""
     document = make_dataset_document(1)
     term = document["entries"][0]["preferred_term"]
-    document["entries"][0]["designations"][1]["term"] = term
+    document["entries"][0]["designations"][0]["term"] = term
 
     _seed(app_session, document, write_dataset)
 

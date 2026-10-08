@@ -9,27 +9,11 @@ interface TermRow {
   term: string;
 }
 
-/**
- * The rows in reading order: the RCPA terms, then the SNOMED CT ones. An
- * unlisted designation `use` shows as its raw value rather than failing.
- */
+/** The rows in reading order: the RCPA terms, then the SNOMED CT ones. */
 function termRows(entry: EntryDetail): TermRow[] {
   const rows: TermRow[] = [{ type: "RCPA Preferred", term: entry.preferred_term }];
-  const others = entry.designations;
-
-  for (const designation of others.filter(({ use }) => use === "synonym")) {
+  for (const designation of entry.designations) {
     rows.push({ type: "RCPA Synonym", term: designation.term });
-  }
-  for (const designation of others.filter(({ use }) => use === "preferred")) {
-    rows.push({
-      type: `RCPA Preferred (${designation.language})`,
-      term: designation.term,
-    });
-  }
-  for (const designation of others.filter(
-    ({ use }) => use !== "synonym" && use !== "preferred",
-  )) {
-    rows.push({ type: designation.use, term: designation.term });
   }
 
   // A served FSN keeps its semantic tag (FR-82, FR-83).

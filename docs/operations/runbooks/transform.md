@@ -329,7 +329,7 @@ written) without either or with a malformed release name.
 
 ```json
 {
-  "schema_version": 3,
+  "schema_version": 4,
   "tool_version": "0.0.0",
   "source": {"filename": "SPIA-Requesting.xlsx", "sha256": "…"},
   "baseline_release": {
@@ -342,7 +342,7 @@ written) without either or with a malformed release name.
       "source": {"sheet": "Requesting", "row": 2, "legacy_version": "4", "legacy_history": "…"},
       "preferred_term": "Acid fast bacilli culture",
       "status": "active",
-      "designations": [{"term": "…", "use": "preferred", "language": "en-AU", "status": "active"}],
+      "designations": [{"term": "…", "status": "active"}],
       "code_bindings": [
         {
           "system": "http://snomed.info/sct",
@@ -410,6 +410,10 @@ the code's SNOMED CT-AU preferred term, resolved by the `--check-terminology`
 pass (the map's own `Target display` is the FSN with its tag, so it is not used).
 For a discipline or subgroup it is `null`. The loader stores the specimen's
 `display` as given and refuses a version 2 file.
+`schema_version` 4 drops `use` and `language` from every designation and stops emitting the
+en-AU preferred designation row. A designation is a synonym; the entry's own term is its
+`preferred_term` (ADR-0022). The loader refuses a version 3 file with a message that names the
+version, so re-emit any dataset made before this change.
 
 **A blocking finding aborts emission, not the report.** Exit `1`, the report
 is written as usual, and `import-dataset.json` is not written at all - a

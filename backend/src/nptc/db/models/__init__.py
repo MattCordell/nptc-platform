@@ -9,7 +9,7 @@ isn't imported through this package is invisible to autogenerate and to
 from nptc.db.models.audit import AuditEvent
 from nptc.db.models.catalogue_entry import CatalogueEntry, CatalogueEntryStatus
 from nptc.db.models.code_binding import CodeBinding, CodeBindingEditionHint, CodeBindingStatus
-from nptc.db.models.designation import Designation, DesignationStatus, DesignationUse
+from nptc.db.models.designation import Designation, DesignationStatus
 from nptc.db.models.designation_collision_acknowledgement import (
     DesignationCollisionAcknowledgement,
 )
@@ -46,7 +46,6 @@ __all__ = [
     "Designation",
     "DesignationCollisionAcknowledgement",
     "DesignationStatus",
-    "DesignationUse",
     "EntrySeedProvenance",
     "LocalCode",
     "LocalCodeSnomedMap",

@@ -2,9 +2,9 @@
 
 - `nptc.catalogue.entries`: the entity itself, with `business_key` identity
   and `row_version` optimistic locking (FR-03, FR-38).
-- `nptc.catalogue.designations`: designation storage - synonyms and
-  non-en-AU preferred variants as individual rows, never a delimited string
-  (FR-04) - and FR-85/FR-24's computed, never stored, preferred-term length.
+- `nptc.catalogue.designations`: designation storage - synonyms as
+  individual rows, never a delimited string (FR-04) - and FR-85/FR-24's computed, never
+  stored, preferred-term length.
   `nptc.catalogue.changelog` holds FR-37's changelog-note validation, shared
   by every write path here.
 - `nptc.catalogue.bindings`: code binding storage - the SNOMED CT code, `fsn`

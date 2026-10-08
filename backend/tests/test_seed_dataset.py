@@ -36,8 +36,8 @@ def test_a_valid_dataset_is_read(make_dataset_document: MakeDocument, write_data
 
 
 @pytest.mark.req("FR-76")
-@pytest.mark.parametrize("version", [1, 2, 0, "3", None, 3.5, True])
-def test_a_schema_version_other_than_three_is_refused(
+@pytest.mark.parametrize("version", [1, 2, 3, 0, "4", None, 4.5, True])
+def test_a_schema_version_other_than_four_is_refused(
     make_dataset_document: MakeDocument, write_dataset: WriteDataset, version: object
 ) -> None:
     document = make_dataset_document()
@@ -60,7 +60,7 @@ def test_a_missing_schema_version_is_refused(
 def test_the_version_is_checked_before_the_shape(write_dataset: WriteDataset) -> None:
     """A later transform's file must say 'unsupported version', not list shape errors."""
     with pytest.raises(UnsupportedSchemaVersionError):
-        read_import_dataset(write_dataset({"schema_version": 4, "something": "new"}))
+        read_import_dataset(write_dataset({"schema_version": 5, "something": "new"}))
 
 
 def test_a_missing_file_is_unreadable(tmp_path: Path) -> None:
@@ -227,6 +227,33 @@ def test_a_version_2_file_is_refused_with_a_message_that_names_the_version(
     assert "schema_version is 2" in str(exc_info.value)
 
 
+@pytest.mark.req("FR-04")
+def test_a_version_3_file_is_refused_with_a_message_that_names_the_version(
+    make_dataset_document: MakeDocument, write_dataset: WriteDataset
+) -> None:
+    """Version 3 carried an en-AU preferred designation, and `use` and `language` on every
+    designation. The loader no longer reads any of them."""
+    document = make_dataset_document()
+    document["schema_version"] = 3
+
+    with pytest.raises(UnsupportedSchemaVersionError) as exc_info:
+        read_import_dataset(write_dataset(document))
+
+    assert "schema_version is 3" in str(exc_info.value)
+
+
+@pytest.mark.req("FR-04")
+@pytest.mark.parametrize("field", ["use", "language"])
+def test_a_designation_naming_use_or_language_is_refused(
+    make_dataset_document: MakeDocument, write_dataset: WriteDataset, field: str
+) -> None:
+    document = make_dataset_document()
+    document["entries"][0]["designations"][0][field] = "synonym" if field == "use" else "en-AU"
+
+    with pytest.raises(DatasetInvalidError):
+        read_import_dataset(write_dataset(document))
+
+
 @pytest.mark.req("FR-88")
 def test_a_property_value_without_a_display_key_is_refused(
     make_dataset_document: MakeDocument, write_dataset: WriteDataset
@@ -327,18 +354,6 @@ def test_an_entry_needs_exactly_one_code_binding(
         read_import_dataset(write_dataset(document))
 
     assert "exactly one code binding" in exc_info.value.problems[0]
-
-
-def test_the_preferred_designation_must_match_the_preferred_term(
-    make_dataset_document: MakeDocument, write_dataset: WriteDataset
-) -> None:
-    document = make_dataset_document()
-    document["entries"][0]["designations"][0]["term"] = "Something else"
-
-    with pytest.raises(DatasetNotSeedableError) as exc_info:
-        read_import_dataset(write_dataset(document))
-
-    assert "differs from preferred_term" in exc_info.value.problems[0]
 
 
 def test_a_coded_discipline_value_is_refused(

@@ -38,7 +38,6 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_valida
 from nptc.catalogue.entries import BUSINESS_KEY_PATTERN
 from nptc.db.models.catalogue_entry import CatalogueEntryStatus
 from nptc.db.models.code_binding import CodeBindingEditionHint
-from nptc_shared.language import DEFAULT_LANGUAGE
 from nptc_shared.terminology.models import SPECIMEN_ROOT_CODE
 
 __all__ = [
@@ -54,7 +53,7 @@ __all__ = [
     "read_import_dataset",
 ]
 
-SUPPORTED_SCHEMA_VERSION: Final[int] = 3
+SUPPORTED_SCHEMA_VERSION: Final[int] = 4
 
 _SHA256_PATTERN: Final[str] = r"^[0-9a-f]{64}$"
 
@@ -114,8 +113,6 @@ class DatasetBaselineRelease(_Strict):
 
 class DatasetDesignation(_Strict):
     term: str
-    use: Literal["preferred", "synonym"]
-    language: str
     status: Literal["active"]
 
 
@@ -166,7 +163,7 @@ class DatasetEntry(_Strict):
 
 
 class ImportDataset(_Strict):
-    schema_version: Literal[3]
+    schema_version: Literal[4]
     tool_version: str
     source: DatasetSource
     baseline_release: DatasetBaselineRelease
@@ -211,18 +208,6 @@ def _entry_problems(entry: DatasetEntry) -> list[str]:
     for binding in entry.code_bindings:
         if binding.fsn is None or not binding.fsn.strip():
             problems.append(f"{where}: code binding {binding.code!r} has no FSN")
-
-    preferred = [d for d in entry.designations if d.use == "preferred"]
-    if len(preferred) != 1:
-        problems.append(
-            f"{where}: expected exactly one preferred designation, found {len(preferred)}"
-        )
-    else:
-        only = preferred[0]
-        if only.language != DEFAULT_LANGUAGE:
-            problems.append(f"{where}: the preferred designation is not {DEFAULT_LANGUAGE}")
-        if only.term != entry.preferred_term:
-            problems.append(f"{where}: the preferred designation differs from preferred_term")
 
     for value in entry.properties.specimen:
         if value.code is None:

@@ -1005,7 +1005,7 @@
         "tags": [
           "catalogue"
         ],
-        "summary": "An entry's active synonyms and non-en-AU preferred variants",
+        "summary": "An entry's active synonyms",
         "operationId": "read_designations_api_v1_catalogue_entries__business_key__designations_get",
         "parameters": [
           {
@@ -1090,7 +1090,7 @@
         "tags": [
           "catalogue-admin"
         ],
-        "summary": "Add one or more synonyms, or a non-en-AU preferred term, to a catalogue entry",
+        "summary": "Add one or more synonyms to a catalogue entry",
         "operationId": "add_designations_api_v1_catalogue_entries__business_key__designations_post",
         "parameters": [
           {
@@ -1168,7 +1168,7 @@
             }
           },
           "409": {
-            "description": "The request is well-formed but conflicts with the current state of the system - an error-severity collision against another entry (FR-05), a duplicate active term or a second active preferred term in one language on this same entry, a designation already retired (or, for reinstatement, already active), or a concurrent acknowledgement of the same collision. Add, amend and retire address a designation by its currently-*active* term, so a retired one is simply not addressable that way any more (404, not 409); reinstatement addresses one by its currently-*retired* term instead, so a term that was never retired is its own 404 there. An error-severity collision carries `collisions[]` alongside `detail`, naming each colliding entry (FR-05). A stale `expected_row_version` (FR-38) carries `business_key`, `expected_row_version`, `current_row_version`, `conflicts[]` (each with `field`, `submitted` and `current`) and `changed_by`/`changed_at`, so the caller can reconcile rather than retry blind.",
+            "description": "The request is well-formed but conflicts with the current state of the system - an error-severity collision against another entry (FR-05), a duplicate active term on this same entry, a designation already retired (or, for reinstatement, already active), or a concurrent acknowledgement of the same collision. Add, amend and retire address a designation by its currently-*active* term, so a retired one is simply not addressable that way any more (404, not 409); reinstatement addresses one by its currently-*retired* term instead, so a term that was never retired is its own 404 there. An error-severity collision carries `collisions[]` alongside `detail`, naming each colliding entry (FR-05). A stale `expected_row_version` (FR-38) carries `business_key`, `expected_row_version`, `current_row_version`, `conflicts[]` (each with `field`, `submitted` and `current`) and `changed_by`/`changed_at`, so the caller can reconcile rather than retry blind.",
             "content": {
               "application/json": {
                 "schema": {
@@ -1189,7 +1189,7 @@
             }
           },
           "422": {
-            "description": "A field failed validation - an unrecognised `use`, a malformed language tag, a term that is empty after whitespace cleaning, or a changelog note that does not meet FR-37. Two distinct body shapes occur here: a typed domain error (`ErrorResponse`) or a pydantic validation failure (FastAPI's own `HTTPValidationError`).",
+            "description": "A field failed validation - an unrecognised `target`, the retired `use` on an amendment, a term that is empty after whitespace cleaning, or a changelog note that does not meet FR-37. Two distinct body shapes occur here: a typed domain error (`ErrorResponse`) or a pydantic validation failure (FastAPI's own `HTTPValidationError`).",
             "content": {
               "application/json": {
                 "schema": {
@@ -1981,7 +1981,7 @@
           "catalogue-admin"
         ],
         "summary": "Edit an entry's active designation, or its own preferred term, in place",
-        "description": "One route, two storage homes.\n\n`use=\"preferred\"` with the default `en-AU` addresses the entry's own\npreferred term outright. Otherwise `term` resolves against an active\n`designation` row first, falling back to the preferred term only where\nthere is no such row - see the module docstring for why that fallback\norder is designation-first, and why the explicit `use` exists at all.",
+        "description": "One route, two storage homes.\n\n`target=\"preferred_term\"` addresses the entry's own preferred term outright.\nOtherwise `term` resolves against an active `designation` row first, falling\nback to the preferred term only where there is no such row - see the module\ndocstring for why that fallback order is designation-first, and why the explicit\n`target` exists at all.",
         "operationId": "amend_designation_route_api_v1_catalogue_entries__business_key__designations_amendment_post",
         "parameters": [
           {
@@ -2059,7 +2059,7 @@
             }
           },
           "409": {
-            "description": "The request is well-formed but conflicts with the current state of the system - an error-severity collision against another entry (FR-05), a duplicate active term or a second active preferred term in one language on this same entry, a designation already retired (or, for reinstatement, already active), or a concurrent acknowledgement of the same collision. Add, amend and retire address a designation by its currently-*active* term, so a retired one is simply not addressable that way any more (404, not 409); reinstatement addresses one by its currently-*retired* term instead, so a term that was never retired is its own 404 there. An error-severity collision carries `collisions[]` alongside `detail`, naming each colliding entry (FR-05). A stale `expected_row_version` (FR-38) carries `business_key`, `expected_row_version`, `current_row_version`, `conflicts[]` (each with `field`, `submitted` and `current`) and `changed_by`/`changed_at`, so the caller can reconcile rather than retry blind.",
+            "description": "The request is well-formed but conflicts with the current state of the system - an error-severity collision against another entry (FR-05), a duplicate active term on this same entry, a designation already retired (or, for reinstatement, already active), or a concurrent acknowledgement of the same collision. Add, amend and retire address a designation by its currently-*active* term, so a retired one is simply not addressable that way any more (404, not 409); reinstatement addresses one by its currently-*retired* term instead, so a term that was never retired is its own 404 there. An error-severity collision carries `collisions[]` alongside `detail`, naming each colliding entry (FR-05). A stale `expected_row_version` (FR-38) carries `business_key`, `expected_row_version`, `current_row_version`, `conflicts[]` (each with `field`, `submitted` and `current`) and `changed_by`/`changed_at`, so the caller can reconcile rather than retry blind.",
             "content": {
               "application/json": {
                 "schema": {
@@ -2080,7 +2080,7 @@
             }
           },
           "422": {
-            "description": "A field failed validation - an unrecognised `use`, a malformed language tag, a term that is empty after whitespace cleaning, or a changelog note that does not meet FR-37. Two distinct body shapes occur here: a typed domain error (`ErrorResponse`) or a pydantic validation failure (FastAPI's own `HTTPValidationError`).",
+            "description": "A field failed validation - an unrecognised `target`, the retired `use` on an amendment, a term that is empty after whitespace cleaning, or a changelog note that does not meet FR-37. Two distinct body shapes occur here: a typed domain error (`ErrorResponse`) or a pydantic validation failure (FastAPI's own `HTTPValidationError`).",
             "content": {
               "application/json": {
                 "schema": {
@@ -2201,7 +2201,7 @@
             }
           },
           "409": {
-            "description": "The request is well-formed but conflicts with the current state of the system - an error-severity collision against another entry (FR-05), a duplicate active term or a second active preferred term in one language on this same entry, a designation already retired (or, for reinstatement, already active), or a concurrent acknowledgement of the same collision. Add, amend and retire address a designation by its currently-*active* term, so a retired one is simply not addressable that way any more (404, not 409); reinstatement addresses one by its currently-*retired* term instead, so a term that was never retired is its own 404 there. A stale `expected_row_version` (FR-38) carries `business_key`, `expected_row_version`, `current_row_version`, `conflicts[]` (each with `field`, `submitted` and `current`) and `changed_by`/`changed_at`, so the caller can reconcile rather than retry blind.",
+            "description": "The request is well-formed but conflicts with the current state of the system - an error-severity collision against another entry (FR-05), a duplicate active term on this same entry, a designation already retired (or, for reinstatement, already active), or a concurrent acknowledgement of the same collision. Add, amend and retire address a designation by its currently-*active* term, so a retired one is simply not addressable that way any more (404, not 409); reinstatement addresses one by its currently-*retired* term instead, so a term that was never retired is its own 404 there. A stale `expected_row_version` (FR-38) carries `business_key`, `expected_row_version`, `current_row_version`, `conflicts[]` (each with `field`, `submitted` and `current`) and `changed_by`/`changed_at`, so the caller can reconcile rather than retry blind.",
             "content": {
               "application/json": {
                 "schema": {
@@ -2219,7 +2219,7 @@
             }
           },
           "422": {
-            "description": "A field failed validation - an unrecognised `use`, a malformed language tag, a term that is empty after whitespace cleaning, or a changelog note that does not meet FR-37. Two distinct body shapes occur here: a typed domain error (`ErrorResponse`) or a pydantic validation failure (FastAPI's own `HTTPValidationError`).",
+            "description": "A field failed validation - an unrecognised `target`, the retired `use` on an amendment, a term that is empty after whitespace cleaning, or a changelog note that does not meet FR-37. Two distinct body shapes occur here: a typed domain error (`ErrorResponse`) or a pydantic validation failure (FastAPI's own `HTTPValidationError`).",
             "content": {
               "application/json": {
                 "schema": {
@@ -2341,7 +2341,7 @@
             }
           },
           "409": {
-            "description": "The request is well-formed but conflicts with the current state of the system - an error-severity collision against another entry (FR-05), a duplicate active term or a second active preferred term in one language on this same entry, a designation already retired (or, for reinstatement, already active), or a concurrent acknowledgement of the same collision. Add, amend and retire address a designation by its currently-*active* term, so a retired one is simply not addressable that way any more (404, not 409); reinstatement addresses one by its currently-*retired* term instead, so a term that was never retired is its own 404 there. An error-severity collision carries `collisions[]` alongside `detail`, naming each colliding entry (FR-05). A stale `expected_row_version` (FR-38) carries `business_key`, `expected_row_version`, `current_row_version`, `conflicts[]` (each with `field`, `submitted` and `current`) and `changed_by`/`changed_at`, so the caller can reconcile rather than retry blind.",
+            "description": "The request is well-formed but conflicts with the current state of the system - an error-severity collision against another entry (FR-05), a duplicate active term on this same entry, a designation already retired (or, for reinstatement, already active), or a concurrent acknowledgement of the same collision. Add, amend and retire address a designation by its currently-*active* term, so a retired one is simply not addressable that way any more (404, not 409); reinstatement addresses one by its currently-*retired* term instead, so a term that was never retired is its own 404 there. An error-severity collision carries `collisions[]` alongside `detail`, naming each colliding entry (FR-05). A stale `expected_row_version` (FR-38) carries `business_key`, `expected_row_version`, `current_row_version`, `conflicts[]` (each with `field`, `submitted` and `current`) and `changed_by`/`changed_at`, so the caller can reconcile rather than retry blind.",
             "content": {
               "application/json": {
                 "schema": {
@@ -2362,7 +2362,7 @@
             }
           },
           "422": {
-            "description": "A field failed validation - an unrecognised `use`, a malformed language tag, a term that is empty after whitespace cleaning, or a changelog note that does not meet FR-37. Two distinct body shapes occur here: a typed domain error (`ErrorResponse`) or a pydantic validation failure (FastAPI's own `HTTPValidationError`).",
+            "description": "A field failed validation - an unrecognised `target`, the retired `use` on an amendment, a term that is empty after whitespace cleaning, or a changelog note that does not meet FR-37. Two distinct body shapes occur here: a typed domain error (`ErrorResponse`) or a pydantic validation failure (FastAPI's own `HTTPValidationError`).",
             "content": {
               "application/json": {
                 "schema": {
@@ -2483,7 +2483,7 @@
             }
           },
           "409": {
-            "description": "The request is well-formed but conflicts with the current state of the system - an error-severity collision against another entry (FR-05), a duplicate active term or a second active preferred term in one language on this same entry, a designation already retired (or, for reinstatement, already active), or a concurrent acknowledgement of the same collision. Add, amend and retire address a designation by its currently-*active* term, so a retired one is simply not addressable that way any more (404, not 409); reinstatement addresses one by its currently-*retired* term instead, so a term that was never retired is its own 404 there.",
+            "description": "The request is well-formed but conflicts with the current state of the system - an error-severity collision against another entry (FR-05), a duplicate active term on this same entry, a designation already retired (or, for reinstatement, already active), or a concurrent acknowledgement of the same collision. Add, amend and retire address a designation by its currently-*active* term, so a retired one is simply not addressable that way any more (404, not 409); reinstatement addresses one by its currently-*retired* term instead, so a term that was never retired is its own 404 there.",
             "content": {
               "application/json": {
                 "schema": {
@@ -2493,7 +2493,7 @@
             }
           },
           "422": {
-            "description": "A field failed validation - an unrecognised `use`, a malformed language tag, a term that is empty after whitespace cleaning, or a changelog note that does not meet FR-37. Two distinct body shapes occur here: a typed domain error (`ErrorResponse`) or a pydantic validation failure (FastAPI's own `HTTPValidationError`).",
+            "description": "A field failed validation - an unrecognised `target`, the retired `use` on an amendment, a term that is empty after whitespace cleaning, or a changelog note that does not meet FR-37. Two distinct body shapes occur here: a typed domain error (`ErrorResponse`) or a pydantic validation failure (FastAPI's own `HTTPValidationError`).",
             "content": {
               "application/json": {
                 "schema": {
@@ -4709,11 +4709,6 @@
     "schemas": {
       "AcknowledgeCollisionRequest": {
         "properties": {
-          "language": {
-            "type": "string",
-            "title": "Language",
-            "default": "en-AU"
-          },
           "term": {
             "type": "string",
             "title": "Term"
@@ -4733,11 +4728,6 @@
       },
       "AddDesignationsRequest": {
         "properties": {
-          "language": {
-            "type": "string",
-            "title": "Language",
-            "default": "en-AU"
-          },
           "terms": {
             "items": {
               "type": "string"
@@ -4746,10 +4736,6 @@
             "maxItems": 100,
             "minItems": 1,
             "title": "Terms"
-          },
-          "use": {
-            "$ref": "#/components/schemas/DesignationUse",
-            "default": "synonym"
           },
           "reason": {
             "type": "string",
@@ -4768,7 +4754,7 @@
           "expected_row_version"
         ],
         "title": "AddDesignationsRequest",
-        "description": "The body of `POST /catalogue/entries/{business_key}/designations`.\n\n`use` is typed against `DesignationUse` (matching `CodeBindingEditionHint`'s\nown precedent in `catalogue_bindings.py`), so an unrecognised value is a\npydantic 422 before any row is touched, rather than an unmapped\n`ck_designation_use` `IntegrityError`. `terms` is a batch - the common\ncase is pasting a delimiter-corrupted synonym cell (FR-04) - but a\npreferred variant permits at most one, since at most one can ever be\nactive per `(entry, language)`. Capped at `_MAX_TERMS_PER_BATCH`: each\nterm holds a `pg_advisory_xact_lock` until commit and costs its own\ncollision-check flush (`add_synonyms`'s own docstring), so an unbounded\nbatch is an unbounded amount of lock contention for one request."
+        "description": "The body of `POST /catalogue/entries/{business_key}/designations`.\n\n`terms` is a batch - the common case is pasting a delimiter-corrupted synonym cell\n(FR-04). Capped at `_MAX_TERMS_PER_BATCH`: each term holds a `pg_advisory_xact_lock` until\ncommit and costs its own collision-check flush (`add_synonyms`'s own docstring), so an\nunbounded batch is an unbounded amount of lock contention for one request."
       },
       "AdminEntryPage": {
         "properties": {
@@ -4995,11 +4981,6 @@
       },
       "AmendDesignationRequest": {
         "properties": {
-          "language": {
-            "type": "string",
-            "title": "Language",
-            "default": "en-AU"
-          },
           "term": {
             "type": "string",
             "title": "Term"
@@ -5013,10 +4994,10 @@
             "type": "string",
             "title": "Reason"
           },
-          "use": {
+          "target": {
             "anyOf": [
               {
-                "$ref": "#/components/schemas/DesignationUse"
+                "$ref": "#/components/schemas/AmendTarget"
               },
               {
                 "type": "null"
@@ -5037,7 +5018,7 @@
           "expected_row_version"
         ],
         "title": "AmendDesignationRequest",
-        "description": "The body of `POST .../designations/amendment`. `term` addresses the\ndesignation to edit; `new_term` is what it becomes. Editing in place\n(rather than retire-and-re-add) is `nptc.catalogue.designations.\namend_designation`'s own choice - see that function's docstring.\n\n`term` also addresses the entry's *own* en-AU preferred term, which is\nnot a designation row at all (ADR-0022) - see the module docstring for\nthe dispatch and `expected_row_version` for the lock it requires."
+        "description": "The body of `POST .../designations/amendment`. `term` addresses the\ndesignation to edit; `new_term` is what it becomes. Editing in place\n(rather than retire-and-re-add) is `nptc.catalogue.designations.\namend_designation`'s own choice - see that function's docstring.\n\n`term` also addresses the entry's *own* preferred term, which is\nnot a designation row at all (ADR-0022) - see the module docstring for\nthe dispatch and `expected_row_version` for the lock it requires.\n\nA body naming `use`, the field `target` replaced, is refused. Ignoring it would\nchange which row is written: an old `use=\"preferred\"` would rename a shadowing\nsynonym, and an old `use=\"synonym\"` with no matching synonym would rename the\nentry's preferred term where the old route answered 404. A tab still running the\nprevious bundle during a deploy sends exactly that. Other unnamed fields stay\nignored, because a client may post a `Designation` back with its `length` (FR-24)."
       },
       "AmendDesignationResult": {
         "properties": {
@@ -5077,7 +5058,7 @@
           "row_version"
         ],
         "title": "AmendDesignationResult",
-        "description": "The amended term, plus the entry's version after the write.\n\n`designation` is the same shape on both branches, including the one\nthat did not touch a `designation` row at all: the catalogue's own\nen-AU preferred term comes back rendered as\n`use=\"preferred\", language=\"en-AU\"`. That is this API's whole premise -\nevery term the catalogue holds is a designation, and ADR-0022's split\nbetween two storage homes is not something a client should have to\nmodel (see the module docstring).\n\n`row_version` is the entry's, on both branches, and is what a client\nsends back as `expected_row_version` on its next write - so a save\nnever has to be followed by a re-fetch just to learn the new token. It\nadvances on both branches (FR-38): a `designation` row has no version\nof its own, but amending one bumps the entry's counter via\n`nptc.catalogue.entries.entry_child_write`, the same way the\npreferred-term branch's `save_entry` always has.\n\n`warnings` carries a `LengthWarning` (FR-86) only on the preferred-term\nbranch, and only when a maximum is configured and exceeded. A synonym\namend can carry only collision warnings."
+        "description": "The amended term, plus the entry's version after the write.\n\n`designation` is the same shape on both branches, including the one\nthat did not touch a `designation` row at all: the catalogue's own\npreferred term comes back rendered as an active designation, and\n`label_provenance.designation` (`au_preferred_term` or `synonym`) says\nwhich home it came from. ADR-0022's split between two storage homes is\nnot something a client should have to model (see the module docstring).\n\n`row_version` is the entry's, on both branches, and is what a client\nsends back as `expected_row_version` on its next write - so a save\nnever has to be followed by a re-fetch just to learn the new token. It\nadvances on both branches (FR-38): a `designation` row has no version\nof its own, but amending one bumps the entry's counter via\n`nptc.catalogue.entries.entry_child_write`, the same way the\npreferred-term branch's `save_entry` always has.\n\n`warnings` carries a `LengthWarning` (FR-86) only on the preferred-term\nbranch, and only when a maximum is configured and exceeded. A synonym\namend can carry only collision warnings."
       },
       "AmendPropertyDefinitionRequest": {
         "properties": {
@@ -5165,6 +5146,15 @@
         ],
         "title": "AmendPropertyDefinitionRequest",
         "description": "The body of `PATCH /registry/properties/{key}`. Deliberately carries\nno `key` field (FR-12) and forbids any extra field a client might try to\nsmuggle one in as - `extra=\"forbid\"` turns a `key` in the body into a\npydantic 422 before this ever reaches `nptc.db.definitions.\namend_definition`.\n\n**An explicit `null` on a known field is refused, not a silent no-op.**\nNone of these fields is a nullable domain value, so a client sending\n`{\"label\": null, ...}` almost certainly meant to omit the field, not\nclear it - `_reject_explicit_null` below distinguishes \"omitted\" from\n\"provided as null\" via `model_fields_set`, which `changes()` cannot do\nonce every field has collapsed to `None`."
+      },
+      "AmendTarget": {
+        "type": "string",
+        "enum": [
+          "preferred_term",
+          "synonym"
+        ],
+        "title": "AmendTarget",
+        "description": "Which storage home an amendment's `term` means (see the module docstring)."
       },
       "AuditActor": {
         "properties": {
@@ -5666,10 +5656,6 @@
       },
       "CollisionAcknowledgementResponse": {
         "properties": {
-          "language": {
-            "type": "string",
-            "title": "Language"
-          },
           "reason": {
             "type": "string",
             "title": "Reason"
@@ -5681,12 +5667,11 @@
         },
         "type": "object",
         "required": [
-          "language",
           "reason",
           "created"
         ],
         "title": "CollisionAcknowledgementResponse",
-        "description": "Confirms an acknowledgement was recorded. No internal id, no\n`entry_id`, and deliberately no `acknowledged_by_user_id` either\n(NFR-04/NFR-26) - which administrator or reviewer acknowledged a\ncollision is an audit-log fact, not a public response field.\n\n`created` distinguishes \"this call recorded it\" (`True`) from \"this\nexact `(entry, term, language)` was already acknowledged, by an earlier\ncall\" (`False`) - `acknowledge_collision` is idempotent (see its own\ndocstring), and without this flag a caller cannot tell those two cases\napart, nor notice that `reason` below is the *original* note rather\nthan the one this call just submitted."
+        "description": "Confirms an acknowledgement was recorded. No internal id, no\n`entry_id`, and deliberately no `acknowledged_by_user_id` either\n(NFR-04/NFR-26) - which administrator or reviewer acknowledged a\ncollision is an audit-log fact, not a public response field.\n\n`created` distinguishes \"this call recorded it\" (`True`) from \"this\nexact `(entry, term)` was already acknowledged, by an earlier\ncall\" (`False`) - `acknowledge_collision` is idempotent (see its own\ndocstring), and without this flag a caller cannot tell those two cases\napart, nor notice that `reason` below is the *original* note rather\nthan the one this call just submitted."
       },
       "CollisionItem": {
         "properties": {
@@ -5756,7 +5741,7 @@
           "label_provenance"
         ],
         "title": "CollisionWarning",
-        "description": "One warning-severity collision (FR-05): the same term active on\nanother live entry. Names that entry's public identifier and preferred\nterm, never its internal id (NFR-04/NFR-26) - the same shape the 409\nhandler for the *error*-severity case already returns.\n\n`label_provenance[\"term\"]` is always `SYNONYM_PROVENANCE` (FR-98),\nnever `PREFERRED_VARIANT`/`AU_PREFERRED_TERM`: both call sites'\nown comments (`add_designations_route`/`amend_designation_route`) prove\nthe preferred branch never produces a `CollisionWarning` at all -\n`warning_collisions` only ever looks for another live entry's active\n*synonym*, so a non-empty `warnings` list is only ever reachable from\nthe synonym branch. `label_provenance[\"preferred_term\"]` is the\n*colliding* entry's own catalogue preferred term, matching\n`EntrySummary.preferred_term`'s own designation type."
+        "description": "One warning-severity collision (FR-05): the same term active on\nanother live entry. Names that entry's public identifier and preferred\nterm, never its internal id (NFR-04/NFR-26) - the same shape the 409\nhandler for the *error*-severity case already returns.\n\n`label_provenance[\"term\"]` is always `SYNONYM_PROVENANCE` (FR-98),\nnever `AU_PREFERRED_TERM`: both call sites'\nown comments (`add_designations_route`/`amend_designation_route`) prove\nthe preferred branch never produces a `CollisionWarning` at all -\n`warning_collisions` only ever looks for another live entry's active\n*synonym*, so a non-empty `warnings` list is only ever reachable from\nthe synonym branch. `label_provenance[\"preferred_term\"]` is the\n*colliding* entry's own catalogue preferred term, matching\n`EntrySummary.preferred_term`'s own designation type."
       },
       "ConceptLookup": {
         "properties": {
@@ -6060,14 +6045,6 @@
             "type": "string",
             "title": "Term"
           },
-          "use": {
-            "type": "string",
-            "title": "Use"
-          },
-          "language": {
-            "type": "string",
-            "title": "Language"
-          },
           "status": {
             "type": "string",
             "title": "Status"
@@ -6083,14 +6060,12 @@
         "type": "object",
         "required": [
           "term",
-          "use",
-          "language",
           "status",
           "length",
           "label_provenance"
         ],
         "title": "Designation",
-        "description": "A catalogue-authored synonym, or a preferred variant in a language\nother than en-AU.\n\nThe catalogue's own en-AU preferred term is **not** here - it is\n`EntrySummary.preferred_term`, and ADR-0022 makes its absence from\n`designation` a database invariant rather than a convention. A client\nbuilding a term list needs both: `preferred_term`, plus these.\n\nNo `id` (matching `Binding`'s own rule, NFR-04/NFR-26): the designation\nwrite router addresses a designation by term in the request body, not\nan internal identifier - see that router's own module docstring."
+        "description": "A catalogue-authored synonym.\n\nThe catalogue's own preferred term is **not** here - it is\n`EntrySummary.preferred_term`, and ADR-0022 keeps it out of `designation`.\nA client building a term list needs both: `preferred_term`, plus these.\n\nNo `id` (matching `Binding`'s own rule, NFR-04/NFR-26): the designation\nwrite router addresses a designation by term in the request body, not\nan internal identifier - see that router's own module docstring."
       },
       "DesignationCollisionResponse": {
         "properties": {
@@ -6135,19 +6110,10 @@
         "enum": [
           "fsn",
           "au_preferred_term",
-          "synonym",
-          "preferred_variant"
+          "synonym"
         ],
         "title": "DesignationType",
         "description": "Which designation a label-bearing field holds - the wire values\nnamed in the FR-98 plan, and nothing else: a client branches on these,\nso a new value is a deliberate addition here, not an incidental rename."
-      },
-      "DesignationUse": {
-        "type": "string",
-        "enum": [
-          "preferred",
-          "synonym"
-        ],
-        "title": "DesignationUse"
       },
       "DesignationWriteResult": {
         "properties": {
@@ -7179,11 +7145,6 @@
       },
       "ReinstateDesignationRequest": {
         "properties": {
-          "language": {
-            "type": "string",
-            "title": "Language",
-            "default": "en-AU"
-          },
           "term": {
             "type": "string",
             "title": "Term"
@@ -7205,7 +7166,7 @@
           "expected_row_version"
         ],
         "title": "ReinstateDesignationRequest",
-        "description": "The body of `POST .../designations/reinstatement`.\n`term` addresses the designation to reinstate - resolved against the\nmost-recently-retired row matching `(entry, term, language)`\n(`nptc.catalogue.designations.load_retired_designation`), never a\nspecific row's internal id, matching every other route in this module."
+        "description": "The body of `POST .../designations/reinstatement`.\n`term` addresses the designation to reinstate - resolved against the\nmost-recently-retired row matching `(entry, term)`\n(`nptc.catalogue.designations.load_retired_designation`), never a\nspecific row's internal id, matching every other route in this module."
       },
       "ReinstateDesignationResult": {
         "properties": {
@@ -7327,11 +7288,6 @@
       },
       "RetireDesignationRequest": {
         "properties": {
-          "language": {
-            "type": "string",
-            "title": "Language",
-            "default": "en-AU"
-          },
           "term": {
             "type": "string",
             "title": "Term"

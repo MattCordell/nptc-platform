@@ -30,20 +30,8 @@ const ENTRY = {
   designations: [
     {
       term: "Serum ferritin",
-      use: "synonym",
-      language: "en-AU",
       status: "active",
       length: 14,
-    },
-    // A non-en-AU preferred *designation*, which is a shape the read route
-    // documents ("an entry's active synonyms and non-en-AU preferred
-    // variants") and which the panel must not amend as a synonym.
-    {
-      term: "Ferritine",
-      use: "preferred",
-      language: "fr-FR",
-      status: "active",
-      length: 9,
     },
     // A retired synonym (issue #239). The admin read route serves retired
     // designations alongside active ones, unlike the public route, so the
@@ -51,8 +39,6 @@ const ENTRY = {
     // status-gated row actions.
     {
       term: "Obsolete ferritin note",
-      use: "synonym",
-      language: "en-AU",
       status: "retired",
       length: 22,
     },
@@ -628,7 +614,7 @@ describe("the terms table", () => {
     await renderLoaded();
 
     const rows = screen.getAllByRole("row");
-    // Header, then preferred first, then the two designations.
+    // Header, then preferred first, then the active synonym, then the retired one.
     expect(within(rows[1] as HTMLElement).getByRole("rowheader")).toHaveTextContent(
       "Ferritin",
     );
@@ -637,7 +623,7 @@ describe("the terms table", () => {
       "Serum ferritin",
     );
     expect(within(rows[3] as HTMLElement).getByRole("rowheader")).toHaveTextContent(
-      "Ferritine",
+      "Obsolete ferritin note",
     );
   });
 
@@ -702,7 +688,7 @@ describe("the terms table", () => {
 
   it("tells two rows apart when a synonym shadows the preferred term", async () => {
     // `POST .../designations` will happily create a synonym whose comparison
-    // key equals its own entry's preferred term - the state #227 added `use`
+    // key equals its own entry's preferred term - the state `target` exists
     // to reach past. Both rows then read "Ferritin", so naming the buttons by
     // term alone would leave a screen-reader user with two identical actions
     // and no way to know which one moves which.
@@ -714,8 +700,6 @@ describe("the terms table", () => {
           designations: [
             {
               term: "Ferritin",
-              use: "synonym",
-              language: "en-AU",
               status: "active",
               length: 8,
             },
@@ -816,9 +800,7 @@ describe("adding synonyms", () => {
 
     await waitFor(() => expect(callsTo(calls, ADD_PATH)).toHaveLength(1));
     expect(callsTo(calls, ADD_PATH)[0]?.body).toEqual({
-      language: "en-AU",
       terms: ["Zovirax", "Cyclir"],
-      use: "synonym",
       reason: "Add the two brand names",
       expected_row_version: ENTRY.row_version,
     });
@@ -1033,11 +1015,11 @@ describe("an error-severity collision", () => {
     await user.click(screen.getByRole("button", { name: "Add terms" }));
     await screen.findByRole("link", { name: /NPTC-000111/ });
 
-    // Header plus the four terms the entry started with, and no fifth.
+    // Header plus the three terms the entry started with, and no fourth.
     // Scoped to this table, not the whole page: the code bindings table (#150)
     // below it renders its own header and empty-state rows.
     const table = screen.getByRole("table", { name: `Terms on ${BUSINESS_KEY}` });
-    expect(within(table).getAllByRole("row")).toHaveLength(5);
+    expect(within(table).getAllByRole("row")).toHaveLength(4);
   });
 });
 
@@ -1050,8 +1032,6 @@ describe("a warning-severity collision", () => {
       designations: [
         {
           term: "Ferritin assay",
-          use: "synonym",
-          language: "en-AU",
           status: "active",
           length: 14,
         },
@@ -1115,7 +1095,7 @@ describe("a warning-severity collision", () => {
         method: "POST",
         path: ACK_PATH,
         status: 200,
-        body: { language: "en-AU", reason: "Both entries use it", created: true },
+        body: { reason: "Both entries use it", created: true },
       },
     ]);
     await renderLoaded();
@@ -1128,7 +1108,6 @@ describe("a warning-severity collision", () => {
 
     await waitFor(() => expect(callsTo(calls, ACK_PATH)).toHaveLength(1));
     expect(callsTo(calls, ACK_PATH)[0]?.body).toEqual({
-      language: "en-AU",
       term: "Ferritin assay",
       reason: "Both entries use it",
     });
@@ -1159,8 +1138,8 @@ describe("a warning-severity collision", () => {
 });
 
 describe("amending a term", () => {
-  it("addresses the entry's own preferred term with use and a row version", async () => {
-    // FR-38 plus #227's disambiguator. Without `use: "preferred"` the route
+  it("addresses the entry's own preferred term with target and a row version", async () => {
+    // FR-38 plus the disambiguator. Without `target: "preferred_term"` the route
     // resolves designations first, so a synonym shadowing the preferred term
     // would be moved instead - silently, and with no way back.
     const user = userEvent.setup();
@@ -1173,8 +1152,6 @@ describe("amending a term", () => {
         body: {
           designation: {
             term: "Serum ferritin level",
-            use: "preferred",
-            language: "en-AU",
             status: "active",
             length: 20,
           },
@@ -1197,10 +1174,9 @@ describe("amending a term", () => {
 
     await waitFor(() => expect(callsTo(calls, AMEND_PATH)).toHaveLength(1));
     expect(callsTo(calls, AMEND_PATH)[0]?.body).toEqual({
-      language: "en-AU",
       term: "Ferritin",
       new_term: "Serum ferritin level",
-      use: "preferred",
+      target: "preferred_term",
       expected_row_version: 3,
       reason: "Disambiguate from plasma",
     });
@@ -1214,8 +1190,6 @@ describe("amending a term", () => {
       body: {
         designation: {
           term: "Serum ferritin level, automated",
-          use: "preferred",
-          language: "en-AU",
           status: "active",
           length: 31,
         },
@@ -1292,8 +1266,6 @@ describe("amending a term", () => {
             designations: [
               {
                 term: "Ferritin assay",
-                use: "synonym",
-                language: "en-AU",
                 status: "active",
                 length: 14,
               },
@@ -1411,8 +1383,6 @@ describe("amending a term", () => {
           body: {
             designation: {
               term: "Serum ferritin",
-              use: "synonym",
-              language: "en-AU",
               status: "retired",
               length: 14,
             },
@@ -1448,8 +1418,6 @@ describe("amending a term", () => {
         body: {
           designation: {
             term: "Ferritin, serum",
-            use: "synonym",
-            language: "en-AU",
             status: "active",
             length: 15,
           },
@@ -1473,7 +1441,6 @@ describe("amending a term", () => {
     expect(callsTo(calls, AMEND_PATH)[0]?.body).toMatchObject({
       term: "Serum ferritin",
       new_term: "Ferritin, serum",
-      use: "synonym",
       expected_row_version: 3,
     });
   });
@@ -1626,48 +1593,6 @@ describe("amending a term", () => {
     expect(readsOf(calls)).toHaveLength(readsBefore);
   });
 
-  it("amends a non-en-AU preferred variant as preferred, not as a synonym", async () => {
-    // The read route serves "an entry's active synonyms and non-en-AU
-    // preferred variants", so `use` has to come off the row. Hardcoding
-    // "synonym" for every row that is not the entry's own term mis-addresses
-    // exactly the designation `use` exists to reach (review finding 1).
-    const user = userEvent.setup();
-    const calls = stubApi([
-      READ_OK,
-      {
-        method: "POST",
-        path: AMEND_PATH,
-        status: 200,
-        body: {
-          designation: {
-            term: "Ferritine serique",
-            use: "preferred",
-            language: "fr-FR",
-            status: "active",
-            length: 17,
-          },
-          warnings: [],
-          row_version: 3,
-        },
-      },
-    ]);
-    await renderLoaded();
-
-    await user.click(screen.getByRole("button", { name: "Edit Ferritine (preferred)" }));
-    const term = inDialog().getByLabelText("Term");
-    await user.clear(term);
-    await user.type(term, "Ferritine serique");
-    await user.type(inDialog().getByLabelText(/Changelog note/), "Correct the French");
-    await user.click(inDialog().getByRole("button", { name: "Save term" }));
-
-    await waitFor(() => expect(callsTo(calls, AMEND_PATH)).toHaveLength(1));
-    expect(callsTo(calls, AMEND_PATH)[0]?.body).toMatchObject({
-      language: "fr-FR",
-      term: "Ferritine",
-      use: "preferred",
-    });
-  });
-
   it("renders a conflicting value that is not a string", async () => {
     // `submitted`/`current` are deliberately untyped on the wire - the audit
     // diff carries whatever the field holds, and a flag is a boolean. Assuming
@@ -1776,8 +1701,6 @@ describe("retiring a term", () => {
         body: {
           designation: {
             term: "Serum ferritin",
-            use: "synonym",
-            language: "en-AU",
             status: "retired",
             length: 14,
           },
@@ -1798,7 +1721,6 @@ describe("retiring a term", () => {
 
     await waitFor(() => expect(callsTo(calls, RETIRE_PATH)).toHaveLength(1));
     expect(callsTo(calls, RETIRE_PATH)[0]?.body).toEqual({
-      language: "en-AU",
       term: "Serum ferritin",
       reason: "Superseded by the new wording",
       expected_row_version: ENTRY.row_version,
@@ -1819,8 +1741,6 @@ describe("retiring a term", () => {
           designations: [
             {
               term: "Ferritin assay",
-              use: "synonym",
-              language: "en-AU",
               status: "active",
               length: 14,
             },
@@ -1842,8 +1762,6 @@ describe("retiring a term", () => {
         body: {
           designation: {
             term: "Serum ferritin",
-            use: "synonym",
-            language: "en-AU",
             status: "retired",
             length: 14,
           },
@@ -1941,8 +1859,6 @@ describe("reinstating a term (issue #313)", () => {
         body: {
           designation: {
             term: "Obsolete ferritin note",
-            use: "synonym",
-            language: "en-AU",
             status: "active",
             length: 22,
           },
@@ -1964,7 +1880,6 @@ describe("reinstating a term (issue #313)", () => {
 
     await waitFor(() => expect(callsTo(calls, REINSTATE_PATH)).toHaveLength(1));
     expect(callsTo(calls, REINSTATE_PATH)[0]?.body).toEqual({
-      language: "en-AU",
       term: "Obsolete ferritin note",
       reason: "Retired by mistake, putting it back",
       expected_row_version: ENTRY.row_version,
@@ -1998,9 +1913,7 @@ describe("reinstating a term (issue #313)", () => {
         path: REINSTATE_PATH,
         status: 409,
         body: {
-          detail:
-            "entry has an active designation for term 'Obsolete ferritin note' " +
-            "in language 'en-AU'",
+          detail: "entry has an active designation for term 'Obsolete ferritin note'",
         },
       },
     ]);
@@ -2772,8 +2685,6 @@ describe("cross-panel", () => {
           body: {
             designation: {
               term: "Ferritin, renamed",
-              use: "preferred",
-              language: "en-AU",
               status: "active",
               length: 17,
             },

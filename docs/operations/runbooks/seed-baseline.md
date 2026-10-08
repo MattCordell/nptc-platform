@@ -123,7 +123,7 @@ Facets still work without the indexes, but slowly.
 |---|---|
 | `0` | Seeded and committed. With `--dry-run`: the dataset is seedable, and nothing was committed. |
 | `2` | Usage error: no DSN from `--database-url` or `NPTC_DATABASE_URL`, or an explicitly empty `--database-url ""`. |
-| `3` | The dataset was refused before any write: the file is missing or not JSON, its `schema_version` is not `3`, it does not match the format, or the backend cannot store it. Every problem is listed. See "Refusals and how to fix them". |
+| `3` | The dataset was refused before any write: the file is missing or not JSON, its `schema_version` is not `4`, it does not match the format, or the backend cannot store it. Every problem is listed. See "Refusals and how to fix them". |
 | `4` | The catalogue already holds an entry, or a seeding run is already recorded. Nothing was written. See "Reseeding". |
 | `5` | A write was refused and everything was rolled back: an FR-05 designation collision, a discipline label with no matching code, or a missing local code system. The message names the entry by business key, preferred term, sheet and row. |
 | `6` | Could not complete: the database was unreachable, a credential was refused, or an unexpected failure occurred. The message names only the exception type, never its text, because that can carry connection details (NFR-26). The transaction is rolled back. |

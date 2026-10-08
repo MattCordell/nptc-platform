@@ -7,9 +7,9 @@
 
 ADR-0001 and FR-74 settle how this repository avoids a second, divergent implementation
 of a domain rule: `shared/` (`nptc_shared`) is imported by *both* `backend/` and
-`transform/`, so SCTID validation, Verhoeff, text normalisation, similarity and BCP-47
-well-formedness each exist exactly once. `nptc_shared.similarity`'s own module docstring,
-`shared/src/nptc_shared/language.py`'s, and ADR-0022's term-hygiene section all restate
+`transform/`, so SCTID validation, Verhoeff, text normalisation and similarity each exist
+exactly once. `nptc_shared.similarity`'s own module docstring and ADR-0022's term-hygiene
+section both restate
 the same doctrine.
 
 Issue #149 is the first change that needs one of those rules to run in a browser, and

@@ -390,49 +390,20 @@ def test_known_models_declare_provenance_for_exactly_their_own_label_fields() ->
         "specimens": {"designation": "au_preferred_term", "semantic_tag": "not_applicable"},
     }
 
-    def _designation_row(*, use: str) -> queries.DesignationRow:
-        return queries.DesignationRow(
+    synonym = designation_from_row(
+        queries.DesignationRow(
             id=uuid.uuid4(),
             entry_id=uuid.uuid4(),
             term="Full blood count synonym",
-            use=use,
-            language="en-AU",
             status="active",
             length=25,
         )
-
-    synonym = designation_from_row(_designation_row(use="synonym"))
+    )
     assert isinstance(synonym, Designation)
     assert synonym.label_provenance.model_dump() == {
         "designation": "synonym",
         "semantic_tag": "not_applicable",
     }
-
-    # ADR-0022's contentious mapping (round-1 review): a `designation` row
-    # with `use="preferred"` is a non-en-AU preferred *variant*, never the
-    # catalogue's own AU preferred term - see `_DESIGNATION_LABEL_
-    # PROVENANCE`'s own comment in `catalogue_shared.py`.
-    preferred_variant = designation_from_row(_designation_row(use="preferred"))
-    assert preferred_variant.label_provenance.model_dump() == {
-        "designation": "preferred_variant",
-        "semantic_tag": "not_applicable",
-    }
-
-
-@pytest.mark.req("FR-98")
-def test_designation_label_provenance_covers_every_designation_use() -> None:
-    """`designation_from_row` looks up `_DESIGNATION_LABEL_PROVENANCE[row.
-    use]` unconditionally (round-1 review) - a `use` outside the two
-    mapped keys is an unhandled `KeyError`, an unmapped 500 on a read path,
-    rather than a documented refusal. Nothing ties the dict to
-    `DesignationUse` itself, so a third member added to that enum without
-    a matching dict entry would silently reintroduce the gap - this is the
-    staleness guard, mirroring `test_catalogue_bindings.py`'s own
-    `test_allowed_references_list_is_not_stale` idiom."""
-    from nptc.api.routers.catalogue_shared import _DESIGNATION_LABEL_PROVENANCE
-    from nptc.db.models.designation import DesignationUse
-
-    assert set(_DESIGNATION_LABEL_PROVENANCE) == {member.value for member in DesignationUse}
 
 
 # --- the 391483001 worked regression, over real HTTP -----------------------

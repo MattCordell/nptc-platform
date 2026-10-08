@@ -398,7 +398,7 @@ def test_a_doubled_delimiter_yields_two_synonyms_not_three(tmp_path: Path) -> No
     dataset = _build(workbook_path)
 
     entry = dataset.entries[0]
-    synonym_terms = [d.term for d in entry.designations if d.use == "synonym"]
+    synonym_terms = [d.term for d in entry.designations]
     assert synonym_terms == ["Zovirax", "Cyclir"]
 
 
@@ -426,8 +426,36 @@ def test_a_comma_delimited_synonym_cell_is_split(tmp_path: Path) -> None:
     dataset = _build(workbook_path)
 
     entry = dataset.entries[0]
-    synonym_terms = [d.term for d in entry.designations if d.use == "synonym"]
+    synonym_terms = [d.term for d in entry.designations]
     assert synonym_terms == ["ADA RBC", "ADA red cells"]
+
+
+@pytest.mark.req("FR-04")
+def test_the_preferred_term_is_not_a_designation_and_a_synonym_carries_no_use_or_language(
+    tmp_path: Path,
+) -> None:
+    """ADR-0022: the entry's own term is `preferred_term`, and every designation is a synonym."""
+    workbook_path = _workbook(
+        tmp_path,
+        [["Zovirax", "Cyclir", "", 11, "Chemical", "", "Serum", "12345678", "x", 4, ""]],
+    )
+    report_dir = tmp_path / "out"
+
+    write_dataset(_build(workbook_path), report_dir)
+
+    (entry,) = _dataset_payload(report_dir)["entries"]
+    assert entry["preferred_term"] == "Zovirax"
+    assert entry["designations"] == [{"term": "Cyclir", "status": "active"}]
+
+
+@pytest.mark.req("FR-04")
+def test_an_entry_with_no_synonyms_has_no_designations(tmp_path: Path) -> None:
+    workbook_path = _workbook(
+        tmp_path,
+        [["Zovirax", "", "", 11, "Chemical", "", "Serum", "12345678", "x", 4, ""]],
+    )
+
+    assert _build(workbook_path).entries[0].designations == ()
 
 
 @pytest.mark.req("FR-03")
@@ -477,7 +505,7 @@ def test_write_dataset_writes_the_json_file(tmp_path: Path) -> None:
     write_dataset(dataset, report_dir)
 
     payload = _dataset_payload(report_dir)
-    assert payload["schema_version"] == 3
+    assert payload["schema_version"] == 4
     assert payload["baseline_release"]["name"] == "2026-06"
     assert len(payload["entries"]) == 1
     assert "specimen_unconstrained" not in payload["entries"][0]

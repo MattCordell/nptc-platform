@@ -25,8 +25,8 @@ _INSERT_ENTRY = text(
 )
 _INSERT_ACK = text(
     "INSERT INTO designation_collision_acknowledgement "
-    "(entry_id, term_key, language, reason) "
-    "VALUES (:entry_id, :term_key, :language, :reason) RETURNING id"
+    "(entry_id, term_key, reason) "
+    "VALUES (:entry_id, :term_key, :reason) RETURNING id"
 )
 
 
@@ -46,12 +46,11 @@ def _insert_ack(
     *,
     entry_id: object,
     term_key: str = "ada2",
-    language: str = "en-AU",
     reason: str = "Genuinely ambiguous abbreviation, disambiguated by specimen",
 ) -> object:
     return connection.execute(
         _INSERT_ACK,
-        {"entry_id": entry_id, "term_key": term_key, "language": language, "reason": reason},
+        {"entry_id": entry_id, "term_key": term_key, "reason": reason},
     ).scalar_one()
 
 
@@ -77,19 +76,9 @@ def test_reason_cannot_be_blank(db: Connection) -> None:
     assert exc_info.value.orig.sqlstate == _CHECK_VIOLATION  # type: ignore[union-attr]
 
 
-@pytest.mark.integration
-def test_language_must_be_a_well_formed_tag(db: Connection) -> None:
-    entry_id = _insert_entry(db)
-
-    with pytest.raises(IntegrityError) as exc_info:
-        _insert_ack(db, entry_id=entry_id, language="not a tag")
-
-    assert exc_info.value.orig.sqlstate == _CHECK_VIOLATION  # type: ignore[union-attr]
-
-
 @pytest.mark.req("FR-05")
 @pytest.mark.integration
-def test_duplicate_acknowledgement_for_the_same_entry_term_and_language_is_refused(
+def test_duplicate_acknowledgement_for_the_same_entry_and_term_is_refused(
     db: Connection,
 ) -> None:
     entry_id = _insert_entry(db)
@@ -103,16 +92,13 @@ def test_duplicate_acknowledgement_for_the_same_entry_term_and_language_is_refus
     # acknowledge_collision` matches against (issue #224) - a rename here
     # with no matching update there would silently turn a genuine
     # concurrent-acknowledgement race back into an unmapped 500.
-    assert (
-        unique_violation_constraint(exc_info.value)
-        == "ix_designation_collision_ack_entry_term_language"
-    )
+    assert unique_violation_constraint(exc_info.value) == "ix_designation_collision_ack_entry_term"
 
 
 @pytest.mark.req("FR-05")
 @pytest.mark.integration
 def test_the_same_term_key_may_be_acknowledged_separately_per_entry(db: Connection) -> None:
-    """Scope is (entry, term_key, language) - acknowledging 'ADA2' on one
+    """Scope is (entry, term_key) - acknowledging 'ADA2' on one
     entry does not silence it for a different entry, matching #49's own
     per-entry acknowledgement design (a fourth entry later joining the
     group still warns once on its own save)."""

@@ -464,7 +464,7 @@ def read_entry_by_system_and_code(
 
 @router.get(
     "/entries/{business_key}/designations",
-    summary="An entry's active synonyms and non-en-AU preferred variants",
+    summary="An entry's active synonyms",
     responses=PUBLIC_ENTRY_ERROR_RESPONSES,
     dependencies=[_BROWSE],
 )

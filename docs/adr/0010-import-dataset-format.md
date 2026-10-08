@@ -166,3 +166,14 @@ design.
   which is the published label with its tag already removed. This ends the deferral recorded
   above: the list read model strips the tag from a stored FSN (FR-83), and stripping an
   already-stripped label would over-strip it. A bound code with no served FSN stops the run.
+
+## Amendment (2026-10-09, FR-04, ADR-0022)
+
+- `import-dataset.json`'s `schema_version` moved from 3 to 4. A designation is a synonym and
+  nothing else, so it carries `term` and `status` only: `use` and `language` are gone, and the
+  transform no longer emits the en-AU preferred designation row, because the entry's own term is
+  `preferred_term` (ADR-0022). The loader refuses a version 3 file and names the version, and
+  its models forbid unknown keys, so a version 4 file that still names `use` or `language` is
+  refused as well. Re-emit any dataset made before this change with the transform.
+- The loader no longer checks that exactly one preferred designation equals `preferred_term`.
+  There is no such row to check.

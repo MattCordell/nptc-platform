@@ -54,12 +54,7 @@ def _entry(
     specimen_code: str | None = "119364003",
     code: str | None = None,
 ) -> dict[str, Any]:
-    designations = [
-        {"term": preferred, "use": "preferred", "language": "en-AU", "status": "active"}
-    ]
-    designations += [
-        {"term": s, "use": "synonym", "language": "en-AU", "status": "active"} for s in synonyms
-    ]
+    designations = [{"term": s, "status": "active"} for s in synonyms]
     return {
         "business_key": key,
         "preferred_term": preferred,
@@ -130,12 +125,7 @@ def test_the_filtered_excerpt_has_no_collision_and_no_shared_code(
     entries = json.loads(output.read_text(encoding="utf-8"))["entries"]
 
     preferred = [collision_key(e["preferred_term"]) for e in entries]
-    synonyms = [
-        collision_key(d["term"])
-        for e in entries
-        for d in e["designations"]
-        if d["use"] == "synonym"
-    ]
+    synonyms = [collision_key(d["term"]) for e in entries for d in e["designations"]]
     codes = [b["code"] for e in entries for b in e["code_bindings"]]
 
     assert len(set(preferred)) == len(preferred)
@@ -154,8 +144,8 @@ def test_the_filtered_excerpt_still_varies(emitted_dataset: Path, tmp_path: Path
     assert any(len(e["properties"]["discipline"]) > 1 for e in entries)
     assert any(e["properties"]["subgroup"] for e in entries)
     assert any(not e["properties"]["subgroup"] for e in entries)
-    assert any(len(e["designations"]) > 1 for e in entries)
-    assert any(len(e["designations"]) == 1 for e in entries)
+    assert any(len(e["designations"]) > 0 for e in entries)
+    assert any(len(e["designations"]) == 0 for e in entries)
 
 
 def test_everything_outside_entries_passes_through() -> None:

@@ -22,10 +22,9 @@ response.
 
 Most refusals are a row of ``_REFUSALS``. A refusal that builds its own body
 or branches on the instance is a function in ``register_exception_handlers``.
-A constraint that its name alone cannot disambiguate (a malformed
-designation ``use``, ``ck_designation_no_en_au_preferred``) is not mapped
+A constraint that its name alone cannot disambiguate is not mapped
 here: it is refused as a pydantic 422 at the request-body layer, before the
-ORM is touched (``nptc.api.routers.catalogue_designations``).
+ORM is touched.
 """
 
 from __future__ import annotations
@@ -76,7 +75,6 @@ from nptc.catalogue.designations import (
     DesignationNotFoundError,
     DesignationNotRetiredError,
     DuplicateActiveTermError,
-    PreferredDesignationAlreadyActiveError,
 )
 from nptc.catalogue.errors import (
     CodeLookupNotFoundError,
@@ -100,7 +98,7 @@ from nptc.catalogue.property_value_sources import (
 )
 from nptc.catalogue.property_values import PropertyDefinitionNotFoundError, PropertyValidationError
 from nptc.catalogue.search import EmptySearchQueryError, MalformedSearchCursorError
-from nptc.catalogue.term_hygiene import DesignationLanguageError, TermCleaningError
+from nptc.catalogue.term_hygiene import TermCleaningError
 from nptc.exports.semantic_tag import EmptyDisplayTermError, NotAServedFSNError
 from nptc.registry.definitions import (
     DeprecatedPropertyWriteError,
@@ -338,7 +336,6 @@ _DETAIL_TERM_CLEANING = (
     "This term could not be saved. It may be empty after whitespace cleaning, or "
     "contain a character that must be corrected by hand before it can be stored."
 )
-_DETAIL_DESIGNATION_LANGUAGE = "This language tag is not well-formed."
 _DETAIL_ALREADY_RETIRED = "This designation has already been retired."
 #: Shared by two addressing conventions: add, amend and retire address a
 #: designation by its currently-*active* term, reinstate by its currently-
@@ -353,9 +350,6 @@ _DETAIL_DUPLICATE_ACTIVE_TERM = (
 #: retired, was already reinstated, or was retired and re-added as a synonym.
 _DETAIL_DESIGNATION_NOT_RETIRED = (
     "This term is already active on this entry, so there is nothing to reinstate."
-)
-_DETAIL_PREFERRED_DESIGNATION_ALREADY_ACTIVE = (
-    "This entry already has an active preferred term in this language."
 )
 _DETAIL_COLLISION_ACKNOWLEDGEMENT_CONFLICT = (
     "This collision was just acknowledged by another request. No further action is needed."
@@ -637,9 +631,6 @@ _REFUSALS: Final[dict[type[Exception], _Refusal]] = {
     ),
     ChangelogNoteError: _Refusal(_DETAIL_CHANGELOG_NOTE, "changelog note refused: %s", _name),
     TermCleaningError: _Refusal(_DETAIL_TERM_CLEANING, "term refused: %s", _name),
-    DesignationLanguageError: _Refusal(
-        _DETAIL_DESIGNATION_LANGUAGE, "designation language tag refused: %s"
-    ),
     DesignationAlreadyRetiredError: _Refusal(
         _DETAIL_ALREADY_RETIRED, "retire refused, already retired: %s"
     ),
@@ -651,10 +642,6 @@ _REFUSALS: Final[dict[type[Exception], _Refusal]] = {
     ),
     DuplicateActiveTermError: _Refusal(
         _DETAIL_DUPLICATE_ACTIVE_TERM, "designation refused, duplicate active term: %s", _name
-    ),
-    PreferredDesignationAlreadyActiveError: _Refusal(
-        _DETAIL_PREFERRED_DESIGNATION_ALREADY_ACTIVE,
-        "designation refused, preferred already active: %s",
     ),
     DesignationCollisionAcknowledgementConflictError: _Refusal(
         _DETAIL_COLLISION_ACKNOWLEDGEMENT_CONFLICT,

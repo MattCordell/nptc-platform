@@ -298,7 +298,7 @@ def test_the_detail_response_carries_every_field_the_public_ui_needs(
     assert not missing, f"detail response is missing UI fields: {sorted(missing)}"
     # And the awkward shapes are genuinely populated, so the field check
     # above is not passing over three empty lists.
-    assert len(body["designations"]) >= 2
+    assert len(body["designations"]) >= 1
     assert len(body["properties"]) >= 3
     assert {binding["status"] for binding in body["bindings"]} == {"active", "retired"}
 

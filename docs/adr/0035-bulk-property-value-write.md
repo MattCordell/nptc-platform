@@ -252,8 +252,8 @@ of `save_entry`/`save_property_values`/`add_designation`/`amend_designation`, in
 their own no-op paths that previously took no lock at all. Because the lock now precedes
 the row-version check in every one of these functions, a stale `expected_row_version` (409)
 holds it until the request's transaction unwinds too — not only a successful write.
-**Issue #360 exempts input checks that never see a session.** `validate_changelog_note`,
-`clean_term` and `validate_language_tag` run before the lock, so a rejected changelog note
+**Issue #360 exempts input checks that never see a session.** `validate_changelog_note`
+and `clean_term` run before the lock, so a rejected changelog note
 (422) or term takes no lock. That covers `save_entries`, `amend_designation`,
 `retire_designation` and `reinstate_designation` too, and the designation and binding routes
 pass their request's note to `entry_child_write(..., reason=...)`, which validates it ahead

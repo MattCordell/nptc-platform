@@ -340,9 +340,7 @@ describe("useAddDesignations", () => {
     await waitFor(() => expect(result.current.entry.isSuccess).toBe(true));
 
     result.current.add.mutate({
-      language: "en-AU",
       terms: ["Zovirax", "Cyclir"],
-      use: "synonym",
       reason: "Split the pasted synonym cell",
       expected_row_version: 1,
     });
@@ -354,9 +352,7 @@ describe("useAddDesignations", () => {
     );
     expect(request.method).toBe("POST");
     expect(await bodyOf(request)).toEqual({
-      language: "en-AU",
       terms: ["Zovirax", "Cyclir"],
-      use: "synonym",
       reason: "Split the pasted synonym cell",
       expected_row_version: 1,
     });
@@ -381,9 +377,7 @@ describe("useAddDesignations", () => {
     const { result } = renderHook(() => useAddDesignations("NPTC-000247"), { wrapper });
 
     result.current.mutate({
-      language: "en-AU",
       terms: ["Adrenal Ab"],
-      use: "synonym",
       reason: "Add a colliding synonym",
       expected_row_version: 1,
     });
@@ -411,9 +405,7 @@ describe("useAddDesignations", () => {
     const { result } = renderHook(() => useAddDesignations("NPTC-000247"), { wrapper });
 
     result.current.mutate({
-      language: "en-AU",
       terms: ["Zovirax"],
-      use: "synonym",
       reason: "Add under a stale version",
       expected_row_version: 1,
     });
@@ -424,22 +416,21 @@ describe("useAddDesignations", () => {
 });
 
 describe("useAmendDesignation", () => {
-  it("sends use and expected_row_version so the entry's own term is addressable", async () => {
-    // ADR-0022 keeps the catalogue's own en-AU preferred term off `designation`
-    // entirely. `use: "preferred"` is what reaches past a synonym shadowing it,
+  it("sends target and expected_row_version so the entry's own term is addressable", async () => {
+    // ADR-0022 keeps the catalogue's own preferred term off `designation`
+    // entirely. `target: "preferred_term"` is what reaches past a synonym shadowing it,
     // and `expected_row_version` is FR-38's lock, required on that branch.
     const fetchMock = stubFetch(200, {
-      designation: { term: "Serum ferritin", use: "preferred", language: "en-AU" },
+      designation: { term: "Serum ferritin" },
       warnings: [],
       row_version: 4,
     });
     const { result } = renderHook(() => useAmendDesignation("NPTC-000247"), { wrapper });
 
     result.current.mutate({
-      language: "en-AU",
       term: "Ferritin",
       new_term: "Serum ferritin",
-      use: "preferred",
+      target: "preferred_term",
       expected_row_version: 3,
       reason: "Disambiguate against the plasma assay",
     });
@@ -452,7 +443,7 @@ describe("useAmendDesignation", () => {
     expect(await bodyOf(request)).toMatchObject({
       term: "Ferritin",
       new_term: "Serum ferritin",
-      use: "preferred",
+      target: "preferred_term",
       expected_row_version: 3,
     });
   });
@@ -470,7 +461,6 @@ describe("useAmendDesignation", () => {
     const { result } = renderHook(() => useAmendDesignation("NPTC-000247"), { wrapper });
 
     result.current.mutate({
-      language: "en-AU",
       term: "Ferritin",
       new_term: "Serum ferritin",
       expected_row_version: 3,
@@ -491,7 +481,6 @@ describe("useRetireDesignation", () => {
     const { result } = renderHook(() => useRetireDesignation("NPTC-000247"), { wrapper });
 
     result.current.mutate({
-      language: "en-AU",
       term: "Cyclir",
       reason: "Withdrawn brand name",
       expected_row_version: 1,
@@ -503,7 +492,6 @@ describe("useRetireDesignation", () => {
       "/api/v1/catalogue/entries/NPTC-000247/designations/retirement",
     );
     expect(await bodyOf(request)).toEqual({
-      language: "en-AU",
       term: "Cyclir",
       reason: "Withdrawn brand name",
       expected_row_version: 1,
@@ -526,7 +514,6 @@ describe("useRetireDesignation", () => {
     const { result } = renderHook(() => useRetireDesignation("NPTC-000247"), { wrapper });
 
     result.current.mutate({
-      language: "en-AU",
       term: "Cyclir",
       reason: "Retire under a stale version",
       expected_row_version: 1,
@@ -549,7 +536,6 @@ describe("useReinstateDesignation", () => {
     });
 
     result.current.mutate({
-      language: "en-AU",
       term: "Cyclir",
       reason: "Retired by mistake",
       expected_row_version: 1,
@@ -561,7 +547,6 @@ describe("useReinstateDesignation", () => {
       "/api/v1/catalogue/entries/NPTC-000247/designations/reinstatement",
     );
     expect(await bodyOf(request)).toEqual({
-      language: "en-AU",
       term: "Cyclir",
       reason: "Retired by mistake",
       expected_row_version: 1,
@@ -586,7 +571,6 @@ describe("useReinstateDesignation", () => {
     });
 
     result.current.mutate({
-      language: "en-AU",
       term: "Cyclir",
       reason: "Reinstate under a stale version",
       expected_row_version: 1,
@@ -603,7 +587,6 @@ describe("useAcknowledgeCollision", () => {
     // not MFA-gated - so a caller who can edit is not guaranteed to be able to
     // acknowledge, and this route's 403 is a different sentence.
     const fetchMock = stubFetch(200, {
-      language: "en-AU",
       reason: "Both are valid",
       created: true,
     });
@@ -612,7 +595,6 @@ describe("useAcknowledgeCollision", () => {
     });
 
     result.current.mutate({
-      language: "en-AU",
       term: "Ferritin",
       reason: "Both are valid",
     });

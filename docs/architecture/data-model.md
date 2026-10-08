@@ -566,8 +566,7 @@ of inventing one under deadline.
 
 ## `designation` (issue #47, FR-04, FR-24, FR-37, FR-85)
 
-Catalogue-side designations - synonyms and non-en-AU preferred-term variants - see PRD
-§6.3. FR-05's collision detection (issue #49) is layered on top of the rows this
+Catalogue-side synonyms - see PRD §6.3. FR-05's collision detection (issue #49) is layered on top of the rows this
 table creates - see "Collision detection" below.
 
 | Column | Type | Notes |
@@ -576,8 +575,6 @@ table creates - see "Collision detection" below.
 | `entry_id` | `UUID` | `NOT NULL`, FK to `catalogue_entry.id`. Immutable - see below. |
 | `term` | `TEXT` | `NOT NULL`, `CHECK (length(btrim(term)) > 0)`. Cleaned at entry (FR-63) - see below. |
 | `term_key` | `TEXT` | `NOT NULL DEFAULT ''`, indexed. FR-05's comparison key - see "Collision detection" below. |
-| `use` | `TEXT` | `NOT NULL DEFAULT 'synonym'`, `CHECK IN ('preferred','synonym')` |
-| `language` | `TEXT` | `NOT NULL DEFAULT 'en-AU'`, `CHECK` against a BCP-47 well-formedness regex |
 | `status` | `TEXT` | `NOT NULL DEFAULT 'active'`, `CHECK IN ('active','retired')` |
 | `created_at` / `updated_at` | `TIMESTAMPTZ` | `NOT NULL`, `now()` |
 
@@ -588,7 +585,7 @@ term's character count, which lives on `catalogue_entry.preferred_term` (issue #
 never on a `designation` row (see "Where the preferred term lives" below) -
 `CatalogueEntry.length` is therefore the field FR-85 actually publishes.
 `Designation.length` applies the same computation to a designation's own `term` (a
-synonym or a non-en-AU preferred variant), for the same reason, but is a distinct,
+synonym), for the same reason, but is a distinct,
 non-authoritative figure. Both are bare Python `@property`s computed by
 `nptc.catalogue.term_hygiene.preferred_term_length`
 (`len(nptc_shared.text.normalise_for_comparison(term))`), with deliberately no
@@ -621,14 +618,14 @@ places with three different edit postures:
 | SNOMED CT-AU preferred term | `code_binding.au_preferred_term` (issue #48, below) | No - stored exactly as served (FR-82) |
 | SNOMED CT Fully Specified Name | `code_binding.fsn` (issue #48, below) | No - as served, semantic tag intact (FR-82) |
 
-`designation` holds only the first kind, and only its non-en-AU variants - the
-catalogue's own en-AU preferred term stays exactly where issue #46 put it,
-`catalogue_entry.preferred_term`, never duplicated into a row here.
-`ck_designation_no_en_au_preferred` (`NOT (use = 'preferred' AND language = 'en-AU')`)
-makes that a database invariant, not a convention: a non-en-AU catalogue-authored
-preferred variant (e.g. `use='preferred', language='mi-NZ'`) is still permitted. See
-`docs/adr/0022-designation-storage.md` for the full reasoning and the rejected
-alternatives (mirroring the preferred term into both tables; dropping
+`designation` holds only catalogue-authored synonyms - the catalogue's own preferred
+term stays exactly where issue #46 put it, `catalogue_entry.preferred_term`, never
+duplicated into a row here. The table has no `use` column, so a row cannot be a
+preferred term at all. Until migration `0026` it could: a non-en-AU preferred variant
+was permitted and `ck_designation_no_en_au_preferred` kept the en-AU one out. The
+catalogue has no second language, so `use`, `language` and that constraint went
+together. See `docs/adr/0022-designation-storage.md` for the full reasoning and the
+rejected alternatives (mirroring the preferred term into both tables; dropping
 `catalogue_entry.preferred_term` entirely).
 
 A SNOMED CT-served label is never written into `designation` - doing so would
@@ -744,19 +741,18 @@ and `shared/src`, that the strip is referenced from no module outside `nptc.expo
 except the two pre-existing FR-97 seeding-reconciliation sites (ADR-0006) and the
 shared package's own re-export of the functions themselves.
 
-### Two partial unique indexes
+### One partial unique index
 
-- `ix_designation_one_active_preferred_per_entry_language` - `UNIQUE (entry_id, language)
-  WHERE status = 'active' AND use = 'preferred'` - at most one active preferred
-  designation per `(entry_id, language)`.
-- `ix_designation_no_duplicate_active_term` - `UNIQUE (entry_id, term_key, language)
-  WHERE status = 'active'` (re-keyed on `term_key` in issue #49; originally `term`) -
-  no duplicate active synonym under FR-05's comparison fold, not merely a byte-for-byte
-  duplicate.
+`ix_designation_no_duplicate_active_term` - `UNIQUE (entry_id, term_key) WHERE status =
+'active'` - no duplicate active synonym under FR-05's comparison fold, not merely a
+byte-for-byte duplicate. It was keyed on `term` until migration `0009`, and carried
+`language` until `0026`. Migration `0026` also dropped
+`ix_designation_one_active_preferred_per_entry_language`, which only constrained
+`use = 'preferred'` rows.
 
-Both are scoped to `status = 'active'` so a retired row never blocks a fresh one from
-being added under the same term. See `0007_designation.py`'s docstring for why these are
-enforced at the database layer rather than by application convention.
+The index is scoped to `status = 'active'` so a retired row never blocks a fresh one
+from being added under the same term. See `0007_designation.py`'s docstring for why this
+is enforced at the database layer rather than by application convention.
 
 ## Collision detection (issue #49, FR-05, FR-08)
 
@@ -841,13 +837,12 @@ spelled out.
 | `id` | `UUID` | PK, `gen_random_uuid()` |
 | `entry_id` | `UUID` | `NOT NULL`, FK to `catalogue_entry.id` |
 | `term_key` | `TEXT` | `NOT NULL`, `CHECK` not-blank |
-| `language` | `TEXT` | `NOT NULL DEFAULT 'en-AU'`, `CHECK` against the same BCP-47 regex `designation.language` uses |
 | `acknowledged_by_user_id` | `UUID` | Nullable FK to `app_user.id` - `NULL` for a system-attributed acknowledgement |
 | `reason` | `TEXT` | `NOT NULL`, `CHECK` not-blank |
 | `created_at` / `updated_at` | `TIMESTAMPTZ` | `NOT NULL`, `now()` |
 
-`ix_designation_collision_ack_entry_term_language` - `UNIQUE (entry_id, term_key,
-language)` - scopes an acknowledgement to the entry it was made against, not to the
+`ix_designation_collision_ack_entry_term` - `UNIQUE (entry_id, term_key)` - scopes an
+acknowledgement to the entry it was made against, not to the
 term key alone: a fourth entry later joining an already-acknowledged group (PRD A.5's
 `'ADA2'`) still warns once, on its own save, rather than silently inheriting another
 entry's editorial decision. Grants: `SELECT, INSERT` only - `UPDATE, DELETE, TRUNCATE`
@@ -920,14 +915,6 @@ correct repair, so it is rejected (`TermCleaningError`) rather than silently
 dropped, quoting the offending character escaped (`escape_invisible`), never raw
 (NFR-38 test 2).
 
-`Designation.language` is validated the same way, at both layers:
-`nptc_shared.language.is_well_formed_language_tag` backs both the model's own
-`@validates("language")` hook (raising `DesignationLanguageError`) and
-`ck_designation_language`'s `CHECK` constraint, the latter built from
-`LANGUAGE_TAG_PATTERN.pattern` rather than hand-copied so the two can never silently
-diverge (`backend/tests/test_db_designation.py::
-test_designation_language_check_matches_the_shared_pattern` pins this).
-
 ### FR-04: synonyms are rows, never a delimited string
 
 There is no delimited-string column anywhere in this table - each synonym is its own
@@ -941,7 +928,7 @@ seed import) is what turns a spreadsheet cell like `'ADA RBC, ADA red cells'` or
 
 A designation that stops being current moves to `status='retired'` (mirroring
 `CatalogueEntryStatus.WITHDRAWN`'s own precedent), never removed. Grants:
-`SELECT, INSERT` at table level, column-level `UPDATE (term, use, language, status,
+`SELECT, INSERT` at table level, column-level `UPDATE (term, status,
 updated_at)` - excluding `entry_id`, so a designation is retired and re-created on a
 different entry, never reparented - and no `DELETE`/`TRUNCATE` grant at all. See
 `0007_designation.py`'s docstring for the reasoning.

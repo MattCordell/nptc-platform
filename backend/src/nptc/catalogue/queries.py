@@ -106,21 +106,18 @@ class EntryPage:
 
 @dataclass(frozen=True, slots=True)
 class DesignationRow:
-    """A catalogue-authored synonym or non-en-AU preferred variant (ADR-0022:
-    the catalogue's own en-AU preferred term is never a `designation` row, it
-    is `catalogue_entry.preferred_term`).
+    """A catalogue-authored synonym (ADR-0022: the catalogue's own preferred
+    term is never a `designation` row, it is `catalogue_entry.preferred_term`).
 
     `id` is this row's own primary key, never put on the public `Designation`
     response model. It lets a write route re-read the exact row it wrote:
-    `(entry_id, term_key, language)` is unique only among *active*
+    `(entry_id, term_key)` is unique only among *active*
     designations, so a term added, retired and re-added leaves two retired
     rows sharing a `term_key`, and only `id` tells them apart."""
 
     id: uuid.UUID
     entry_id: uuid.UUID
     term: str
-    use: str
-    language: str
     status: str
     length: int
 
@@ -306,7 +303,7 @@ def load_designations(
     *public* surface. The admin read calls `load_designations_any_status`,
     for an editor to whom that history matters.
 
-    `(use, language, term)` order, not insertion order or the UUID `id`,
+    `term` order, not insertion order or the UUID `id`,
     which is stable only by accident: an unordered response makes a client's
     whole-body comparisons flap.
     """
@@ -317,15 +314,13 @@ def load_designations(
         select(Designation)
         .where(Designation.entry_id.in_(ids))
         .where(Designation.status == DesignationStatus.ACTIVE.value)
-        .order_by(Designation.use, Designation.language, Designation.term)
+        .order_by(Designation.term)
     ).scalars()
     return tuple(
         DesignationRow(
             id=row.id,
             entry_id=row.entry_id,
             term=row.term,
-            use=row.use,
-            language=row.language,
             status=row.status,
             length=row.length,
         )
@@ -350,11 +345,11 @@ def load_designations_any_status(
       resolve which `audit_event` rows belong to the entry's designations
       (FR-19): a retired designation's history belongs in the entry's too.
 
-    `(status, use, language, term, id)` order. `load_designations`'s
-    `(use, language, term)` is total only among *active* rows
-    (`ix_designation_no_duplicate_active_term`); a term added, retired,
-    re-added and retired again leaves two rows with an identical triple,
-    which Postgres could return in either order between calls. `status`
+    `(status, term, id)` order. `load_designations`'s `term` order is total
+    only among *active* rows, because `ix_designation_no_duplicate_active_term`
+    allows one active row per comparison key. A term added, retired, re-added
+    and retired again leaves two rows with an identical term, which Postgres
+    could return in either order between calls. `status`
     comes first, as in `load_bindings`, so `active` precedes `retired` and
     matches `sortedTermRows` in `designations-panel.tsx`. `id` is the final
     tie-break, as in `load_bindings`.
@@ -365,21 +360,13 @@ def load_designations_any_status(
     rows = session.execute(
         select(Designation)
         .where(Designation.entry_id.in_(ids))
-        .order_by(
-            Designation.status,
-            Designation.use,
-            Designation.language,
-            Designation.term,
-            Designation.id,
-        )
+        .order_by(Designation.status, Designation.term, Designation.id)
     ).scalars()
     return tuple(
         DesignationRow(
             id=row.id,
             entry_id=row.entry_id,
             term=row.term,
-            use=row.use,
-            language=row.language,
             status=row.status,
             length=row.length,
         )
@@ -399,8 +386,6 @@ def load_designation_by_id(session: Session, designation_id: uuid.UUID) -> Desig
         id=row.id,
         entry_id=row.entry_id,
         term=row.term,
-        use=row.use,
-        language=row.language,
         status=row.status,
         length=row.length,
     )

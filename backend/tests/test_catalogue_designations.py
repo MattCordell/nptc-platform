@@ -19,7 +19,6 @@ from typing import Any
 
 import pytest
 from sqlalchemy import func, select
-from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from nptc.audit.writer import AuditContext
@@ -31,7 +30,6 @@ from nptc.catalogue.designations import (
     DesignationNotFoundError,
     DesignationNotRetiredError,
     DuplicateActiveTermError,
-    PreferredDesignationAlreadyActiveError,
     add_designation,
     add_synonyms,
     amend_designation,
@@ -42,14 +40,10 @@ from nptc.catalogue.designations import (
     retire_designation,
 )
 from nptc.catalogue.entries import create_entry
-from nptc.catalogue.term_hygiene import (
-    DesignationLanguageError,
-    TermCleaningError,
-    preferred_term_length,
-)
+from nptc.catalogue.term_hygiene import TermCleaningError, preferred_term_length
 from nptc.db.models.audit import AuditEvent
 from nptc.db.models.catalogue_entry import CatalogueEntry
-from nptc.db.models.designation import Designation, DesignationStatus, DesignationUse
+from nptc.db.models.designation import Designation, DesignationStatus
 from nptc_transform.cell_defects import split_synonyms
 
 _NBSP = chr(0x00A0)
@@ -295,54 +289,6 @@ def test_term_with_a_zero_width_space_is_refused(app_session: Session) -> None:
     assert "<U+200B>" in str(exc_info.value)
 
 
-@pytest.mark.integration
-def test_malformed_language_tag_is_refused_before_the_database_check(
-    app_session: Session,
-) -> None:
-    """`Designation`'s own `@validates("language")` hook - not only the
-    database `CHECK` - refuses a malformed tag, so the caller gets a
-    typed `DesignationLanguageError` rather than a bare `IntegrityError`."""
-    entry = _new_entry(app_session)
-
-    with pytest.raises(DesignationLanguageError):
-        add_designation(
-            app_session,
-            AuditContext.system(),
-            entry=entry,
-            term="FBC",
-            language="not a tag",
-            reason="Attempting to add a malformed language tag",
-        )
-
-
-@pytest.mark.integration
-def test_a_lowercase_language_tag_is_stored_canonicalised(app_session: Session) -> None:
-    """`en-au` and `en-AU` must resolve to the one stored language - every
-    string-equality comparison this codebase makes against a language tag
-    (`ix_designation_one_active_preferred_per_entry_language`, `assert_
-    no_error_collisions`'s `DEFAULT_LANGUAGE` branching) would otherwise
-    silently treat them as two different languages (issue #224 review
-    finding 2)."""
-    entry = _new_entry(app_session)
-
-    designation = add_designation(
-        app_session,
-        AuditContext.system(),
-        entry=entry,
-        term="Panui toto katoa",
-        use="preferred",
-        language="mi-nz",
-        reason="Adding a lowercase-tagged preferred variant",
-    )
-
-    assert designation.language == "mi-NZ"
-
-    resolved = load_active_designation(
-        app_session, entry_id=entry.id, term="Panui toto katoa", language="MI-NZ"
-    )
-    assert resolved.id == designation.id
-
-
 # --- FR-37 negative path: a rejected note leaves no audit event -------------
 
 
@@ -414,12 +360,11 @@ def test_retiring_an_already_retired_designation_is_refused(app_session: Session
 def test_load_designations_any_status_orders_repeated_retired_terms_deterministically(
     app_session: Session,
 ) -> None:
-    """Issue #239 review: `(use, language, term)` is unique only among
-    *active* designations (`ix_designation_no_duplicate_active_term`), so a
-    term added, retired, re-added and retired again leaves rows sharing all
-    three - the exact case that left `load_designations_any_status`'s
-    original `ORDER BY use, language, term` with no total order, and the
-    reason it now adds `status` (active before retired) and `id` as
+    """`term` is unique only among *active* designations
+    (`ix_designation_no_duplicate_active_term`), so a term added, retired,
+    re-added and retired again leaves rows sharing it - the exact case that
+    left `load_designations_any_status`'s `ORDER BY` with no total order, and
+    the reason it adds `status` (active before retired) and `id` as
     tiebreakers.
 
     Two things a weaker version of this test got wrong (issue #239 review,
@@ -484,45 +429,6 @@ def test_load_designations_any_status_orders_repeated_retired_terms_deterministi
         "retired rows must be in ascending id order"
     )
     assert set(returned_retired_ids) == set(retired_ids)
-
-
-# --- Decision 1: the catalogue's en-AU preferred term lives in one place ----
-
-
-@pytest.mark.integration
-def test_en_au_preferred_designation_is_refused(app_session: Session) -> None:
-    entry = _new_entry(app_session)
-
-    with pytest.raises(IntegrityError):
-        add_designation(
-            app_session,
-            AuditContext.system(),
-            entry=entry,
-            term="Full blood count",
-            use=str(DesignationUse.PREFERRED),
-            language="en-AU",
-            reason="Attempting to duplicate the catalogue preferred term",
-        )
-        app_session.flush()
-
-
-@pytest.mark.integration
-def test_a_non_en_au_preferred_designation_is_accepted(app_session: Session) -> None:
-    entry = _new_entry(app_session)
-
-    designation = add_designation(
-        app_session,
-        AuditContext.system(),
-        entry=entry,
-        term="Panui toto katoa",
-        use=str(DesignationUse.PREFERRED),
-        language="mi-NZ",
-        reason="Adding a non-en-AU preferred term",
-    )
-    app_session.flush()
-
-    assert designation.use == "preferred"
-    assert designation.language == "mi-NZ"
 
 
 # --- issue #224: the load/amend surface #149's edit screen needs ----------
@@ -717,39 +623,6 @@ def test_amend_designation_onto_another_active_term_on_the_same_entry_is_refused
         )
 
 
-@pytest.mark.req("FR-04")
-@pytest.mark.integration
-def test_second_active_preferred_designation_in_one_language_is_refused(
-    app_session: Session,
-) -> None:
-    """`ix_designation_one_active_preferred_per_entry_language` (issue #47)
-    - a within-entry invariant `assert_no_error_collisions` never sees
-    (that check is cross-entry only), so this is the database constraint's
-    own `IntegrityError` translated by issue #224."""
-    entry = _new_entry(app_session)
-    add_designation(
-        app_session,
-        AuditContext.system(),
-        entry=entry,
-        term="Panui toto katoa",
-        use=str(DesignationUse.PREFERRED),
-        language="mi-NZ",
-        reason="Adding a non-en-AU preferred term",
-    )
-    app_session.flush()
-
-    with pytest.raises(PreferredDesignationAlreadyActiveError):
-        add_designation(
-            app_session,
-            AuditContext.system(),
-            entry=entry,
-            term="Tetahi atu kupu",
-            use=str(DesignationUse.PREFERRED),
-            language="mi-NZ",
-            reason="Adding a second preferred term in the same language",
-        )
-
-
 # --- issue #313: reinstating a retired designation ---------------------
 
 
@@ -758,7 +631,7 @@ def test_second_active_preferred_designation_in_one_language_is_refused(
 def test_find_retired_designation_picks_the_most_recently_retired_row(
     app_session: Session,
 ) -> None:
-    """Two retired rows can share `(entry_id, term_key, language)` - a term
+    """Two retired rows can share `(entry_id, term_key)` - a term
     added, retired, and re-added twice over
     (`ix_designation_no_duplicate_active_term` is active-only) - so this
     pins `retired_at DESC` as the tie-break, not insertion or `id` order.
@@ -961,53 +834,4 @@ def test_reinstating_onto_an_active_duplicate_on_the_same_entry_is_refused(
             entry=entry,
             designation=original,
             reason="Reinstating the original FBC synonym",
-        )
-
-
-@pytest.mark.req("FR-04")
-@pytest.mark.integration
-def test_reinstating_a_preferred_designation_onto_an_active_one_is_refused(
-    app_session: Session,
-) -> None:
-    """`ix_designation_one_active_preferred_per_entry_language` - the
-    preferred-term sibling of the duplicate-synonym case above: a
-    preferred term retired, then replaced by a new preferred designation
-    in the same language, leaves reinstating the original blocked the
-    same way."""
-    entry = _new_entry(app_session)
-    retired_preferred = add_designation(
-        app_session,
-        AuditContext.system(),
-        entry=entry,
-        term="Panui toto katoa",
-        use=str(DesignationUse.PREFERRED),
-        language="mi-NZ",
-        reason="Adding a non-en-AU preferred term",
-    )
-    app_session.flush()
-    retire_designation(
-        app_session,
-        AuditContext.system(),
-        designation=retired_preferred,
-        reason="Retiring the preferred term by mistake",
-    )
-    app_session.flush()
-    add_designation(
-        app_session,
-        AuditContext.system(),
-        entry=entry,
-        term="Tetahi atu kupu",
-        use=str(DesignationUse.PREFERRED),
-        language="mi-NZ",
-        reason="Adding a replacement preferred term",
-    )
-    app_session.flush()
-
-    with pytest.raises(PreferredDesignationAlreadyActiveError):
-        reinstate_designation(
-            app_session,
-            AuditContext.system(),
-            entry=entry,
-            designation=retired_preferred,
-            reason="Reinstating the original preferred term",
         )

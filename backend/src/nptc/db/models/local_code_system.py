@@ -46,8 +46,7 @@ __all__ = ["KEY_PATTERN", "LocalCodeSystem", "LocalCodeSystemStatus"]
 
 #: Matches `property_definition.key`'s pattern (ADR-0012). Exported so
 #: `nptc.catalogue.local_codes.create_local_code_system` can validate a key in Python before it
-#: reaches `_KEY_CHECK_SQL`, which is built from `KEY_PATTERN.pattern` (as `designation.py` does
-#: with `LANGUAGE_TAG_PATTERN`) so the two cannot diverge.
+#: reaches `_KEY_CHECK_SQL`, which is built from `KEY_PATTERN.pattern` so the two cannot diverge.
 KEY_PATTERN = re.compile(r"^[a-z][a-z0-9_]{0,62}$")
 
 

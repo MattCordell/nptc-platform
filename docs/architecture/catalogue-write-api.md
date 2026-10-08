@@ -311,11 +311,11 @@ for the same reason those two stay apart from each other.
 
 | Path | Method | Body | Returns |
 |---|---|---|---|
-| `/entries/{business_key}/designations` | `POST` | `{terms: [string], use?, language?, reason, expected_row_version}` | `201 {designations: [Designation], warnings: [DesignationWarning], row_version}` |
-| `/entries/{business_key}/designations/amendment` | `POST` | `{term, new_term, language?, use?, expected_row_version, reason}` | `200 {designation: Designation, warnings: [DesignationWarning], row_version}` |
-| `/entries/{business_key}/designations/retirement` | `POST` | `{term, language?, reason, expected_row_version}` | `200 {designation: Designation, row_version}` |
-| `/entries/{business_key}/designations/reinstatement` | `POST` | `{term, language?, reason, expected_row_version}` | `200 {designation: Designation, warnings: [DesignationWarning], row_version}` |
-| `/entries/{business_key}/designations/acknowledgement` | `POST` | `{term, language?, reason}` | `200 {language, reason}` |
+| `/entries/{business_key}/designations` | `POST` | `{terms: [string], reason, expected_row_version}` | `201 {designations: [Designation], warnings: [DesignationWarning], row_version}` |
+| `/entries/{business_key}/designations/amendment` | `POST` | `{term, new_term, target?, expected_row_version, reason}` | `200 {designation: Designation, warnings: [DesignationWarning], row_version}` |
+| `/entries/{business_key}/designations/retirement` | `POST` | `{term, reason, expected_row_version}` | `200 {designation: Designation, row_version}` |
+| `/entries/{business_key}/designations/reinstatement` | `POST` | `{term, reason, expected_row_version}` | `200 {designation: Designation, warnings: [DesignationWarning], row_version}` |
+| `/entries/{business_key}/designations/acknowledgement` | `POST` | `{term, reason}` | `200 {reason, created}` |
 
 `business_key` accepts any status, the same as the code binding routes, via the same
 `load_entry_for_update` loader.
@@ -354,13 +354,12 @@ routing, so a term with a slash in a `{term}` path parameter would either 404 ag
 the wrong route or need a client-side double-encoding scheme nobody should have to
 reason about. Every route above therefore takes its target term in the request body.
 
-`nptc.catalogue.designations.load_active_designation(session, entry_id=..., term=...,
-language=...)` resolves it, mirroring `load_active_binding`: looked up by *comparison
+`nptc.catalogue.designations.load_active_designation(session, entry_id=..., term=...)`
+resolves it, mirroring `load_active_binding`: looked up by *comparison
 key* (`nptc_shared.similarity.collision_key` over the cleaned term), not the raw
 string, since `ix_designation_no_duplicate_active_term` is itself keyed on `term_key` -
 a caller naming a case or punctuation variant of the stored term still resolves the
-same row. `use` is deliberately not part of the address: that index has no `use`
-column, so `(entry_id, term_key, language)` already identifies at most one active row.
+same row. `(entry_id, term_key)` identifies at most one active row.
 A term already retired, or never added, is a `404` - not addressable this way any
 more, not a conflicting state - matching code bindings' own `404`-not-`409` reasoning
 for a retired code.
@@ -369,7 +368,7 @@ for a retired code.
 currently-*retired* term, not its active one.** `nptc.catalogue.designations.
 find_retired_designation`/`load_retired_designation` are the retired-row siblings of
 `find_active_designation`/`load_active_designation` above - same comparison-key lookup,
-same `(entry_id, term_key, language)` scope, `status = 'retired'` instead of `'active'`.
+same `(entry_id, term_key)` scope, `status = 'retired'` instead of `'active'`.
 More than one retired row can share that key (a term added, retired, and re-added twice
 over, since the partial unique index is active-only), so the lookup orders by
 `retired_at DESC, id ASC` and takes the first: most-recently-retired wins, with `id`
@@ -390,7 +389,7 @@ route's own pre-check.
 
 Re-reading a just-written row (to build the response) is by the row's own `id`, not by
 term, for the same reason `_row_to_binding` avoids a code-keyed re-read: `(entry_id,
-term_key, language)` is unique only among *active* rows, so a term retired and re-added
+term_key)` is unique only among *active* rows, so a term retired and re-added
 would leave two retired rows sharing a `term_key`, and only `id` still tells them apart.
 `nptc.catalogue.queries.load_designations_any_status` is the retired-inclusive loader
 this needs - `load_designations` (the FR-20 public read path) stays active-only. The
@@ -429,21 +428,21 @@ claiming the same term as its own preferred term in the meantime.
 Warning-severity collisions ride back on the response exactly as `/designations` and
 `/amendment` do (see below), and an acknowledgement recorded before the retirement still
 suppresses the warning after reinstatement: `designation_collision_acknowledgement` is
-keyed on `(entry_id, term_key, language)`, independent of any one `designation` row, so
+keyed on `(entry_id, term_key)`, independent of any one `designation` row, so
 it was never tied to the row's own lifecycle in the first place.
 
 ### `/amendment` writes to two storage homes (issue #227)
 
-ADR-0022 keeps the catalogue's own en-AU preferred term on
-`catalogue_entry.preferred_term`, never a `designation` row
-(`ck_designation_no_en_au_preferred`). Rather than expose that split as a second
+ADR-0022 keeps the catalogue's own preferred term on
+`catalogue_entry.preferred_term`, never a `designation` row. Rather than expose that split as a second
 endpoint, `/amendment` resolves `term` against both: an active `designation` row if
 there is one, otherwise the entry's own preferred term, saved through
 `nptc.catalogue.entries.save_entry`. Every term the catalogue holds is a designation as
 far as this API is concerned - one route, one mental model, two storage homes - and the
 preferred-term branch returns its result shaped as a `Designation`
-(`use: "preferred"`, `language: "en-AU"`, with FR-85's computed `length`), so a client
-never has to model where a term happens to live.
+(`label_provenance.designation` is `au_preferred_term` rather than `synonym`, with
+FR-85's computed `length`), so a client never has to model where a term happens to
+live.
 
 **Rejected: a dedicated `POST .../preferred-term` route.** Its request and response
 would be honest about the split - no conditionally-required field, no dispatch - but it
@@ -452,31 +451,37 @@ all: #149 renders one list of terms and would have to route each edit by which t
 the platform happens to keep it in. That is the coupling this API exists to hide.
 
 **Designation-first, and the order is load-bearing.** Nothing forbids an entry from
-carrying an active en-AU synonym whose `term_key` equals its own `preferred_term_key`:
+carrying an active synonym whose `term_key` equals its own `preferred_term_key`:
 `ix_designation_no_duplicate_active_term` is designation-vs-designation only, and
 `assert_no_error_collisions` compares against *other* live entries. Resolving the
 preferred term first would therefore make such a synonym unreachable for editing -
 silently changing what a route shipped in #224 does. Taking the designation first means
 the new branch only ever claims what this route already 404s on.
 
-**`use` says which one you meant, when the term alone cannot.** Designation-first is the
+**`target` says which one you meant, when the term alone cannot.** Designation-first is the
 right default, but on its own it leaves the mirror-image problem: once a shadowing
 synonym exists - and `POST .../designations` will create one - the entry's preferred term
 becomes permanently unreachable, and a caller asking for it silently moves the synonym
 instead. For #149's screen, which renders both in one list, that is an ambiguous click
-with a silent wrong outcome. The optional `use` on the request resolves it:
+with a silent wrong outcome. The optional `target` on the request resolves it:
 
-| `use` | `language` | Resolves to |
-|---|---|---|
-| unset | any | An active `designation` row; the entry's own preferred term only if there is none and `term` names it. |
-| `preferred` | `en-AU` | The entry's own preferred term, if `term` names it. No designation lookup runs - ADR-0022 guarantees there is no such row, and skipping it is what reaches past a shadowing synonym. |
-| `preferred` | anything else | A `designation` row. A non-en-AU preferred variant is a real row, and `ck_designation_no_en_au_preferred` is what keeps the two unambiguous. |
-| `synonym` | any | A `designation` row, never the entry. A term that is only the preferred term is a 404. |
+| `target` | Resolves to |
+|---|---|
+| unset | An active `designation` row; the entry's own preferred term only if there is none and `term` names it. |
+| `preferred_term` | The entry's own preferred term, if `term` names it. No designation lookup runs - ADR-0022 guarantees there is no such row, and skipping it is what reaches past a shadowing synonym. |
+| `synonym` | A `designation` row, never the entry. A term that is only the preferred term is a 404. |
 
-**`use` narrows which storage home to look in; it never excuses the caller from naming
+Until migration `0026` this field was `use` (`preferred` | `synonym`), paired with a
+`language`. Neither is a request field now. `/amendment` refuses a body that names `use` (422),
+because ignoring it would change which row is written: an old `use="preferred"` would rename a
+shadowing synonym, and an old `use="synonym"` with no matching synonym would rename the preferred
+term. A body that names `language` is still accepted, and the field has no effect, as does any
+other field a request model does not name.
+
+**`target` narrows which storage home to look in; it never excuses the caller from naming
 the term.** `term` is required, and its job on this route is to address the thing being
-edited, so `use="preferred"` with a term that is not the preferred term is a 404 rather
-than a rename - the same silent-wrong-target class `use` exists to close. This costs the
+edited, so `target="preferred_term"` with a term that is not the preferred term is a 404
+rather than a rename - the same silent-wrong-target class `target` exists to close. This costs the
 escape hatch nothing: a shadowing synonym folds to the *same* comparison key as the
 preferred term by definition, so a caller reaching past one always names a matching term
 anyway.
@@ -556,9 +561,9 @@ so there is no route to withdraw one.
 |---|---|
 | 401 | No credential, or one that could not be verified. |
 | 403 | Authenticated but missing the route's required permission, or (for `catalogue.edit_published` routes only) holding it without MFA. |
-| 404 | No catalogue entry with this `business_key`; a `term` that is neither an *active* designation for this `language` nor (on `/amendment`) the entry's own en-AU preferred term; or (on `/reinstatement`) a `term` with no *retired* designation for this `language`. |
-| 409 | An error-severity collision against another live entry (FR-05, names the colliding entry's `business_key`/`preferred_term`), a duplicate active term or a second active preferred term in one language on this same entry, a designation already retired, a term already active with nothing to reinstate (`/reinstatement` only), or a concurrent acknowledgement of the same collision. On every route except `/acknowledgement`, also a stale `expected_row_version` (FR-38) - a richer body, see "`expected_row_version`" above. |
-| 422 | An unrecognised `use`, a malformed BCP-47 language tag, a term left empty after whitespace cleaning, the catalogue's own en-AU preferred term submitted as a designation to `POST .../designations` (`ck_designation_no_en_au_preferred` - refused before the ORM, not an unmapped `IntegrityError`; amend it through `/amendment` instead), more than one preferred term in one batch, a changelog note that fails FR-37, or a missing `expected_row_version` (FastAPI's own `HTTPValidationError`, matching the code-binding routes - there is no longer a route-specific missing-token error here). |
+| 404 | No catalogue entry with this `business_key`; a `term` that is neither an *active* designation nor (on `/amendment`) the entry's own preferred term; or (on `/reinstatement`) a `term` with no *retired* designation. |
+| 409 | An error-severity collision against another live entry (FR-05, names the colliding entry's `business_key`/`preferred_term`), a duplicate active term on this same entry, a designation already retired, a term already active with nothing to reinstate (`/reinstatement` only), or a concurrent acknowledgement of the same collision. On every route except `/acknowledgement`, also a stale `expected_row_version` (FR-38) - a richer body, see "`expected_row_version`" above. |
+| 422 | An unrecognised `target`, `use` on `/amendment`, a term left empty after whitespace cleaning, more than 100 terms in one batch, a changelog note that fails FR-37, or a missing `expected_row_version` (FastAPI's own `HTTPValidationError`, matching the code-binding routes - there is no longer a route-specific missing-token error here). |
 
 **Two 409 bodies carry more than `detail`, and are declared as such.** Most refusals are
 an `ErrorResponse` - one sentence, and deliberately nothing else. FR-05's collision and

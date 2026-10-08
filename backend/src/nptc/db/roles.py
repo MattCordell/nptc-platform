@@ -122,8 +122,14 @@ GRANT_DESIGNATION_SQL = "GRANT SELECT, INSERT ON TABLE designation TO nptc_app;"
 #: Excludes `id`, `entry_id` and `created_at`: a designation is retired and
 #: re-created on another entry, never reparented
 #: (`Designation._validate_entry_id_immutable` is the Python-level guard).
+#: Migration 0007's statement, replayed as written. Migration 0026 drops `use` and `language`, and
+#: their grants go with them.
 GRANT_DESIGNATION_UPDATE_SQL = (
     "GRANT UPDATE (term, use, language, status, updated_at) ON TABLE designation TO nptc_app;"
+)
+#: Re-grants the two columns migration 0026's downgrade puts back.
+GRANT_DESIGNATION_USE_LANGUAGE_UPDATE_SQL = (
+    "GRANT UPDATE (use, language) ON TABLE designation TO nptc_app;"
 )
 #: A designation is retired through `status`, never removed: a retired
 #: designation is retained.

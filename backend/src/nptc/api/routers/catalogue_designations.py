@@ -11,14 +11,14 @@ no route body has a try/except.
 term can contain `/`) or an internal id (NFR-04/NFR-26).
 `nptc.catalogue.designations.load_active_designation` resolves it by comparison key.
 
-**`/amendment` writes to two storage homes.** ADR-0022 keeps the entry's own en-AU preferred
-term on `catalogue_entry.preferred_term`, never on a `designation` row
-(`ck_designation_no_en_au_preferred`). The route looks for an active designation first and
-falls back to the preferred term. That order is load-bearing: nothing forbids an active en-AU
-synonym whose `term_key` equals the entry's `preferred_term_key`, and trying the preferred
-term first would make that synonym uneditable. The request's `use` names the home when `term`
-alone is ambiguous: `preferred` with `en-AU` skips the designation lookup, which is the only
-way to reach a preferred term that a synonym shadows.
+**`/amendment` writes to two storage homes.** ADR-0022 keeps the entry's own preferred
+term on `catalogue_entry.preferred_term`, never on a `designation` row. The route looks for an
+active designation first and falls back to the preferred term. That order is load-bearing:
+nothing forbids an active synonym whose `term_key` equals the entry's `preferred_term_key`, and
+trying the preferred term first would make that synonym uneditable. The request's `target`
+names the home when `term` alone is ambiguous: `preferred_term` skips the designation lookup,
+which is the only way to reach a preferred term that a synonym shadows, and `synonym` never
+falls back to the entry.
 
 **Every write requires `expected_row_version` (FR-38).** `designation` has no version column,
 so the designation writes lock on `catalogue_entry.row_version` through
@@ -38,10 +38,11 @@ so its 403 carries no step-up challenge.
 
 from __future__ import annotations
 
+from enum import StrEnum
 from typing import Annotated, Any, Final, Literal
 
 from fastapi import APIRouter, Body, Depends, Response
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 from sqlalchemy.orm import Session
 
 from nptc.api.dependencies import ApiSettingsDep, AuditContextDep, get_session, permission_dep
@@ -57,7 +58,6 @@ from nptc.catalogue.collisions import Collision, acknowledge_collision, warning_
 from nptc.catalogue.designations import (
     DesignationNotFoundError,
     DesignationNotRetiredError,
-    add_designation,
     add_synonyms,
     amend_designation,
     find_active_designation,
@@ -72,15 +72,10 @@ from nptc.catalogue.entries import (
     load_entry_for_update,
     save_entry,
 )
-from nptc.catalogue.term_hygiene import (
-    clean_term,
-    exceeds_maximum_length,
-    validate_language_tag,
-)
+from nptc.catalogue.term_hygiene import clean_term, exceeds_maximum_length
 from nptc.db.models.catalogue_entry import CatalogueEntry
-from nptc.db.models.designation import DesignationStatus, DesignationUse
+from nptc.db.models.designation import DesignationStatus
 from nptc.settings import ApiSettings
-from nptc_shared.language import DEFAULT_LANGUAGE
 from nptc_shared.similarity import collision_key
 
 #: Each term holds a `pg_advisory_xact_lock` until commit and costs a
@@ -119,10 +114,9 @@ _RESPONSE_409: Final[dict[str, Any]] = {
     "description": (
         "The request is well-formed but conflicts with the current state of the "
         "system - an error-severity collision against another entry (FR-05), a "
-        "duplicate active term or a second active preferred term in one language "
-        "on this same entry, a designation already retired (or, for reinstatement, "
-        "already active), or a concurrent acknowledgement of the same "
-        "collision. Add, amend and retire address a designation by its "
+        "duplicate active term on this same entry, a designation already retired "
+        "(or, for reinstatement, already active), or a concurrent acknowledgement "
+        "of the same collision. Add, amend and retire address a designation by its "
         "currently-*active* term, so a retired one is simply not addressable that "
         "way any more (404, not 409); reinstatement addresses one by its "
         "currently-*retired* term instead, so a term that was never retired is its "
@@ -131,13 +125,14 @@ _RESPONSE_409: Final[dict[str, Any]] = {
 }
 #: Two 422 body shapes occur: a typed domain error (`ErrorResponse`), or a
 #: pydantic failure that never reaches the route body (`HTTPValidationError`),
-#: such as a bad `use` or this module's cross-field checks. Declaring only
-#: `"model": ErrorResponse` would suppress the second.
+#: such as a bad `target`. Declaring only `"model": ErrorResponse` would suppress
+#: the second.
 _RESPONSE_422: Final[dict[str, Any]] = {
     "description": (
-        "A field failed validation - an unrecognised `use`, a malformed language tag, "
-        "a term that is empty after whitespace cleaning, or a changelog note that does "
-        "not meet FR-37. Two distinct body shapes occur here: a typed domain error "
+        "A field failed validation - an unrecognised `target`, the retired `use` on "
+        "an amendment, a term that is empty after whitespace cleaning, or a changelog "
+        "note that does not meet FR-37. Two distinct body shapes occur here: a typed "
+        "domain error "
         "(`ErrorResponse`) or a pydantic validation failure (FastAPI's own "
         "`HTTPValidationError`)."
     ),
@@ -236,7 +231,7 @@ class CollisionWarning(BaseModel):
     handler for the *error*-severity case already returns.
 
     `label_provenance["term"]` is always `SYNONYM_PROVENANCE` (FR-98),
-    never `PREFERRED_VARIANT`/`AU_PREFERRED_TERM`: both call sites'
+    never `AU_PREFERRED_TERM`: both call sites'
     own comments (`add_designations_route`/`amend_designation_route`) prove
     the preferred branch never produces a `CollisionWarning` at all -
     `warning_collisions` only ever looks for another live entry's active
@@ -319,76 +314,23 @@ def _length_warning(entry: CatalogueEntry, settings: ApiSettings) -> LengthWarni
     return LengthWarning(kind="length", length=length, max_length=maximum)
 
 
-class _WithLanguage(BaseModel):
-    """Request models with a caller-supplied `language` inherit this, so the tag is
-    checked well-formed and folded to canonical BCP-47 casing
-    (`nptc.catalogue.term_hygiene.validate_language_tag`) during request parsing,
-    before any route body or service function sees it.
-
-    Two things depend on it. `POST .../acknowledgement` inserts into
-    `designation_collision_acknowledgement`, which has no `@validates("language")`
-    hook, so a malformed tag would reach the `CHECK` constraint as an unmapped
-    `IntegrityError`. And `en-au` must compare equal to `en-AU` in
-    `_reject_en_au_preferred`, in `assert_no_error_collisions`, and in the two
-    designation partial unique indexes, or a lowercase `en-au` preferred
-    designation slips past the ADR-0022 invariant. A field validator runs on a
-    frozen model: `frozen=True` blocks only reassignment."""
-
-    language: str = DEFAULT_LANGUAGE
-
-    @field_validator("language")
-    @classmethod
-    def _canonicalise_language(cls, value: str) -> str:
-        return validate_language_tag(value)
-
-
-class AddDesignationsRequest(_WithLanguage):
+class AddDesignationsRequest(BaseModel):
     """The body of `POST /catalogue/entries/{business_key}/designations`.
 
-    `use` is typed against `DesignationUse` (matching `CodeBindingEditionHint`'s
-    own precedent in `catalogue_bindings.py`), so an unrecognised value is a
-    pydantic 422 before any row is touched, rather than an unmapped
-    `ck_designation_use` `IntegrityError`. `terms` is a batch - the common
-    case is pasting a delimiter-corrupted synonym cell (FR-04) - but a
-    preferred variant permits at most one, since at most one can ever be
-    active per `(entry, language)`. Capped at `_MAX_TERMS_PER_BATCH`: each
-    term holds a `pg_advisory_xact_lock` until commit and costs its own
-    collision-check flush (`add_synonyms`'s own docstring), so an unbounded
-    batch is an unbounded amount of lock contention for one request.
+    `terms` is a batch - the common case is pasting a delimiter-corrupted synonym cell
+    (FR-04). Capped at `_MAX_TERMS_PER_BATCH`: each term holds a `pg_advisory_xact_lock` until
+    commit and costs its own collision-check flush (`add_synonyms`'s own docstring), so an
+    unbounded batch is an unbounded amount of lock contention for one request.
     """
 
     model_config = ConfigDict(frozen=True)
 
     terms: list[str] = Field(min_length=1, max_length=_MAX_TERMS_PER_BATCH)
-    use: DesignationUse = DesignationUse.SYNONYM
     reason: str
     #: FR-38: the entry's `row_version` as the caller last read it. The whole
     #: batch bumps it once (`entry_child_write`), and a concurrent editor of
     #: another term on this entry is refused.
     expected_row_version: int = Field(ge=1)
-
-    @model_validator(mode="after")
-    def _reject_en_au_preferred(self) -> AddDesignationsRequest:
-        # ck_designation_no_en_au_preferred (ADR-0022) is a CHECK, not a unique
-        # index, so it cannot be mapped from an IntegrityError's constraint name
-        # as the two unique-index cases are. Refused here instead. `self.language`
-        # is already canonical (`_WithLanguage`), so `en-au` is caught too.
-        if self.use is DesignationUse.PREFERRED and self.language == "en-AU":
-            raise ValueError(
-                "the catalogue's own en-AU preferred term is not a designation - "
-                "amend it through POST .../designations/amendment, naming it as "
-                "`term` and supplying `expected_row_version` (ADR-0022)"
-            )
-        return self
-
-    @model_validator(mode="after")
-    def _reject_a_preferred_batch(self) -> AddDesignationsRequest:
-        if self.use is DesignationUse.PREFERRED and len(self.terms) != 1:
-            raise ValueError(
-                "only one preferred term can be added at a time - "
-                "at most one can ever be active per language"
-            )
-        return self
 
 
 class DesignationWriteResult(BaseModel):
@@ -403,27 +345,48 @@ class DesignationWriteResult(BaseModel):
     row_version: int
 
 
-class AmendDesignationRequest(_WithLanguage):
+class AmendTarget(StrEnum):
+    """Which storage home an amendment's `term` means (see the module docstring)."""
+
+    PREFERRED_TERM = "preferred_term"
+    SYNONYM = "synonym"
+
+
+class AmendDesignationRequest(BaseModel):
     """The body of `POST .../designations/amendment`. `term` addresses the
     designation to edit; `new_term` is what it becomes. Editing in place
     (rather than retire-and-re-add) is `nptc.catalogue.designations.
     amend_designation`'s own choice - see that function's docstring.
 
-    `term` also addresses the entry's *own* en-AU preferred term, which is
+    `term` also addresses the entry's *own* preferred term, which is
     not a designation row at all (ADR-0022) - see the module docstring for
-    the dispatch and `expected_row_version` for the lock it requires."""
+    the dispatch and `expected_row_version` for the lock it requires.
+
+    A body naming `use`, the field `target` replaced, is refused. Ignoring it would
+    change which row is written: an old `use="preferred"` would rename a shadowing
+    synonym, and an old `use="synonym"` with no matching synonym would rename the
+    entry's preferred term where the old route answered 404. A tab still running the
+    previous bundle during a deploy sends exactly that. Other unnamed fields stay
+    ignored, because a client may post a `Designation` back with its `length` (FR-24)."""
 
     model_config = ConfigDict(frozen=True)
+
+    @model_validator(mode="before")
+    @classmethod
+    def _refuse_the_retired_use(cls, data: Any) -> Any:
+        if isinstance(data, dict) and "use" in data:
+            raise ValueError("`use` was replaced by `target` (`preferred_term` or `synonym`)")
+        return data
 
     term: str
     new_term: str = Field(min_length=1)
     reason: str
     #: Which storage home `term` means, when it could mean either. Unset: an
     #: active `designation` row first, then the entry's own preferred term (see
-    #: the module docstring). `preferred` with `en-AU` addresses
-    #: `catalogue_entry.preferred_term` directly. Any other `preferred`, and every
-    #: `synonym`, addresses a `designation` row and never falls back to the entry.
-    use: DesignationUse | None = None
+    #: the module docstring). `preferred_term` addresses
+    #: `catalogue_entry.preferred_term` directly. `synonym` addresses a
+    #: `designation` row and never falls back to the entry.
+    target: AmendTarget | None = None
     #: FR-38: required on both branches, so both refuse a stale version alike.
     expected_row_version: int = Field(ge=1)
 
@@ -433,11 +396,10 @@ class AmendDesignationResult(BaseModel):
 
     `designation` is the same shape on both branches, including the one
     that did not touch a `designation` row at all: the catalogue's own
-    en-AU preferred term comes back rendered as
-    `use="preferred", language="en-AU"`. That is this API's whole premise -
-    every term the catalogue holds is a designation, and ADR-0022's split
-    between two storage homes is not something a client should have to
-    model (see the module docstring).
+    preferred term comes back rendered as an active designation, and
+    `label_provenance.designation` (`au_preferred_term` or `synonym`) says
+    which home it came from. ADR-0022's split between two storage homes is
+    not something a client should have to model (see the module docstring).
 
     `row_version` is the entry's, on both branches, and is what a client
     sends back as `expected_row_version` on its next write - so a save
@@ -459,7 +421,7 @@ class AmendDesignationResult(BaseModel):
     row_version: int
 
 
-class RetireDesignationRequest(_WithLanguage):
+class RetireDesignationRequest(BaseModel):
     model_config = ConfigDict(frozen=True)
 
     term: str
@@ -483,10 +445,10 @@ class RetireDesignationResult(BaseModel):
     row_version: int
 
 
-class ReinstateDesignationRequest(_WithLanguage):
+class ReinstateDesignationRequest(BaseModel):
     """The body of `POST .../designations/reinstatement`.
     `term` addresses the designation to reinstate - resolved against the
-    most-recently-retired row matching `(entry, term, language)`
+    most-recently-retired row matching `(entry, term)`
     (`nptc.catalogue.designations.load_retired_designation`), never a
     specific row's internal id, matching every other route in this module."""
 
@@ -515,7 +477,7 @@ class ReinstateDesignationResult(BaseModel):
     row_version: int
 
 
-class AcknowledgeCollisionRequest(_WithLanguage):
+class AcknowledgeCollisionRequest(BaseModel):
     """The body of `POST .../designations/acknowledgement`. `term` is the
     surface form the caller is acknowledging a warning for - resolved to a
     comparison key here (`nptc.catalogue.designations.clean_term` then
@@ -536,7 +498,7 @@ class CollisionAcknowledgementResponse(BaseModel):
     collision is an audit-log fact, not a public response field.
 
     `created` distinguishes "this call recorded it" (`True`) from "this
-    exact `(entry, term, language)` was already acknowledged, by an earlier
+    exact `(entry, term)` was already acknowledged, by an earlier
     call" (`False`) - `acknowledge_collision` is idempotent (see its own
     docstring), and without this flag a caller cannot tell those two cases
     apart, nor notice that `reason` below is the *original* note rather
@@ -544,7 +506,6 @@ class CollisionAcknowledgementResponse(BaseModel):
 
     model_config = ConfigDict(frozen=True)
 
-    language: str
     reason: str
     created: bool
 
@@ -559,7 +520,7 @@ AcknowledgerDep = Annotated[Principal, Depends(permission_dep(Permission.VALIDAT
 
 @router.post(
     "/entries/{business_key}/designations",
-    summary="Add one or more synonyms, or a non-en-AU preferred term, to a catalogue entry",
+    summary="Add one or more synonyms to a catalogue entry",
     status_code=201,
     responses=_RESPONSES_ADD,
     dependencies=[_EDIT],
@@ -582,31 +543,7 @@ def add_designations(
     # again as its own first statement, a re-entrant no-op that keeps the order
     # right for a caller that skips `entry_child_write`.
     with entry_child_write(session, entry, body.expected_row_version, reason=body.reason):
-        if body.use is DesignationUse.PREFERRED:
-            # add_synonyms is synonym-only (it hardcodes use="synonym") and a
-            # preferred variant is always a single term - `add_designation`
-            # directly, matching the batch-of-one case add_synonyms would
-            # otherwise reduce to.
-            created = [
-                add_designation(
-                    session,
-                    ctx,
-                    entry=entry,
-                    term=body.terms[0],
-                    use=body.use,
-                    language=body.language,
-                    reason=body.reason,
-                )
-            ]
-        else:
-            created = add_synonyms(
-                session,
-                ctx,
-                entry=entry,
-                terms=body.terms,
-                language=body.language,
-                reason=body.reason,
-            )
+        created = add_synonyms(session, ctx, entry=entry, terms=body.terms, reason=body.reason)
     response.headers["Location"] = f"{API_PREFIX}{router.prefix}/entries/{business_key}"
     created_ids = {designation.id for designation in created}
     rows = [
@@ -614,19 +551,8 @@ def add_designations(
         for row in queries.load_designations_any_status(session, (entry.id,))
         if row.id in created_ids
     ]
-    # `warning_collisions` only ever looks for another live entry's active
-    # *synonym* under the same key - meaningless for the preferred branch,
-    # since a preferred term matching another entry's synonym is already an
-    # *error*-severity collision `add_designation` would have raised.
-    warnings = (
-        ()
-        if body.use is DesignationUse.PREFERRED
-        else warning_collisions(
-            session,
-            entry=entry,
-            terms=[designation.term for designation in created],
-            language=body.language,
-        )
+    warnings = warning_collisions(
+        session, entry=entry, terms=[designation.term for designation in created]
     )
     return DesignationWriteResult(
         designations=[designation_from_row(row) for row in rows],
@@ -636,48 +562,38 @@ def add_designations(
 
 
 def _targets_preferred_term(entry: CatalogueEntry, body: AmendDesignationRequest) -> bool:
-    """Whether this request means the entry's own en-AU preferred term rather than
-    a `designation` row (ADR-0022).
+    """Whether this request means the entry's own preferred term rather than a
+    `designation` row (ADR-0022).
 
-    Only true for `en-AU`: a `preferred` designation in another language is a real
-    row, and `ck_designation_no_en_au_preferred` guarantees there is no en-AU one to
-    confuse it with.
-
-    `term` must name the preferred term even with `use="preferred"`. `use` only
-    chooses which storage home to look in. On this route `term` is the address, not
-    the new value as it is on `POST .../designations`, so ignoring it would let a
-    mistyped `term` rename the preferred term instead of returning 404. The
-    requirement costs the escape hatch nothing: a synonym that shadows the preferred
-    term folds to the same `collision_key`, so a caller reaching past it names a
-    matching term anyway.
+    `term` must name the preferred term even with `target="preferred_term"`. `target`
+    only chooses which storage home to look in. On this route `term` is the address,
+    not the new value, so ignoring it would let a mistyped `term` rename the preferred
+    term instead of returning 404. The requirement costs the escape hatch nothing: a
+    synonym that shadows the preferred term folds to the same `collision_key`, so a
+    caller reaching past it names a matching term anyway.
 
     The comparison uses the stored `preferred_term_key`, not a key recomputed from
     `entry.preferred_term`: `CatalogueEntry`'s `@validates("preferred_term")` hook
     writes it with the same `collision_key(clean_term(...))` composition, and
     `nptc.catalogue.collisions` compares stored keys and never recomputes them. A case
     or punctuation variant of the term therefore resolves, as it does for a designation.
-    `body.language` is already canonical (`_WithLanguage`), so `en-au` matches too.
     """
-    if body.language != DEFAULT_LANGUAGE:
-        return False
-    if body.use is DesignationUse.SYNONYM:
+    if body.target is AmendTarget.SYNONYM:
         return False
     return entry.preferred_term_key == collision_key(clean_term(body.term))
 
 
 def _preferred_term_as_designation(entry: CatalogueEntry) -> Designation:
     """The catalogue's own preferred term in the shape this API gives every term.
-    ADR-0022 guarantees no `designation` row exists for it, so the constant
-    `use`/`language`/`status` restate that invariant rather than a stored row.
+    ADR-0022 guarantees no `designation` row exists for it, so the constant `status`
+    restates that invariant rather than a stored row.
 
     `label_provenance` is `AU_PREFERRED_TERM_PROVENANCE` (FR-98), not the
-    `PREFERRED_VARIANT` that `designation_from_row` gives `use="preferred"`: this is
-    the catalogue's own AU preferred term, not a non-en-AU variant.
+    `SYNONYM_PROVENANCE` that `designation_from_row` gives: it is how a client tells
+    the entry's own preferred term from a synonym.
     """
     return Designation(
         term=entry.preferred_term,
-        use=str(DesignationUse.PREFERRED),
-        language=DEFAULT_LANGUAGE,
         status=str(DesignationStatus.ACTIVE),
         length=entry.length,
         label_provenance=AU_PREFERRED_TERM_PROVENANCE,
@@ -699,21 +615,19 @@ def amend_designation_route(
 ) -> AmendDesignationResult:
     """One route, two storage homes.
 
-    `use="preferred"` with the default `en-AU` addresses the entry's own
-    preferred term outright. Otherwise `term` resolves against an active
-    `designation` row first, falling back to the preferred term only where
-    there is no such row - see the module docstring for why that fallback
-    order is designation-first, and why the explicit `use` exists at all.
+    `target="preferred_term"` addresses the entry's own preferred term outright.
+    Otherwise `term` resolves against an active `designation` row first, falling
+    back to the preferred term only where there is no such row - see the module
+    docstring for why that fallback order is designation-first, and why the explicit
+    `target` exists at all.
     """
     entry = load_entry_for_update(session, business_key)
     designation = (
         None
-        if body.use is DesignationUse.PREFERRED and body.language == DEFAULT_LANGUAGE
-        # ADR-0022: there is no en-AU preferred designation row to find, so
-        # the lookup is skipped rather than run and discarded.
-        else find_active_designation(
-            session, entry_id=entry.id, term=body.term, language=body.language
-        )
+        if body.target is AmendTarget.PREFERRED_TERM
+        # No designation row holds the preferred term (ADR-0022), so the lookup is
+        # skipped rather than run and discarded.
+        else find_active_designation(session, entry_id=entry.id, term=body.term)
     )
 
     if designation is None and _targets_preferred_term(entry, body):
@@ -727,9 +641,8 @@ def amend_designation_route(
             max_preferred_term_length=settings.max_preferred_term_length,
         )
         session.flush()
-        # No collision warnings, as in `add_designations`' preferred branch: a
-        # preferred term matching another entry's synonym is an *error*-severity
-        # collision `save_entry` has already raised.
+        # No collision warnings: a preferred term matching another entry's synonym is
+        # an *error*-severity collision `save_entry` has already raised.
         length_warning = _length_warning(entry, settings)
         return AmendDesignationResult(
             designation=_preferred_term_as_designation(entry),
@@ -747,8 +660,8 @@ def amend_designation_route(
             # the same `SELECT` only to fail. The message is for the log only (the
             # handler never echoes `str(exc)`), so it says what this route checked.
             raise DesignationNotFoundError(
-                f"entry {entry.id} has no active designation for term {body.term!r} in "
-                f"language {body.language!r}, and it is not the entry's own preferred term"
+                f"entry {entry.id} has no active designation for term {body.term!r}, "
+                "and it is not the entry's own preferred term"
             )
         amended = amend_designation(
             session,
@@ -762,12 +675,7 @@ def amend_designation_route(
     row = queries.load_designation_by_id(session, amended_id)
     if row is None:
         raise RuntimeError(f"designation {amended_id} not found immediately after being amended")
-    # No warnings for a preferred designation; see `add_designations`.
-    warnings = (
-        ()
-        if amended.use == str(DesignationUse.PREFERRED)
-        else warning_collisions(session, entry=entry, terms=[amended.term], language=body.language)
-    )
+    warnings = warning_collisions(session, entry=entry, terms=[amended.term])
     return AmendDesignationResult(
         designation=designation_from_row(row),
         warnings=[_collision_warning(warning) for warning in warnings],
@@ -794,9 +702,7 @@ def retire_designation_route(
     # the lock, after the version check, so a stale caller sees the conflict, not
     # a 404 (as in `catalogue_bindings.py`'s `retire_binding`).
     with entry_child_write(session, entry, body.expected_row_version, reason=body.reason):
-        designation = load_active_designation(
-            session, entry_id=entry.id, term=body.term, language=body.language
-        )
+        designation = load_active_designation(session, entry_id=entry.id, term=body.term)
         _retire_designation(session, ctx, designation=designation, reason=body.reason)
     designation_id = designation.id
     row = queries.load_designation_by_id(session, designation_id)
@@ -832,17 +738,12 @@ def reinstate_designation_route(
     own (see its own docstring)."""
     entry = load_entry_for_update(session, business_key)
     with entry_child_write(session, entry, body.expected_row_version, reason=body.reason):
-        active = find_active_designation(
-            session, entry_id=entry.id, term=body.term, language=body.language
-        )
+        active = find_active_designation(session, entry_id=entry.id, term=body.term)
         if active is not None:
             raise DesignationNotRetiredError(
-                f"entry {entry.id} already has an active designation for term "
-                f"{body.term!r} in language {body.language!r}"
+                f"entry {entry.id} already has an active designation for term {body.term!r}"
             )
-        designation = load_retired_designation(
-            session, entry_id=entry.id, term=body.term, language=body.language
-        )
+        designation = load_retired_designation(session, entry_id=entry.id, term=body.term)
         reinstated = _reinstate_designation(
             session, ctx, entry=entry, designation=designation, reason=body.reason
         )
@@ -850,14 +751,7 @@ def reinstate_designation_route(
     row = queries.load_designation_by_id(session, reinstated_id)
     if row is None:
         raise RuntimeError(f"designation {reinstated_id} not found immediately after reinstatement")
-    # No warnings for a preferred designation; see `add_designations`.
-    warnings = (
-        ()
-        if reinstated.use == str(DesignationUse.PREFERRED)
-        else warning_collisions(
-            session, entry=entry, terms=[reinstated.term], language=body.language
-        )
-    )
+    warnings = warning_collisions(session, entry=entry, terms=[reinstated.term])
     return ReinstateDesignationResult(
         designation=designation_from_row(row),
         warnings=[_collision_warning(warning) for warning in warnings],
@@ -885,12 +779,7 @@ def acknowledge_designation_collision(
         acknowledger=acknowledger,
         entry=entry,
         term_key=term_key,
-        language=body.language,
         reason=body.reason,
     )
     session.flush()
-    return CollisionAcknowledgementResponse(
-        language=acknowledgement.language,
-        reason=acknowledgement.reason,
-        created=created,
-    )
+    return CollisionAcknowledgementResponse(reason=acknowledgement.reason, created=created)
