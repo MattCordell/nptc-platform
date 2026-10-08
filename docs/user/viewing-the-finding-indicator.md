@@ -3,8 +3,9 @@
 When you look up a test in the catalogue, you may see a flag next to it saying there is an
 **open finding**. This page explains what that means and what it does not mean.
 
-> **Where you see it.** The catalogue search page shows **Open finding** in a row's
-> **Validation** column (see [Searching the catalogue](searching-the-catalogue.md)). An
+> **Where you see it.** The catalogue search page shows **Open finding** beside a row's
+> **Requesting term**, and nothing when no finding is open (see
+> [Searching the catalogue](searching-the-catalogue.md)). An
 > entry's own page (`/catalogue/{businessKey}`) shows it next to the status, below the
 > heading (see [Reading an entry](reading-an-entry.md)). That page shows nothing when no
 > finding is open. The API carries the flag on every list row, search result and entry.
