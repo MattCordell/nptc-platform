@@ -917,10 +917,20 @@ export interface components {
              */
             code: string | null;
             /**
+             * Fsn
+             * @description The fully specified name of the entry's active SNOMED CT code with its trailing semantic tag removed (FR-83), or `null` when the entry has no active code. `bindings[].fsn` on the detail keeps the tag.
+             */
+            fsn: string | null;
+            /**
              * Disciplines
              * @description The display text of each of the entry's discipline values, in recorded order. Empty when none is recorded.
              */
             disciplines: string[];
+            /**
+             * Specimens
+             * @description The display text of each of the entry's specimen values, in recorded order, with a trailing specimen word removed and repeats dropped. Falls back to the code where a value carries no display. Empty when none is recorded.
+             */
+            specimens: string[];
             /** Label Provenance */
             label_provenance: {
                 [key: string]: components["schemas"]["LabelProvenance"];
@@ -955,10 +965,20 @@ export interface components {
              */
             code: string | null;
             /**
+             * Fsn
+             * @description The fully specified name of the entry's active SNOMED CT code with its trailing semantic tag removed (FR-83), or `null` when the entry has no active code. `bindings[].fsn` on the detail keeps the tag.
+             */
+            fsn: string | null;
+            /**
              * Disciplines
              * @description The display text of each of the entry's discipline values, in recorded order. Empty when none is recorded.
              */
             disciplines: string[];
+            /**
+             * Specimens
+             * @description The display text of each of the entry's specimen values, in recorded order, with a trailing specimen word removed and repeats dropped. Falls back to the code where a value carries no display. Empty when none is recorded.
+             */
+            specimens: string[];
             /** Label Provenance */
             label_provenance: {
                 [key: string]: components["schemas"]["LabelProvenance"];
@@ -1709,10 +1729,20 @@ export interface components {
              */
             code: string | null;
             /**
+             * Fsn
+             * @description The fully specified name of the entry's active SNOMED CT code with its trailing semantic tag removed (FR-83), or `null` when the entry has no active code. `bindings[].fsn` on the detail keeps the tag.
+             */
+            fsn: string | null;
+            /**
              * Disciplines
              * @description The display text of each of the entry's discipline values, in recorded order. Empty when none is recorded.
              */
             disciplines: string[];
+            /**
+             * Specimens
+             * @description The display text of each of the entry's specimen values, in recorded order, with a trailing specimen word removed and repeats dropped. Falls back to the code where a value carries no display. Empty when none is recorded.
+             */
+            specimens: string[];
             /** Label Provenance */
             label_provenance: {
                 [key: string]: components["schemas"]["LabelProvenance"];
@@ -1774,10 +1804,20 @@ export interface components {
              */
             code: string | null;
             /**
+             * Fsn
+             * @description The fully specified name of the entry's active SNOMED CT code with its trailing semantic tag removed (FR-83), or `null` when the entry has no active code. `bindings[].fsn` on the detail keeps the tag.
+             */
+            fsn: string | null;
+            /**
              * Disciplines
              * @description The display text of each of the entry's discipline values, in recorded order. Empty when none is recorded.
              */
             disciplines: string[];
+            /**
+             * Specimens
+             * @description The display text of each of the entry's specimen values, in recorded order, with a trailing specimen word removed and repeats dropped. Falls back to the code where a value carries no display. Empty when none is recorded.
+             */
+            specimens: string[];
             /** Label Provenance */
             label_provenance: {
                 [key: string]: components["schemas"]["LabelProvenance"];
@@ -2351,10 +2391,20 @@ export interface components {
              */
             code: string | null;
             /**
+             * Fsn
+             * @description The fully specified name of the entry's active SNOMED CT code with its trailing semantic tag removed (FR-83), or `null` when the entry has no active code. `bindings[].fsn` on the detail keeps the tag.
+             */
+            fsn: string | null;
+            /**
              * Disciplines
              * @description The display text of each of the entry's discipline values, in recorded order. Empty when none is recorded.
              */
             disciplines: string[];
+            /**
+             * Specimens
+             * @description The display text of each of the entry's specimen values, in recorded order, with a trailing specimen word removed and repeats dropped. Falls back to the code where a value carries no display. Empty when none is recorded.
+             */
+            specimens: string[];
             /** Label Provenance */
             label_provenance: {
                 [key: string]: components["schemas"]["LabelProvenance"];

@@ -4097,6 +4097,18 @@
             "title": "Code",
             "description": "The entry's active SNOMED CT code, as a string (FR-06), or `null` when it has none. A retired code never appears here; the entry's `bindings` carry the history."
           },
+          "fsn": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Fsn",
+            "description": "The fully specified name of the entry's active SNOMED CT code with its trailing semantic tag removed (FR-83), or `null` when the entry has no active code. `bindings[].fsn` on the detail keeps the tag."
+          },
           "disciplines": {
             "items": {
               "type": "string"
@@ -4104,6 +4116,14 @@
             "type": "array",
             "title": "Disciplines",
             "description": "The display text of each of the entry's discipline values, in recorded order. Empty when none is recorded."
+          },
+          "specimens": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Specimens",
+            "description": "The display text of each of the entry's specimen values, in recorded order, with a trailing specimen word removed and repeats dropped. Falls back to the code where a value carries no display. Empty when none is recorded."
           },
           "label_provenance": {
             "additionalProperties": {
@@ -4126,7 +4146,9 @@
           "updated_at",
           "has_open_finding",
           "code",
+          "fsn",
           "disciplines",
+          "specimens",
           "label_provenance",
           "row_version"
         ],
@@ -4172,6 +4194,18 @@
             "title": "Code",
             "description": "The entry's active SNOMED CT code, as a string (FR-06), or `null` when it has none. A retired code never appears here; the entry's `bindings` carry the history."
           },
+          "fsn": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Fsn",
+            "description": "The fully specified name of the entry's active SNOMED CT code with its trailing semantic tag removed (FR-83), or `null` when the entry has no active code. `bindings[].fsn` on the detail keeps the tag."
+          },
           "disciplines": {
             "items": {
               "type": "string"
@@ -4179,6 +4213,14 @@
             "type": "array",
             "title": "Disciplines",
             "description": "The display text of each of the entry's discipline values, in recorded order. Empty when none is recorded."
+          },
+          "specimens": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Specimens",
+            "description": "The display text of each of the entry's specimen values, in recorded order, with a trailing specimen word removed and repeats dropped. Falls back to the code where a value carries no display. Empty when none is recorded."
           },
           "label_provenance": {
             "additionalProperties": {
@@ -4206,7 +4248,9 @@
           "updated_at",
           "has_open_finding",
           "code",
+          "fsn",
           "disciplines",
+          "specimens",
           "label_provenance",
           "row_version",
           "score"
@@ -5509,6 +5553,18 @@
             "title": "Code",
             "description": "The entry's active SNOMED CT code, as a string (FR-06), or `null` when it has none. A retired code never appears here; the entry's `bindings` carry the history."
           },
+          "fsn": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Fsn",
+            "description": "The fully specified name of the entry's active SNOMED CT code with its trailing semantic tag removed (FR-83), or `null` when the entry has no active code. `bindings[].fsn` on the detail keeps the tag."
+          },
           "disciplines": {
             "items": {
               "type": "string"
@@ -5516,6 +5572,14 @@
             "type": "array",
             "title": "Disciplines",
             "description": "The display text of each of the entry's discipline values, in recorded order. Empty when none is recorded."
+          },
+          "specimens": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Specimens",
+            "description": "The display text of each of the entry's specimen values, in recorded order, with a trailing specimen word removed and repeats dropped. Falls back to the code where a value carries no display. Empty when none is recorded."
           },
           "label_provenance": {
             "additionalProperties": {
@@ -5559,7 +5623,9 @@
           "updated_at",
           "has_open_finding",
           "code",
+          "fsn",
           "disciplines",
+          "specimens",
           "label_provenance",
           "row_version",
           "designations",
@@ -5637,6 +5703,18 @@
             "title": "Code",
             "description": "The entry's active SNOMED CT code, as a string (FR-06), or `null` when it has none. A retired code never appears here; the entry's `bindings` carry the history."
           },
+          "fsn": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Fsn",
+            "description": "The fully specified name of the entry's active SNOMED CT code with its trailing semantic tag removed (FR-83), or `null` when the entry has no active code. `bindings[].fsn` on the detail keeps the tag."
+          },
           "disciplines": {
             "items": {
               "type": "string"
@@ -5644,6 +5722,14 @@
             "type": "array",
             "title": "Disciplines",
             "description": "The display text of each of the entry's discipline values, in recorded order. Empty when none is recorded."
+          },
+          "specimens": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Specimens",
+            "description": "The display text of each of the entry's specimen values, in recorded order, with a trailing specimen word removed and repeats dropped. Falls back to the code where a value carries no display. Empty when none is recorded."
           },
           "label_provenance": {
             "additionalProperties": {
@@ -5662,7 +5748,9 @@
           "updated_at",
           "has_open_finding",
           "code",
+          "fsn",
           "disciplines",
+          "specimens",
           "label_provenance"
         ],
         "title": "EntrySummary",
@@ -6675,6 +6763,18 @@
             "title": "Code",
             "description": "The entry's active SNOMED CT code, as a string (FR-06), or `null` when it has none. A retired code never appears here; the entry's `bindings` carry the history."
           },
+          "fsn": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Fsn",
+            "description": "The fully specified name of the entry's active SNOMED CT code with its trailing semantic tag removed (FR-83), or `null` when the entry has no active code. `bindings[].fsn` on the detail keeps the tag."
+          },
           "disciplines": {
             "items": {
               "type": "string"
@@ -6682,6 +6782,14 @@
             "type": "array",
             "title": "Disciplines",
             "description": "The display text of each of the entry's discipline values, in recorded order. Empty when none is recorded."
+          },
+          "specimens": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Specimens",
+            "description": "The display text of each of the entry's specimen values, in recorded order, with a trailing specimen word removed and repeats dropped. Falls back to the code where a value carries no display. Empty when none is recorded."
           },
           "label_provenance": {
             "additionalProperties": {
@@ -6705,7 +6813,9 @@
           "updated_at",
           "has_open_finding",
           "code",
+          "fsn",
           "disciplines",
+          "specimens",
           "label_provenance",
           "score"
         ],

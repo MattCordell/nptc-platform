@@ -12,10 +12,11 @@ between modules leaves its OpenAPI component name unchanged.
 cross-router contract, listed in `__all__`. An underscore would mark them private and
 invite a future reader to inline them.
 
-**No `display_term`, and no strip anywhere in this module (FR-83, FR-98).** `Binding.fsn`
-is served as stored (FR-82), and `Binding.label_provenance` declares that fact. FR-83's
-sanctioned renderer, `nptc.exports.semantic_tag.render_display_term`, is reached only from
-the export surface.
+**One stripped FSN, and only on a summary (FR-83, FR-98).** `Binding.fsn` is served as
+stored (FR-82), and `Binding.label_provenance` declares that fact. `EntrySummary.fsn` is the
+entry's active binding's FSN with its semantic tag removed by FR-83's sanctioned renderer,
+`nptc.exports.semantic_tag.render_display_term`, and its `label_provenance` declares that.
+The renderer is called from `entry_summary_fields` and the export surface, nowhere else.
 """
 
 from __future__ import annotations
@@ -30,6 +31,7 @@ from sqlalchemy.orm import Session
 
 from nptc.api.labels import (
     AU_PREFERRED_TERM_PROVENANCE,
+    LIST_FSN_PROVENANCE,
     PREFERRED_VARIANT_PROVENANCE,
     SYNONYM_PROVENANCE,
     LabelProvenance,
@@ -47,6 +49,7 @@ from nptc.catalogue.facets import (
     FilterSelection,
 )
 from nptc.db.models.catalogue_entry import CatalogueEntry
+from nptc.exports.semantic_tag import render_display_term, trim_specimen_suffix
 from nptc.registry.handlers import DatatypeRegistry, SerialisationTarget
 from nptc.settings import ApiSettings
 
@@ -318,15 +321,31 @@ class EntrySummary(BaseModel):
             "`bindings` carry the history."
         )
     )
+    fsn: str | None = Field(
+        description=(
+            "The fully specified name of the entry's active SNOMED CT code with its "
+            "trailing semantic tag removed (FR-83), or `null` when the entry has no "
+            "active code. `bindings[].fsn` on the detail keeps the tag."
+        )
+    )
     disciplines: list[str] = Field(
         description=(
             "The display text of each of the entry's discipline values, in "
             "recorded order. Empty when none is recorded."
         )
     )
+    specimens: list[str] = Field(
+        description=(
+            "The display text of each of the entry's specimen values, in recorded "
+            "order, with a trailing specimen word removed and repeats dropped. "
+            "Falls back to the code where a value carries no display. Empty when none "
+            "is recorded."
+        )
+    )
     #: FR-98: `preferred_term` is the catalogue's own en-AU preferred term
-    #: (ADR-0022), never an FSN - fixed, not configuration-driven, so this
-    #: is the same constant on every row.
+    #: (ADR-0022) and `specimens` are AU preferred terms; `fsn` is stripped.
+    #: All three are fixed, not configuration-driven, so this is the same
+    #: constant on every row.
     label_provenance: dict[str, LabelProvenance]
 
 
@@ -334,6 +353,8 @@ class EntrySummary(BaseModel):
 #: constant, not rebuilt on each call.
 _ENTRY_SUMMARY_LABEL_PROVENANCE: dict[str, LabelProvenance] = {
     "preferred_term": AU_PREFERRED_TERM_PROVENANCE,
+    "fsn": LIST_FSN_PROVENANCE,
+    "specimens": AU_PREFERRED_TERM_PROVENANCE,
 }
 
 
@@ -532,6 +553,9 @@ def entry_summary_fields(
     updated_at: datetime,
     facts: queries.RowFacts,
 ) -> dict[str, Any]:
+    """Raises `NotAServedFSNError` or `EmptyDisplayTermError` for a stored FSN FR-83 cannot
+    strip. FR-82 makes that unreachable, so it fails the request loudly (a 422 with a logged
+    warning) rather than show a value that may still carry, or may never have had, a tag."""
     return {
         "business_key": business_key,
         "preferred_term": preferred_term,
@@ -540,7 +564,9 @@ def entry_summary_fields(
         "updated_at": updated_at,
         "has_open_finding": facts.has_open_finding,
         "code": facts.code,
+        "fsn": render_display_term(facts.fsn) if facts.fsn is not None else None,
         "disciplines": list(facts.disciplines),
+        "specimens": list(dict.fromkeys(trim_specimen_suffix(label) for label in facts.specimens)),
         "label_provenance": _ENTRY_SUMMARY_LABEL_PROVENANCE,
     }
 

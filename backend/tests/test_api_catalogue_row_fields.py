@@ -1,10 +1,10 @@
-"""The `code` and `disciplines` fields every list, search and detail row carries.
+"""The `code`, `fsn`, `disciplines` and `specimens` fields every list, search and detail row carries.
 
-They exist so the public catalogue screen can show a row's SNOMED CT code and
-discipline without a request per row. The failure modes asserted here are the
-ones a row-level lookup gets wrong: a retired code shown as current, a missing
-code shown as anything but `null`, a second discipline dropped, and a page whose
-statement count grows with its size.
+They exist so the public catalogue screen can show a row's discipline, specimen and FSN
+without a request per row. The failure modes asserted here are the ones a row-level lookup
+gets wrong: a retired code or FSN shown as current, a missing code shown as anything but
+`null`, a second discipline dropped, a semantic tag left on the FSN, a specimen trimmed to
+nothing, and a page whose statement count grows with its size.
 """
 
 from __future__ import annotations
@@ -47,6 +47,7 @@ _RETIRED_CODE = "71388002"
 _OTHER_RETIRED_CODE = "394596001"
 
 _DISCIPLINE_SYSTEM = "https://example.org/nptc/discipline"
+_SNOMED = "http://snomed.info/sct"
 
 
 @dataclass(frozen=True)
@@ -65,6 +66,23 @@ class _Seeded:
 @pytest.fixture
 def api(app_db: Connection) -> Iterator[ApiTestApp]:
     yield from build_api_test_app(app_db)
+
+
+def _specimen_values(entry_id: Any) -> list[PropertyValue]:
+    """Stored out of order, so a loader that ignored `ordinal` reorders them. Beside "Urine
+    specimen" and "Serum specimen" sit a second value that trims to the same "Serum", the root
+    concept's bare "Specimen", and a value with no display."""
+    stored = [
+        (2, {"system": _SNOMED, "code": "119361006", "display": "Serum"}),
+        (0, {"system": _SNOMED, "code": "122575003", "display": "Urine specimen"}),
+        (4, {"system": _SNOMED, "code": "309051001"}),
+        (1, {"system": _SNOMED, "code": "119364003", "display": "Serum specimen"}),
+        (3, {"system": _SNOMED, "code": "123038009", "display": "Specimen"}),
+    ]
+    return [
+        PropertyValue(entry_id=entry_id, property_key="specimen", ordinal=ordinal, value=value)
+        for ordinal, value in stored
+    ]
 
 
 @pytest.fixture
@@ -147,31 +165,40 @@ def seeded(api: ApiTestApp) -> _Seeded:
                     "display": "Chemical pathology",
                 },
             ),
+            *_specimen_values(bound.id),
         ]
     )
     session.flush()
     return seeded
 
 
-_EXPECTED: dict[str, tuple[str | None, list[str]]] = {
-    "bound": (_ACTIVE_CODE, ["Chemical pathology", "haem"]),
-    "retired_only": (None, []),
-    "unbound": (None, []),
+#: `fsn` is the active binding's, tag removed; the retired binding's FSN never appears.
+_EXPECTED: dict[str, tuple[str | None, str | None, list[str], list[str]]] = {
+    "bound": (
+        _ACTIVE_CODE,
+        "Microscopy (acid fast bacilli)",
+        ["Chemical pathology", "haem"],
+        ["Urine", "Serum", "Specimen", "309051001"],
+    ),
+    "retired_only": (None, None, [], []),
+    "unbound": (None, None, [], []),
 }
 
 
 def _assert_rows(seeded: _Seeded, items: list[dict[str, Any]]) -> None:
     by_key = {item["business_key"]: item for item in items}
-    for handle, (code, disciplines) in _EXPECTED.items():
+    for handle, (code, fsn, disciplines, specimens) in _EXPECTED.items():
         row = by_key[getattr(seeded, handle)]
         assert row["code"] == code, handle
+        assert row["fsn"] == fsn, handle
         assert row["disciplines"] == disciplines, handle
+        assert row["specimens"] == specimens, handle
 
 
 @pytest.mark.req("FR-20")
 @pytest.mark.req("FR-06")
 @pytest.mark.integration
-def test_anonymous_list_rows_carry_the_active_code_and_disciplines(
+def test_anonymous_list_rows_carry_the_code_fsn_disciplines_and_specimens(
     api: ApiTestApp, seeded: _Seeded
 ) -> None:
     response = api.get("/catalogue/entries", params={"after": seeded.before_all, "limit": 3})
@@ -184,7 +211,7 @@ def test_anonymous_list_rows_carry_the_active_code_and_disciplines(
 
 @pytest.mark.req("FR-14")
 @pytest.mark.integration
-def test_anonymous_search_hits_carry_the_active_code_and_disciplines(
+def test_anonymous_search_hits_carry_the_code_fsn_disciplines_and_specimens(
     api: ApiTestApp, seeded: _Seeded
 ) -> None:
     response = api.get("/catalogue/search", params={"q": f"Ferritin {seeded.token}"})
@@ -247,3 +274,56 @@ def test_row_fields_cost_a_fixed_number_of_statements_whatever_the_page_size(
         counts.append(len(statements))
 
     assert counts[0] == counts[1], counts
+
+
+@pytest.mark.req("FR-98")
+@pytest.mark.integration
+def test_the_list_declares_which_labels_it_stripped_and_which_it_did_not(
+    api: ApiTestApp, seeded: _Seeded
+) -> None:
+    row = api.get(f"/catalogue/entries/{seeded.bound}").json()
+
+    assert row["label_provenance"] == {
+        "preferred_term": {"designation": "au_preferred_term", "semantic_tag": "not_applicable"},
+        "fsn": {"designation": "fsn", "semantic_tag": "stripped"},
+        "specimens": {"designation": "au_preferred_term", "semantic_tag": "not_applicable"},
+    }
+    # The binding keeps its tag and says so: the strip is the summary's, never the stored value's.
+    active = next(b for b in row["bindings"] if b["status"] == "active")
+    assert active["fsn"] == "Microscopy (acid fast bacilli) (procedure)"
+    assert active["label_provenance"]["fsn"]["semantic_tag"] == "intact"
+
+
+@pytest.mark.req("FR-83")
+@pytest.mark.integration
+def test_a_stored_fsn_with_no_tag_fails_the_list_rather_than_showing_it(
+    api: ApiTestApp,
+) -> None:
+    """FR-82 makes this unreachable, so reaching it means stored data broke the guarantee. An
+    untagged value may already have been stripped, so the list refuses it instead of showing it."""
+    session = api.session
+    base = random.randrange(100_000_000, 999_000_000)
+    key = f"NPTC-{base}"
+    entry = CatalogueEntry(
+        business_key=key,
+        preferred_term=f"Untagged {base}",
+        status=CatalogueEntryStatus.ACTIVE.value,
+    )
+    session.add(entry)
+    session.flush()
+    session.add(
+        CodeBinding(
+            entry_id=entry.id,
+            code=_ACTIVE_CODE,
+            fsn="Microscopy without a tag",
+            au_preferred_term=None,
+            edition_hint="au",
+            status=CodeBindingStatus.ACTIVE.value,
+        )
+    )
+    session.flush()
+
+    response = api.get("/catalogue/entries", params={"after": f"NPTC-{base - 1}", "limit": 1})
+
+    assert response.status_code == 422, response.text
+    assert "Microscopy without a tag" not in response.text
