@@ -1,3 +1,4 @@
+import { Link } from "@tanstack/react-router";
 import { useEffect } from "react";
 
 import { useEntryHistory } from "../api/queries.ts";
@@ -15,9 +16,10 @@ const LOAD_FAILURE =
   "The recent changes could not be loaded. The rest of this entry is unaffected.";
 
 /**
- * The entry's most recent changes (FR-19). It has its own query, so a slow or
- * failed history never holds back the rest of the page. The author appears only
- * when the API sends one: it sends none to an anonymous reader (NFR-26).
+ * The entry's most recent changes (FR-19), with a link to the full history. It
+ * has its own query, so a slow or failed history never holds back the rest of
+ * the page. The author appears only when the API sends one: it sends none to an
+ * anonymous reader (NFR-26).
  */
 export function EntryHistoryList({ businessKey }: { businessKey: string }) {
   const history = useEntryHistory(businessKey, { limit: RECENT_EVENTS });
@@ -64,6 +66,15 @@ export function EntryHistoryList({ businessKey }: { businessKey: string }) {
           })}
         </ol>
       )}
+      {history.isSuccess && history.data.items.length > 0 ? (
+        <Link
+          to="/catalogue/$businessKey/history"
+          params={{ businessKey }}
+          className="inline-flex min-h-6 items-center self-start text-[var(--color-accent)] hover:underline"
+        >
+          View full history
+        </Link>
+      ) : null}
     </EntrySection>
   );
 }
