@@ -565,9 +565,15 @@ en-AU synonym needs `use = 'synonym'` and `language = 'en-AU'`.
 
 **That update skips FR-05's collision check.** Set on an active row, it can leave a synonym equal
 to another live entry's preferred term, which the API would have refused. Retire the row through
-the API first (naming its language in the request), then correct its columns. A retired row is
-not compared, it stays as history, and reinstating it later runs the check. Correct an active
-row in place only after checking its term against the other entries' preferred terms.
+the API first, then correct its columns. A retired row is not compared, it stays as history, and
+reinstating it later runs the check. Correct an active row in place only after checking its term
+against the other entries' preferred terms.
+
+**Retire the row with the previous release running.** Its API takes a `language` in the request,
+which is how it addresses a non-en-AU row. The new API has no such field. Run the queries above
+before the upgrade, while the previous release is up. If the migration has already refused, the
+schema is still at `0025` and nothing changed, so start the previous release again, retire the
+rows, correct their columns, and upgrade once more.
 
 The migration checks every row, retired ones included. Run it again once both queries return
 nothing.
