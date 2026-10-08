@@ -475,6 +475,19 @@ class BulkPropertyOutcome:
     conflict: ConflictReport | None = None
 
 
+def _not_found_outcome(business_key: str) -> BulkPropertyOutcome:
+    return BulkPropertyOutcome(business_key=business_key, status="not-found", row_version=None)
+
+
+def _conflict_outcome(business_key: str, report: ConflictReport) -> BulkPropertyOutcome:
+    return BulkPropertyOutcome(
+        business_key=business_key,
+        status="conflict",
+        row_version=report.current_row_version,
+        conflict=report,
+    )
+
+
 def save_property_values_for_entries(
     session: Session,
     ctx: AuditContext,
@@ -533,24 +546,13 @@ def save_property_values_for_entries(
         try:
             entry = load_entry_for_update(session, target.business_key)
         except EntryNotFoundError:
-            outcomes.append(
-                BulkPropertyOutcome(
-                    business_key=target.business_key, status="not-found", row_version=None
-                )
-            )
+            outcomes.append(_not_found_outcome(target.business_key))
             continue
 
         try:
             assert_entry_row_version(session, entry, target.expected_row_version)
         except EntryVersionConflictError as exc:
-            outcomes.append(
-                BulkPropertyOutcome(
-                    business_key=target.business_key,
-                    status="conflict",
-                    row_version=exc.report.current_row_version,
-                    conflict=exc.report,
-                )
-            )
+            outcomes.append(_conflict_outcome(target.business_key, exc.report))
             continue
 
         before_version = entry.row_version
@@ -582,11 +584,7 @@ def save_property_values_for_entries(
                 # against, and an escaping `EntryNotFoundError` would turn a
                 # partly successful batch into a whole-request 404, whose
                 # meaning is "unknown property_key".
-                outcomes.append(
-                    BulkPropertyOutcome(
-                        business_key=target.business_key, status="not-found", row_version=None
-                    )
-                )
+                outcomes.append(_not_found_outcome(target.business_key))
                 continue
             try:
                 # Reuses the pre-check's conflict path, so attribution does not
@@ -595,14 +593,7 @@ def save_property_values_for_entries(
                 # so this is expected to raise.
                 assert_entry_row_version(session, refreshed, target.expected_row_version)
             except EntryVersionConflictError as exc:
-                outcomes.append(
-                    BulkPropertyOutcome(
-                        business_key=target.business_key,
-                        status="conflict",
-                        row_version=exc.report.current_row_version,
-                        conflict=exc.report,
-                    )
-                )
+                outcomes.append(_conflict_outcome(target.business_key, exc.report))
                 continue
             # Defensive: the check above was expected to raise. The write's
             # savepoint was rolled back, so `unchanged` would falsely claim the
@@ -610,11 +601,9 @@ def save_property_values_for_entries(
             # and recreate under the same `business_key` landing at
             # `row_version=1`). Report `conflict`, built from `refreshed`.
             outcomes.append(
-                BulkPropertyOutcome(
-                    business_key=target.business_key,
-                    status="conflict",
-                    row_version=refreshed.row_version,
-                    conflict=ConflictReport(
+                _conflict_outcome(
+                    target.business_key,
+                    ConflictReport(
                         business_key=refreshed.business_key,
                         expected_row_version=target.expected_row_version,
                         current_row_version=refreshed.row_version,
