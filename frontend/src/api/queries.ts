@@ -293,6 +293,19 @@ export function useEntryProperties(businessKey: string) {
 
 type HistoryPage = components["schemas"]["HistoryPage"];
 
+/**
+ * What every page of one entry's history, for one kind of reader, shares in its
+ * key. A page may stand in for another only when this matches.
+ */
+function entryHistoryScope(businessKey: string, signedIn: boolean) {
+  return [
+    "api",
+    "/api/v1/catalogue/entries/{business_key}/history",
+    businessKey,
+    { signedIn },
+  ] as const;
+}
+
 export interface EntryHistoryParams {
   limit?: number;
   /** The previous page's `next_cursor`, passed back unchanged (ADR-0024). */
@@ -320,20 +333,14 @@ export function useEntryHistory(businessKey: string, params: EntryHistoryParams 
   const { status } = useAuth();
   const { limit, before, keepPreviousPage = false } = params;
   const query: PublicHistoryQuery = { limit, before };
-  const signedIn = status === "signed-in";
+  const scope = entryHistoryScope(businessKey, status === "signed-in");
   return useQuery<HistoryPage, Error, HistoryPage, readonly unknown[]>({
-    queryKey: [
-      "api",
-      "/api/v1/catalogue/entries/{business_key}/history",
-      businessKey,
-      query,
-      { signedIn },
-    ],
+    queryKey: [...scope, query],
     placeholderData: (previousData, previousQuery) =>
       keepPreviousPage &&
       previousQuery !== undefined &&
-      previousQuery.queryKey[2] === businessKey &&
-      JSON.stringify(previousQuery.queryKey[4]) === JSON.stringify({ signedIn })
+      JSON.stringify(previousQuery.queryKey.slice(0, scope.length)) ===
+        JSON.stringify(scope)
         ? previousData
         : undefined,
     queryFn: async ({ signal }) =>
