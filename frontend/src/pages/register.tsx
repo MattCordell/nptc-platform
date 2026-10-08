@@ -1,6 +1,8 @@
 import { useEffect, useRef } from "react";
 
 import { useAuth } from "../auth/session.ts";
+import { BackToLandingLink } from "../components/back-to-landing-link.tsx";
+import { NoticePage } from "../components/notice-page.tsx";
 
 /**
  * `/register` (issue #41, NFR-02).
@@ -34,42 +36,50 @@ export function RegisterPage() {
     // The cold-load probe has not answered yet. Starting an interactive
     // redirect now would throw away a session that is about to restore.
     return (
-      <section aria-labelledby="register-heading">
-        <h1 id="register-heading">Checking your session</h1>
-        <p>One moment.</p>
-      </section>
+      <NoticePage title="Checking your session" id="register-heading">
+        <p className="m-0">One moment.</p>
+      </NoticePage>
     );
   }
 
   if (status === "signed-in") {
     return (
-      <section aria-labelledby="register-heading">
-        <h1 id="register-heading">You already have an account</h1>
-        <p>You are signed in, so there is nothing to register.</p>
-      </section>
+      <NoticePage
+        title="You already have an account"
+        id="register-heading"
+        actions={<BackToLandingLink variant="primary" />}
+      >
+        <p className="m-0">You are signed in, so there is nothing to register.</p>
+      </NoticePage>
     );
   }
 
   if (status === "unavailable") {
     return (
-      <section aria-labelledby="register-heading">
-        <h1 id="register-heading">Registration is unavailable</h1>
-        <p>
+      <NoticePage
+        title="Registration is unavailable"
+        id="register-heading"
+        actions={<BackToLandingLink variant="primary" />}
+      >
+        <p className="m-0">
           The platform cannot reach the sign-in service at the moment. Try again in a few
           minutes.
         </p>
-      </section>
+      </NoticePage>
     );
   }
 
   return (
-    <section aria-labelledby="register-heading">
-      <h1 id="register-heading">Taking you to registration</h1>
-      <p>
+    <NoticePage
+      title="Taking you to registration"
+      id="register-heading"
+      actions={<BackToLandingLink />}
+    >
+      <p className="m-0">
         You are being sent to the NPTC sign-in service to create an account. If nothing
         happens, your browser may have blocked the redirect - reload this page to try
         again.
       </p>
-    </section>
+    </NoticePage>
   );
 }

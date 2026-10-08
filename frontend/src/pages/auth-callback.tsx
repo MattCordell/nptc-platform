@@ -1,7 +1,10 @@
-import { useNavigate } from "@tanstack/react-router";
+import { Link, useNavigate } from "@tanstack/react-router";
 import { useEffect, useRef, useState } from "react";
 
 import { useAuth } from "../auth/session.ts";
+import { BackToLandingLink } from "../components/back-to-landing-link.tsx";
+import { buttonClassName } from "../components/button-class-name.ts";
+import { NoticePage } from "../components/notice-page.tsx";
 
 /**
  * `/auth/callback` (issue #41). Completes the exchange Keycloak redirected
@@ -42,20 +45,29 @@ export function AuthCallbackPage() {
 
   if (failed) {
     return (
-      <section aria-labelledby="callback-heading">
-        <h1 id="callback-heading">Sign-in could not be completed</h1>
-        <p>
+      <NoticePage
+        title="Sign-in could not be completed"
+        id="callback-heading"
+        actions={
+          <>
+            <Link to="/sign-in" className={buttonClassName("primary")}>
+              Go to the sign-in page
+            </Link>
+            <BackToLandingLink />
+          </>
+        }
+      >
+        <p className="m-0">
           This can happen if the sign-in link was reused, opened in a different tab, or
           left too long before finishing. Start again from the sign-in page.
         </p>
-      </section>
+      </NoticePage>
     );
   }
 
   return (
-    <section aria-labelledby="callback-heading">
-      <h1 id="callback-heading">Signing you in</h1>
-      <p>Finishing sign-in. This should only take a moment.</p>
-    </section>
+    <NoticePage title="Signing you in" id="callback-heading">
+      <p className="m-0">Finishing sign-in. This should only take a moment.</p>
+    </NoticePage>
   );
 }

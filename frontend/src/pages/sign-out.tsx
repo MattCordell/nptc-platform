@@ -2,6 +2,9 @@ import { Link } from "@tanstack/react-router";
 import { useEffect, useRef } from "react";
 
 import { useAuth } from "../auth/session.ts";
+import { BackToLandingLink } from "../components/back-to-landing-link.tsx";
+import { buttonClassName } from "../components/button-class-name.ts";
+import { NoticePage } from "../components/notice-page.tsx";
 
 /**
  * `/sign-out` (issue #41).
@@ -36,18 +39,28 @@ export function SignOutPage() {
     // signed out before we know would be wrong, and briefly alarming if
     // they then turn out to still have a session.
     return (
-      <section aria-labelledby="sign-out-heading">
-        <h1 id="sign-out-heading">Signing you out</h1>
-        <p>Ending your session. This should only take a moment.</p>
-      </section>
+      <NoticePage title="Signing you out" id="sign-out-heading">
+        <p className="m-0">Ending your session. This should only take a moment.</p>
+      </NoticePage>
     );
   }
 
   return (
-    <section aria-labelledby="sign-out-heading">
-      <h1 id="sign-out-heading">You are signed out</h1>
-      <p>Your session has ended. You can still browse the public catalogue.</p>
-      <Link to="/catalogue">Search the catalogue</Link>
-    </section>
+    <NoticePage
+      title="You are signed out"
+      id="sign-out-heading"
+      actions={
+        <>
+          <BackToLandingLink variant="primary" />
+          <Link to="/catalogue" className={buttonClassName("secondary")}>
+            Search the catalogue
+          </Link>
+        </>
+      }
+    >
+      <p className="m-0">
+        Your session has ended. You can still browse the public catalogue.
+      </p>
+    </NoticePage>
   );
 }
