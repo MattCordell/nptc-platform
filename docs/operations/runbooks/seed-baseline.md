@@ -30,6 +30,10 @@ baseline: the refusals below are the point.
 
    See [`transform.md`](transform.md) for the flags and the dataset format.
 3. The catalogue is empty. The loader refuses anything else (exit `4`).
+4. Optional, and recommended: `NPTC_INDEXER_DATABASE_URL` is set in the process that runs the
+   script. The compose `backend` service already has it. From a checkout, export it or pass
+   `--indexer-database-url`. Without it the run still seeds, and the indexes wait for
+   `scripts/reconcile_property_indexes.py` (see "Generated indexes").
 
 ## Usage
 
@@ -42,7 +46,8 @@ docker compose -f deploy/compose.yml exec backend python scripts/seed_baseline.p
 docker compose -f deploy/compose.yml exec backend python scripts/seed_baseline.py --dataset /tmp/import-dataset.json
 ```
 
-From a checkout, with `NPTC_DATABASE_URL` set to the application role's DSN:
+From a checkout, with `NPTC_DATABASE_URL` set to the application role's DSN and
+`NPTC_INDEXER_DATABASE_URL` set to the indexer role's:
 
 ```powershell
 uv run python scripts/seed_baseline.py --dataset transform-report/import-dataset.json
@@ -52,7 +57,8 @@ uv run python scripts/seed_baseline.py --dataset transform-report/import-dataset
 |---|---|---|
 | `--dataset` | *(required)* | Path to `import-dataset.json`. |
 | `--database-url` | *(none)* | DSN to connect with. Falls back to `NPTC_DATABASE_URL`. Use the application role (`nptc_app_login`), not the owner: the loader writes through the same code paths as the API. See [`upgrade.md`](../upgrade.md) for the DSNs. |
-| `--dry-run` | off | Runs the whole import, then rolls it back. Use it first: it finds every refusal below without leaving a trace. |
+| `--indexer-database-url` | *(none)* | DSN of the role that builds the generated indexes. Falls back to `NPTC_INDEXER_DATABASE_URL`. An explicitly empty value is a usage error (exit `2`). With neither set, no index is built. See "Generated indexes". |
+| `--dry-run` | off | Runs the whole import, then rolls it back. Use it first: it finds every refusal below without leaving a trace. It never builds an index, because the rolled-back property definitions no longer exist. |
 
 Run `--dry-run` first. A dry run still takes the audit append lock and advances the
 business-key sequence, which a rollback cannot undo. That costs a few skipped key numbers
@@ -79,8 +85,35 @@ Everything happens in one transaction. Either all of it commits, or none of it d
   `advance_sequence_past` call, so the next entry the application creates gets a key above the
   highest seeded one.
 
+After the commit, and outside that transaction, the run builds one generated index
+(`ix_propval_p<n>_1`) for each of the filterable system properties `discipline`, `subgroup` and
+`specimen` (FR-13). See "Generated indexes".
+
 The loader makes no terminology calls. The transform's `--check-terminology` step is the
 place to validate codes before you emit the dataset.
+
+## Generated indexes
+
+A filterable property needs an index for fast facets (FR-13). The seed creates the three
+filterable system properties, so after the commit the CLI runs the index reconciler once, as the
+indexer role (`NPTC_INDEXER_DATABASE_URL`). It prints one `created index: <name>` line per index.
+It runs after the commit because `CREATE INDEX CONCURRENTLY` cannot run inside a transaction, and
+because the reconciler reads the committed property definitions.
+
+The index step never changes the exit code. The baseline is already committed, and running the
+loader again would only exit `4`. Every shortfall is a `WARNING` on standard error that ends with
+the fix: run `scripts/reconcile_property_indexes.py`. It is safe to repeat. It reads the committed
+definitions and builds whatever is missing.
+
+| Warning | Cause |
+|---|---|
+| `no property index was built: NPTC_INDEXER_DATABASE_URL is not set` | Neither the variable nor `--indexer-database-url` was given. |
+| `property indexes were not built (<ExceptionType>)` | The indexer database was unreachable or refused the credential. The message names only the exception type (NFR-26). |
+| `index <name> was not built (<ExceptionType>)` | One index failed, for example for lack of privilege. The others still converge. |
+| `property indexes were not built: another reconciliation is in progress` | Another process holds the reconciler's lock. The CLI does not wait. |
+| `no index for property '<key>': its datatype has no handler in this build` | A filterable property uses a datatype this build cannot index. |
+
+Facets still work without the indexes, but slowly.
 
 ## Exit codes
 
@@ -93,7 +126,7 @@ place to validate codes before you emit the dataset.
 | `5` | A write was refused and everything was rolled back: an FR-05 designation collision, a discipline label with no matching code, or a missing local code system. The message names the entry by business key, preferred term, sheet and row. |
 | `6` | Could not complete: the database was unreachable, a credential was refused, or an unexpected failure occurred. The message names only the exception type, never its text, because that can carry connection details (NFR-26). The transaction is rolled back. |
 
-These codes are stable and safe to depend on from a setup script.
+These codes are stable and safe to depend on from a setup script. The index step adds none.
 
 ## Refusals and how to fix them
 
@@ -134,9 +167,11 @@ catalogue in a database that real users have changed. To reseed:
 ## After a run
 
 1. Confirm the count against the dataset: the report line reads `SEEDED <n> entries`.
-2. Verify the audit hash chain across the seeded writes. See
+2. Confirm the indexes: three `created index:` lines, and no `WARNING` about indexes. If there is
+   one, follow "Generated indexes".
+3. Verify the audit hash chain across the seeded writes. See
    [`verify-audit-chain.md`](verify-audit-chain.md).
-3. Open the catalogue at <http://localhost:8081/admin/catalogue> and check a few entries.
+4. Open the catalogue at <http://localhost:8081/admin/catalogue> and check a few entries.
 
 FR-76 stays `in-progress` until P4 turns the seed record into a `Release`; this run does not
 close it.

@@ -51,6 +51,11 @@ cause, then run the CLI below. A real run repairs everything the failed run left
 valid setup. Run the CLI after each change that affects an index. The compose stack sets the
 variable for you.
 
+The seed CLI (`scripts/seed_baseline.py`) runs the same reconciler once after it commits, to build
+the indexes of the filterable system properties it creates. If it could not, because the variable
+was unset or the run failed, run this CLI to finish the job. See
+[`seed-baseline.md`](seed-baseline.md#generated-indexes).
+
 ## Usage
 
 ```powershell
