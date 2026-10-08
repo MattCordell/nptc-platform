@@ -61,6 +61,7 @@ from nptc.db.models.property_definition import (
     PropertyDefinition,
     PropertyScope,
 )
+from nptc.db.property_reconciler_dispatch import request_reconciliation
 from nptc.db.property_specs import spec_for
 from nptc.registry.definitions import DefinitionAudience, PropertyDefinitionDeleteRefusedError
 from nptc.registry.handlers import ControlKind, DatatypeRegistry
@@ -541,6 +542,7 @@ def create_property(
         reason=body.reason,
     )
     session.flush()
+    request_reconciliation(session)
     return _to_response(definition, registry)
 
 
@@ -558,6 +560,7 @@ def amend_property(
     body: Annotated[AmendPropertyDefinitionRequest, Body()],
 ) -> PropertyDefinitionResponse:
     definition = load_definition(session, key)
+    changes = body.changes()
     amended = amend_definition(
         session,
         ctx,
@@ -565,9 +568,13 @@ def amend_property(
         definition=definition,
         expected_row_version=body.expected_row_version,
         reason=body.reason,
-        **body.changes(),
+        **changes,
     )
     session.flush()
+    # `filterable` is the one amendable field a generated index depends on; `datatype`, the other,
+    # cannot be amended over HTTP.
+    if "filterable" in changes:
+        request_reconciliation(session)
     return _to_response(amended, registry)
 
 
@@ -593,6 +600,7 @@ def deprecate_property(
         reason=body.reason,
     )
     session.flush()
+    request_reconciliation(session)
     return _to_response(deprecated, registry)
 
 
