@@ -16,7 +16,7 @@ from nptc_transform.dataset import (
     DATASET_JSON_NAME,
     ImportDataset,
     PropertyValue,
-    ServedFSNMissingError,
+    ServedFSNError,
     build_dataset,
     write_dataset,
 )
@@ -225,6 +225,26 @@ def test_a_binding_carries_the_fsn_the_server_served_not_the_workbooks_stripped_
     assert binding.fsn == "A term (procedure)"
 
 
+@pytest.mark.req("FR-83")
+def test_a_served_fsn_with_no_semantic_tag_refuses_the_dataset(
+    tmp_path: Path, specimen_map_concepts: tuple[StubConcept, ...]
+) -> None:
+    """The list read model refuses an untagged stored FSN, so the run has to stop at seeding,
+    not leave the failure for the public page."""
+    workbook_path = _served_workbook(tmp_path, "Serum")
+    server = StubTerminologyClient(
+        concepts=[
+            StubConcept(code="122192001", fsn="A term", parents=(PROCEDURE_ROOT_CODE,)),
+            *specimen_map_concepts,
+        ],
+        resolved_version={"au": "http://snomed.info/sct/32506021000036107/version/20260531"},
+    )
+    result = run_transform(workbook_path, mode=Mode.EMIT_DATASET, sweep=TerminologySweep(server))
+
+    with pytest.raises(ServedFSNError, match=r"no semantic tag.*122192001"):
+        build_dataset(read_workbook(workbook_path), result, release_name="2026-06")
+
+
 @pytest.mark.req("FR-82")
 def test_a_number_typed_code_cell_still_gets_the_served_fsn(
     tmp_path: Path, specimen_map_concepts: tuple[StubConcept, ...]
@@ -267,7 +287,7 @@ def test_a_bound_code_the_server_served_no_fsn_for_refuses_the_dataset(
     assert result.terminology is not None
     served_nothing = dataclasses.replace(result.terminology, served_fsns=())
 
-    with pytest.raises(ServedFSNMissingError, match="122192001"):
+    with pytest.raises(ServedFSNError, match="122192001"):
         build_dataset(
             read_workbook(workbook_path),
             dataclasses.replace(result, terminology=served_nothing),

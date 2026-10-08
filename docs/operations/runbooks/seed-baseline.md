@@ -149,9 +149,11 @@ Each fix is a data change followed by a new transform run. The loader never repa
 ## Reseeding
 
 A catalogue seeded before the list columns change (issue #511) holds tag-stripped FSNs and workbook
-specimen wording. The catalogue list refuses such an FSN with a `422`, because a stored FSN with
-no tag may already have been stripped (FR-83). Reseed it from a dataset the current transform
-emitted.
+specimen wording. The public catalogue list and search refuse such an FSN with a `500`, because a
+stored FSN with no tag may already have been stripped (FR-83). No backfill is provided: no
+deployment holds a catalogue worth keeping yet, so the repair is to reseed from a dataset the
+current transform emitted. A deployment that does hold real work needs a backfill first, so
+raise that before upgrading.
 
 Seeding twice is refused on purpose. Business keys are positional, so a second run could give
 one key to a different clinical concept without any error.

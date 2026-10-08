@@ -50,6 +50,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 
+from nptc_shared.terminology import semantic_tag
 from nptc_transform import __version__
 from nptc_transform.cell_defects import (
     resolve_specimen_term,
@@ -70,9 +71,10 @@ _SNOMED_SYSTEM = "http://snomed.info/sct"
 _LANGUAGE_EN_AU = "en-AU"
 
 
-class ServedFSNMissingError(ValueError):
-    """A sweep ran but served no FSN for a code the dataset binds. Every code that is not found
-    or inactive already blocks the run, so this means the server answered without designations."""
+class ServedFSNError(ValueError):
+    """A sweep ran but served no usable FSN for a code the dataset binds: none at all (every code
+    not found or inactive already blocks the run, so the server answered without designations), or
+    one with no semantic tag, which the list read model would refuse after seeding (FR-83)."""
 
 
 @dataclass(frozen=True)
@@ -198,10 +200,14 @@ def _build_code_bindings(
     code = correct_code_cell(_cell_text(code_cell))
     if served_fsns is None:
         fsn = _optional_cell_text(row_cells.get(ColumnRole.FSN))
-    elif code in served_fsns:
-        fsn = served_fsns[code]
+    elif code not in served_fsns:
+        raise ServedFSNError(f"the terminology server served no FSN for {code}")
+    elif semantic_tag(served_fsns[code]) is None:
+        raise ServedFSNError(
+            f"the terminology server served an FSN with no semantic tag for {code}"
+        )
     else:
-        raise ServedFSNMissingError(f"the terminology server served no FSN for {code}")
+        fsn = served_fsns[code]
     return (
         CodeBinding(
             system=_SNOMED_SYSTEM,

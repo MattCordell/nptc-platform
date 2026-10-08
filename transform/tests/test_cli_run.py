@@ -18,7 +18,7 @@ from nptc_shared.terminology.stub import StubConcept, StubTerminologyClient
 from nptc_shared.terminology.sweep import TerminologySweep
 from nptc_transform import __version__
 from nptc_transform.cli import app
-from nptc_transform.dataset import ServedFSNMissingError
+from nptc_transform.dataset import ServedFSNError
 from nptc_transform.specimen_map import SPECIMEN_MAP
 
 runner = CliRunner()
@@ -303,7 +303,7 @@ def test_emit_dataset_exits_3_and_writes_no_dataset_when_the_server_served_no_fs
     serve("10000006", fsn="Sample test (procedure)")
 
     def _refuse(*_args: object, **_kwargs: object) -> None:
-        raise ServedFSNMissingError("the terminology server served no FSN for 10000006")
+        raise ServedFSNError("the terminology server served no FSN for 10000006")
 
     monkeypatch.setattr("nptc_transform.cli.build_dataset", _refuse)
     report_dir = tmp_path / "report"
@@ -461,7 +461,7 @@ def test_a_blocking_run_removes_a_stale_dataset_from_an_earlier_successful_run(
     must not leave that dataset behind: the refreshed report says the import
     is blocked, so a dataset from a previous, unrelated run sitting beside it
     is a stale-and-misleading artifact, not a still-valid one (issue #130)."""
-    serve("10000006", fsn="Sample test")
+    serve("10000006", fsn="Sample test (procedure)")
     report_dir = tmp_path / "report"
 
     first = runner.invoke(
@@ -490,7 +490,7 @@ def test_a_report_only_run_removes_a_stale_dataset_from_an_earlier_successful_ru
     success path instead: a run into the same ``--report-dir`` that omits
     ``--emit-dataset`` refreshes the report but must not leave a previous
     run's ``import-dataset.json`` sitting beside it either (issue #130)."""
-    serve("10000006", fsn="Sample test")
+    serve("10000006", fsn="Sample test (procedure)")
     report_dir = tmp_path / "report"
 
     first = runner.invoke(

@@ -27,7 +27,7 @@ from nptc_transform.bands import Band, FindingCode, blocks_import
 from nptc_transform.cell_defects import scan_workbook
 from nptc_transform.findings import Finding
 from nptc_transform.pipeline import Mode, run_transform
-from nptc_transform.terminology_check import check_terminology
+from nptc_transform.terminology_check import check_terminology, resolve_binding_fsns
 from nptc_transform.workbook import read_workbook
 
 # Real SNOMED CT identifiers, all Verhoeff-valid, chosen so each row exercises
@@ -543,3 +543,39 @@ def test_editions_of_the_international_edition_alone_report_au_only_content_abse
         for finding in outcome.findings
         if finding.code == FindingCode.CODE_NOT_FOUND
     ] == ["Requesting!B4", "Requesting!B5"]
+
+
+@pytest.mark.req("FR-82")
+def test_a_number_typed_code_only_the_second_edition_serves_takes_that_editions_fsn(
+    tmp_path: Path,
+) -> None:
+    """The lookup tries each edition in order for the codes still without an FSN, so an
+    International-only code in a number-typed cell is not left on the workbook's stripped text."""
+    path = tmp_path / "number_cell.xlsx"
+    workbook = openpyxl.Workbook()
+    sheet = workbook.active
+    assert sheet is not None
+    sheet.title = "Requesting"
+    sheet.append(HEADERS)
+    sheet.cell(row=2, column=2, value=int(GOOD_CODE))  # CellType.NUMBER, never swept
+    workbook.save(path)
+    international_only = StubTerminologyClient(
+        concepts=[
+            StubConcept(
+                code=GOOD_CODE,
+                fsn="Acanthamoeba culture (procedure)",
+                parents=(PROCEDURE_ROOT_CODE,),
+                editions=("int",),
+            )
+        ],
+        resolved_version={"int": "http://snomed.info/sct/900000000000207008/version/20260501"},
+    )
+
+    served = resolve_binding_fsns(
+        read_workbook(path),
+        sweep=TerminologySweep(international_only),
+        editions=(SNOMED_CT_AU, SNOMED_CT_INTERNATIONAL),
+        served=(),
+    )
+
+    assert served == ((GOOD_CODE, "Acanthamoeba culture (procedure)"),)

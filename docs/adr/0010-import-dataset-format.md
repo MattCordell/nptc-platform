@@ -150,6 +150,10 @@ design.
   version 1 file and names the version. `report.json`'s `schema_version` moved from 8 to 9 for
   the changed finding vocabulary.
 
+- `SPECIMEN_UNCONSTRAINED_RESOLVED` no longer exists. `SPECIMEN_VALUE_UNMAPPED` is a blocking
+  data defect, not informational, because the loader refuses a specimen with no code. The
+  decisions above that say otherwise record what was decided at the time.
+
 ## Amendment (2026-10-08, FR-83, FR-98)
 
 - `import-dataset.json`'s `schema_version` moved from 2 to 3. Every property value gains a
@@ -162,6 +166,3 @@ design.
   which is the published label with its tag already removed. This ends the deferral recorded
   above: the list read model strips the tag from a stored FSN (FR-83), and stripping an
   already-stripped label would over-strip it. A bound code with no served FSN stops the run.
-- `SPECIMEN_UNCONSTRAINED_RESOLVED` no longer exists. `SPECIMEN_VALUE_UNMAPPED` is a blocking
-  data defect, not informational, because the loader refuses a specimen with no code. The
-  decisions above that say otherwise record what was decided at the time.

@@ -91,7 +91,7 @@ def test_rerun_replaces_a_stale_report_rather_than_skipping_or_appending(
 def test_rerun_with_emit_dataset_into_the_same_report_dir_is_byte_identical(
     tmp_path: Path, sample_workbook: Path, serve: Callable[..., None]
 ) -> None:
-    serve("10000006", fsn="Sample test")
+    serve("10000006", fsn="Sample test (procedure)")
     report_dir = tmp_path / "report"
 
     args = [
@@ -127,7 +127,7 @@ def test_rerun_with_emit_dataset_into_the_same_report_dir_is_byte_identical(
 def test_rerun_replaces_a_stale_import_dataset_rather_than_skipping_or_appending(
     tmp_path: Path, sample_workbook: Path, serve: Callable[..., None]
 ) -> None:
-    serve("10000006", fsn="Sample test")
+    serve("10000006", fsn="Sample test (procedure)")
     report_dir = tmp_path / "report"
     report_dir.mkdir(parents=True)
     (report_dir / "import-dataset.json").write_text("not a real dataset", encoding="utf-8")

@@ -204,8 +204,8 @@ def _scan_code_cell_type(cell: Cell) -> Finding | None:
 
 def _scan_code_well_formed(cell: Cell) -> Finding | None:
     """Reports a text-typed code cell whose corrected text isn't a well-formed
-    SCTID (FR-06), so ``--emit-dataset`` without ``--check-terminology`` never
-    seeds an unvalidated code.
+    SCTID (FR-06). It runs offline on every run, ahead of any terminology
+    check, so a malformed code is never seeded.
 
     Checks ``apply_corrections(cell.text)``, the text ``dataset.py`` seeds, so an
     interior invisible character that collapses to a space (a code with an

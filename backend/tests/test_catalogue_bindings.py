@@ -741,6 +741,9 @@ _ALLOWED_REFERENCES = frozenset(
         # module may call the renderer; `test_the_list_assembler_is_the_only_strip_in_catalogue_shared`
         # below pins that.
         REPO_ROOT / "backend" / "src" / "nptc" / "api" / "routers" / "catalogue_shared.py",
+        # Asks only whether a served FSN carries a tag, so the run stops at seeding and not
+        # on the public list. It strips nothing.
+        REPO_ROOT / "transform" / "src" / "nptc_transform" / "dataset.py",
     }
 )
 
@@ -785,13 +788,24 @@ def test_the_list_assembler_is_the_only_strip_in_catalogue_shared() -> None:
     stripped copy of a label on the wire."""
     path = REPO_ROOT / "backend" / "src" / "nptc" / "api" / "routers" / "catalogue_shared.py"
     tree = ast.parse(path.read_text(encoding="utf-8"))
-    referencing = {
-        node.name
+    parents = {child: parent for parent in ast.walk(tree) for child in ast.iter_child_nodes(parent)}
+
+    def enclosing_function(node: ast.AST) -> str | None:
+        while node in parents:
+            node = parents[node]
+            if isinstance(node, ast.FunctionDef):
+                return node.name
+        return None
+
+    uses = {
+        enclosing_function(node)
         for node in ast.walk(tree)
-        if isinstance(node, ast.FunctionDef) and _referenced_names(ast.unparse(node), _STRIP_NAMES)
+        if (isinstance(node, ast.Name) and node.id in _STRIP_NAMES)
+        or (isinstance(node, ast.Attribute) and node.attr in _STRIP_NAMES)
     }
 
-    assert referencing == {"entry_summary_fields"}
+    # A module-level call or a lambda has no enclosing function, so it shows up as None.
+    assert uses == {"entry_summary_fields"}
 
 
 def test_allowed_references_list_is_not_stale() -> None:

@@ -408,9 +408,9 @@ final parenthesised group removed, or `null` when the entry has no active code. 
 `label_provenance.fsn` is always `{"designation": "fsn", "semantic_tag": "stripped"}`. The
 strip is `nptc.exports.semantic_tag.render_display_term`, the renderer FR-83 names. It
 refuses a stored FSN with no trailing group, because that value may already have been
-stripped. FR-82 makes that unreachable, so a refusal means stored data broke the guarantee.
-The request then fails with a `422` and a fixed sentence, and the cause is logged at warning
-level. A stored value is never shown unstripped to avoid the failure. The detail and the admin
+stripped. A catalogue seeded before the transform seeded served FSNs holds such values, so
+a refusal means stored data needs repair. It is a server-side fault, not a bad request: the
+request fails with a `500` and a fixed sentence, and the cause is logged at warning level. A stored value is never shown unstripped to avoid the failure. The detail and the admin
 listing carry neither `fsn` nor `specimens`, so an entry with such an FSN still opens and can
 be repaired. The same row's
 `specimens` carry each specimen's stored display with a trailing "specimen" word removed and

@@ -28,7 +28,7 @@ from nptc_transform import __version__
 from nptc_transform.bands import Band
 from nptc_transform.dataset import (
     DATASET_JSON_NAME,
-    ServedFSNMissingError,
+    ServedFSNError,
     build_dataset,
     write_dataset,
 )
@@ -266,7 +266,7 @@ def run(
         try:
             dataset = build_dataset(sheets, result, release_name=release_name)
             write_dataset(dataset, report_dir)
-        except ServedFSNMissingError as exc:
+        except ServedFSNError as exc:
             typer.echo(
                 f"{exc}. No dataset was written. Check that the terminology server returns "
                 "designations (ADR-0005), then run again.",

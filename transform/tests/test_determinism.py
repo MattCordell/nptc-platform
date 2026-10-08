@@ -58,7 +58,7 @@ _STUBBED_CLI = Path(__file__).with_name("stubbed_cli.py")
 def _run_stubbed_cli(*args: str, env: dict[str, str] | None = None) -> None:
     """Runs ``--check-terminology`` against the stub server in a fresh process, for a test
     that must set ``PYTHONHASHSEED``. The sample workbook's one code is served."""
-    procedures = json.dumps([["10000006", "Sample test"]])
+    procedures = json.dumps([["10000006", "Sample test (procedure)"]])
     result = subprocess.run(
         [sys.executable, str(_STUBBED_CLI), *args],
         capture_output=True,

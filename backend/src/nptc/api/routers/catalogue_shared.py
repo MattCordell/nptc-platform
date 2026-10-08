@@ -357,8 +357,6 @@ class EntrySummary(EntryCore):
             "is recorded."
         )
     )
-    #: FR-98: adds `fsn` (stripped) and `specimens` (AU preferred terms) to
-    #: `EntryCore`'s `preferred_term`. A constant on every row.
 
 
 #: `label_provenance` is the same on every row, so each is a constant, not rebuilt
@@ -590,8 +588,9 @@ def entry_summary_fields(
     facts: queries.RowFacts,
 ) -> dict[str, Any]:
     """Raises `NotAServedFSNError` or `EmptyDisplayTermError` for a stored FSN FR-83 cannot
-    strip. FR-82 makes that unreachable, so it fails the request loudly (a 422 with a logged
-    warning) rather than show a value that may still carry, or may never have had, a tag."""
+    strip. That is stored data written before the transform seeded served FSNs (a workbook label
+    has no tag), so it fails the request loudly (a 500 with a logged warning) rather than show a
+    value that may already have been stripped."""
     return {
         **entry_core_fields(business_key, preferred_term, length, status, updated_at, facts),
         "fsn": render_display_term(facts.fsn) if facts.fsn is not None else None,

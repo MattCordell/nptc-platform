@@ -308,8 +308,8 @@ def test_the_list_declares_which_labels_it_stripped_and_which_it_did_not(
 def test_a_stored_fsn_with_no_tag_fails_the_list_rather_than_showing_it(
     api: ApiTestApp,
 ) -> None:
-    """FR-82 makes this unreachable, so reaching it means stored data broke the guarantee. An
-    untagged value may already have been stripped, so the list refuses it instead of showing it."""
+    """A baseline seeded before served FSNs holds untagged values. One may already have been
+    stripped, so the list refuses it with a server error instead of showing it."""
     session = api.session
     base = random.randrange(100_000_000, 999_000_000)
     key = f"NPTC-{base}"
@@ -332,9 +332,11 @@ def test_a_stored_fsn_with_no_tag_fails_the_list_rather_than_showing_it(
     )
     session.flush()
 
-    response = api.get("/catalogue/entries", params={"after": f"NPTC-{base - 1}", "limit": 1})
+    listed = api.get("/catalogue/entries", params={"after": f"NPTC-{base - 1}", "limit": 1})
+    searched = api.get("/catalogue/search", params={"q": f"Untagged {base}"})
 
-    assert response.status_code == 422, response.text
-    assert "Microscopy without a tag" not in response.text
+    for response in (listed, searched):
+        assert response.status_code == 500, response.text
+        assert "Microscopy without a tag" not in response.text
     # The entry still opens, so it can be repaired.
     assert api.get(f"/catalogue/entries/{key}").status_code == 200

@@ -69,13 +69,13 @@ written (exit `1`), but the dataset file is not (see "The import dataset"
 below) - a partial or defect-laden seeded baseline is worse than none.
 
 **Behaviour change (issue #131):** `CODE_NOT_WELL_FORMED` (FR-06) is now
-raised on every run, including `--emit-dataset` without
-`--check-terminology`. Before this change, a workbook whose code column
+raised on every run, whether or not `--check-terminology` is set. Before this change, a workbook whose code column
 held a non-digit value, a code of the wrong length, or a code that failed
 its Verhoeff check digit would emit `import-dataset.json` with that value
 seeded verbatim and exit `0`, as long as `--check-terminology` was not also
 passed - well-formedness was only ever checked as a side effect of the
-opt-in network validation pass. A run that was previously green can now
+opt-in network validation pass. `--emit-dataset` now requires
+`--check-terminology`, but this check still runs first and without the network. A run that was previously green can now
 exit `1` on a workbook with a malformed code, with no other change to the
 workbook or the invocation.
 
@@ -356,7 +356,7 @@ written) without either or with a malformed release name.
       "properties": {
         "discipline": [{"value": "Chemical", "code": null, "display": null}],
         "subgroup": [{"value": "Coagulation", "code": null, "display": null}],
-        "specimen": [{"value": "Serum", "code": "119364003", "display": "Serum"}],
+        "specimen": [{"value": "Serum", "code": "119364003", "display": "Serum specimen"}],
         "usage_guidance": null
       }
     }

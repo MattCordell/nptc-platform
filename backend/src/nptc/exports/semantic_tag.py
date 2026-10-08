@@ -35,9 +35,9 @@ class NotAServedFSNError(ValueError):
     """Raised by `render_display_term` when its input has no trailing
     parenthesised group (FR-83's first assertion). FR-82 guarantees a stored
     `fsn` is a served FSN, which always has one, so the export must fail rather
-    than publish this value."""
+    than publish this value. A stored-data fault, not a caller mistake, so a 500."""
 
-    http_status: ClassVar[int] = 422
+    http_status: ClassVar[int] = 500
 
 
 class EmptyDisplayTermError(ValueError):
@@ -46,7 +46,7 @@ class EmptyDisplayTermError(ValueError):
     a bug in this module; `http_status` matches `NotAServedFSNError` so a caller
     handles both alike."""
 
-    http_status: ClassVar[int] = 422
+    http_status: ClassVar[int] = 500
 
 
 def render_display_term(fsn: str) -> str:
