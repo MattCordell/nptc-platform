@@ -19,9 +19,10 @@ type NoticePageProps = {
 
 /**
  * A screen that says one thing and offers a way on: the stub placeholder,
- * not-found, route error and the sign-in redirect states
- * (docs/architecture/components.md). Composes the layout primitives so those
- * screens look alike; the one `h1` comes from `PageHeader`.
+ * not-found, route error and the sign-in, registration, sign-out and
+ * auth-callback states (docs/architecture/components.md). Composes the layout
+ * primitives so those screens look alike; the one `h1` comes from
+ * `PageHeader`.
  */
 export function NoticePage({
   title,

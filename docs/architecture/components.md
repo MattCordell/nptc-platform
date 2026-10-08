@@ -244,10 +244,11 @@ class string that no hex value, Tailwind palette class or `shadow-*` class is us
 - **`notice-page.tsx` — `NoticePage`.** A whole screen that says one thing and offers a way
   on: a `PageContainer`, a `PageHeader` (the one `h1`) and a `Card` holding the message,
   then the actions, in that DOM order. The stub placeholder, not-found, route-error and
-  sign-in states all use it, so they look alike. `focusHeading` makes the `h1`
-  focusable (`PageHeader`'s `focusable`, which renders `tabindex="-1"`) and moves focus
-  to it once on mount (`use-focus-heading-on-mount.ts`); set it only on a screen that
-  replaces the page the user asked for.
+  all the sign-in, registration, sign-out and auth-callback states use it, so they look
+  alike. `focusHeading` makes the `h1` focusable (`PageHeader`'s `focusable`, which
+  renders `tabindex="-1"`) and moves focus to it once on mount
+  (`use-focus-heading-on-mount.ts`); set it only on a screen that replaces the page the
+  user asked for.
 - **`back-to-landing-link.tsx` — `BackToLandingLink`.** The "Back to the landing page" link,
   styled as a button, so the wording is the same on every such screen.
 
