@@ -1,20 +1,12 @@
 import type { components } from "../api/schema.ts";
 import { CodeChip } from "../components/code-chip.tsx";
 import { DataTable } from "../components/data-table.tsx";
-import { StatusBadge, type StatusTone } from "../components/status-badge.tsx";
+import { StatusBadge } from "../components/status-badge.tsx";
+import { BindingRetirement } from "./binding-retirement.tsx";
+import { bindingStatus } from "./binding-status.ts";
 import { EntrySection, ScrollRegion } from "./entry-section.tsx";
 
 type Binding = components["schemas"]["Binding"];
-
-/** An unlisted status shows as its raw text on a neutral pill, not a failure. */
-const BINDING_STATUSES: Record<string, { label: string; tone: StatusTone }> = {
-  active: { label: "Active", tone: "active" },
-  retired: { label: "Retired", tone: "deprecated" },
-};
-
-function bindingStatus(status: string): { label: string; tone: StatusTone } {
-  return BINDING_STATUSES[status] ?? { label: status, tone: "neutral" };
-}
 
 /** Active first, then every other status, each group in the order received. */
 function activeFirst(bindings: Binding[]): Binding[] {
@@ -22,24 +14,6 @@ function activeFirst(bindings: Binding[]): Binding[] {
     ...bindings.filter((binding) => binding.status === "active"),
     ...bindings.filter((binding) => binding.status !== "active"),
   ];
-}
-
-function Retirement({ binding }: { binding: Binding }) {
-  if (binding.retirement_reason === null && binding.replaced_by_code === null) {
-    return <span className="text-[var(--color-text-muted)]">—</span>;
-  }
-  return (
-    <div className="flex flex-col gap-1">
-      {binding.retirement_reason !== null ? (
-        <span>{binding.retirement_reason}</span>
-      ) : null}
-      {binding.replaced_by_code !== null ? (
-        <span>
-          Replaced by <CodeChip code={binding.replaced_by_code} />
-        </span>
-      ) : null}
-    </div>
-  );
 }
 
 /**
@@ -85,7 +59,7 @@ export function EntryBindings({ bindings }: { bindings: Binding[] }) {
             {
               key: "retirement",
               header: "Retirement",
-              render: (row: Binding) => <Retirement binding={row} />,
+              render: (row: Binding) => <BindingRetirement binding={row} />,
             },
           ]}
           rows={rows}
