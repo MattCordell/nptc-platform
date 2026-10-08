@@ -118,7 +118,7 @@ If your term is already a **synonym** on another entry, the save succeeds and th
 added. Two entries can legitimately share a synonym, so this is a note rather than a
 refusal.
 
-The term then appears under **Possible duplicates**, naming the other entry. You have two
+The term then appears under **Check these terms**, naming the other entry. You have two
 options:
 
 - Change or retire the term, if the overlap was a mistake.
@@ -131,6 +131,18 @@ editors still see the overlap until they acknowledge it themselves.
 Acknowledgements cannot be withdrawn. If you acknowledge one by mistake, change or retire
 the term instead — retiring stops it being published, though the row stays in the Terms
 table, marked **retired** in the Status column, rather than disappearing.
+
+### A preferred term over the maximum length, with a note
+
+An administrator can set a maximum length for preferred terms. If you save a preferred term
+longer than that maximum, the save still goes through. The term appears under **Check these
+terms** with its length and the maximum. For example: "The preferred term is 31 characters
+long, which is over the maximum of 10. Consider shortening it."
+
+There is nothing to acknowledge. Edit the preferred term again if you want to shorten it. The
+note is gone once you save the next change, even if that change is to a different term and the
+preferred term is still over the maximum. If no maximum is set, which is the default, you
+never see this note.
 
 ## If something goes wrong
 

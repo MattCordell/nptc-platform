@@ -1058,6 +1058,7 @@ describe("a warning-severity collision", () => {
       ],
       warnings: [
         {
+          kind: "collision",
           term: "Ferritin assay",
           business_key: "NPTC-000900",
           preferred_term: "Iron studies",
@@ -1083,7 +1084,7 @@ describe("a warning-severity collision", () => {
     await addWarnedTerm(user);
 
     expect(
-      await screen.findByRole("heading", { name: "Possible duplicates" }),
+      await screen.findByRole("heading", { name: "Check these terms" }),
     ).toBeInTheDocument();
     expect(screen.getByText(/also on NPTC-000900/)).toBeInTheDocument();
     // Saved, not refused - so no error summary.
@@ -1119,7 +1120,7 @@ describe("a warning-severity collision", () => {
     ]);
     await renderLoaded();
     await addWarnedTerm(user);
-    await screen.findByRole("heading", { name: "Possible duplicates" });
+    await screen.findByRole("heading", { name: "Check these terms" });
 
     await user.click(screen.getByRole("button", { name: "Acknowledge Ferritin assay" }));
     await user.type(inDialog().getByLabelText(/Changelog note/), "Both entries use it");
@@ -1133,7 +1134,7 @@ describe("a warning-severity collision", () => {
     });
     await waitFor(() =>
       expect(
-        screen.queryByRole("heading", { name: "Possible duplicates" }),
+        screen.queryByRole("heading", { name: "Check these terms" }),
       ).not.toBeInTheDocument(),
     );
   });
@@ -1143,7 +1144,7 @@ describe("a warning-severity collision", () => {
     const calls = stubApi([READ_OK, WARNED]);
     await renderLoaded();
     await addWarnedTerm(user);
-    await screen.findByRole("heading", { name: "Possible duplicates" });
+    await screen.findByRole("heading", { name: "Check these terms" });
 
     await user.click(screen.getByRole("button", { name: "Acknowledge Ferritin assay" }));
     const dialog = inDialog();
@@ -1202,6 +1203,237 @@ describe("amending a term", () => {
       use: "preferred",
       expected_row_version: 3,
       reason: "Disambiguate from plasma",
+    });
+  });
+
+  describe("an over-length preferred term (FR-86)", () => {
+    const OVER_LENGTH_AMENDED = {
+      method: "POST",
+      path: AMEND_PATH,
+      status: 200,
+      body: {
+        designation: {
+          term: "Serum ferritin level, automated",
+          use: "preferred",
+          language: "en-AU",
+          status: "active",
+          length: 31,
+        },
+        warnings: [{ kind: "length", length: 31, max_length: 10 }],
+        row_version: 4,
+      },
+    } as const;
+
+    async function amendPreferredTerm(user: ReturnType<typeof userEvent.setup>) {
+      await user.click(screen.getByRole("button", { name: "Edit Ferritin (preferred)" }));
+      const term = inDialog().getByLabelText("Term");
+      await user.clear(term);
+      await user.type(term, "Serum ferritin level, automated");
+      await user.type(
+        inDialog().getByLabelText(/Changelog note/),
+        "Align with the new wording",
+      );
+      await user.click(inDialog().getByRole("button", { name: "Save term" }));
+    }
+
+    it("states the length and the maximum, and the save still goes through", async () => {
+      const user = userEvent.setup();
+      stubApi([READ_OK, OVER_LENGTH_AMENDED]);
+      await renderLoaded();
+
+      await amendPreferredTerm(user);
+
+      expect(
+        await screen.findByRole("heading", { name: "Check these terms" }),
+      ).toBeInTheDocument();
+      expect(
+        screen.getByText(/preferred term is 31 characters long.*maximum of 10/),
+      ).toBeInTheDocument();
+      // Saved, not refused: the dialog closed and no error summary is showing.
+      expect(screen.queryByText("There is a problem")).not.toBeInTheDocument();
+      expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    });
+
+    it("offers no Acknowledge action, because there is nothing to acknowledge", async () => {
+      const user = userEvent.setup();
+      stubApi([READ_OK, OVER_LENGTH_AMENDED]);
+      await renderLoaded();
+
+      await amendPreferredTerm(user);
+
+      await screen.findByRole("heading", { name: "Check these terms" });
+      expect(
+        screen.queryByRole("button", { name: /^Acknowledge/ }),
+      ).not.toBeInTheDocument();
+      expect(screen.queryByText(/Acknowledge a duplicate/)).not.toBeInTheDocument();
+    });
+
+    it("announces the length warning to a screen reader", async () => {
+      const user = userEvent.setup();
+      stubApi([READ_OK, OVER_LENGTH_AMENDED]);
+      await renderLoaded();
+
+      await amendPreferredTerm(user);
+
+      await waitFor(() =>
+        expect(announced()).toContain("Term saved. 1 length warning to review."),
+      );
+    });
+
+    it("shows a length warning beside a duplicate, with Acknowledge only on the duplicate", async () => {
+      const user = userEvent.setup();
+      stubApi([
+        READ_OK,
+        {
+          method: "POST",
+          path: ADD_PATH,
+          status: 201,
+          body: {
+            designations: [
+              {
+                term: "Ferritin assay",
+                use: "synonym",
+                language: "en-AU",
+                status: "active",
+                length: 14,
+              },
+            ],
+            warnings: [
+              {
+                kind: "collision",
+                term: "Ferritin assay",
+                business_key: "NPTC-000900",
+                preferred_term: "Iron studies",
+              },
+              { kind: "length", length: 31, max_length: 10 },
+            ],
+            row_version: 4,
+          },
+        },
+      ]);
+      await renderLoaded();
+
+      await user.type(screen.getByLabelText("Synonyms"), "Ferritin assay");
+      await user.type(
+        inTermsPanel().getByLabelText(/Changelog note/),
+        "Add the assay wording",
+      );
+      await user.click(screen.getByRole("button", { name: "Add terms" }));
+
+      await screen.findByText(/preferred term is 31 characters long/);
+      expect(screen.getByText(/also on NPTC-000900/)).toBeInTheDocument();
+      expect(screen.getAllByRole("button", { name: /^Acknowledge/ })).toHaveLength(1);
+      await waitFor(() =>
+        expect(announced()).toContain(
+          "1 term added. 1 possible duplicate and 1 length warning to review.",
+        ),
+      );
+    });
+
+    it("explains acknowledging once, however many duplicates are listed", async () => {
+      const user = userEvent.setup();
+      const collision = (term: string) => ({
+        kind: "collision",
+        term,
+        business_key: "NPTC-000900",
+        preferred_term: "Iron studies",
+      });
+      stubApi([
+        READ_OK,
+        {
+          method: "POST",
+          path: ADD_PATH,
+          status: 201,
+          body: {
+            designations: [],
+            warnings: [collision("Ferritin assay"), collision("Serum iron")],
+            row_version: 4,
+          },
+        },
+      ]);
+      await renderLoaded();
+
+      await user.type(screen.getByLabelText("Synonyms"), "Ferritin assay; Serum iron");
+      await user.type(
+        inTermsPanel().getByLabelText(/Changelog note/),
+        "Add the assay wording",
+      );
+      await user.click(screen.getByRole("button", { name: "Add terms" }));
+
+      await screen.findByRole("heading", { name: "Check these terms" });
+      expect(screen.getAllByRole("button", { name: /^Acknowledge/ })).toHaveLength(2);
+      expect(screen.getAllByText(/Acknowledge a duplicate to confirm/)).toHaveLength(1);
+    });
+
+    it("drops the length warning when the next write returns none", async () => {
+      // Every warning describes the last write, so a later add replaces the list
+      // even though the preferred term is still over the maximum.
+      const user = userEvent.setup();
+      stubApi([
+        READ_OK,
+        OVER_LENGTH_AMENDED,
+        {
+          method: "POST",
+          path: ADD_PATH,
+          status: 201,
+          body: { designations: [], warnings: [], row_version: 5 },
+        },
+      ]);
+      await renderLoaded();
+      await amendPreferredTerm(user);
+      await screen.findByText(/preferred term is 31 characters long/);
+
+      await user.type(screen.getByLabelText("Synonyms"), "Ferritin assay");
+      await user.type(
+        inTermsPanel().getByLabelText(/Changelog note/),
+        "Add the assay wording",
+      );
+      await user.click(screen.getByRole("button", { name: "Add terms" }));
+
+      await waitFor(() =>
+        expect(
+          screen.queryByText(/preferred term is 31 characters long/),
+        ).not.toBeInTheDocument(),
+      );
+    });
+
+    it("keeps the warning when an unrelated synonym is retired", async () => {
+      // Retiring clears the collision warning about the retired term only; a
+      // length warning is about the preferred term, which a retire never touches.
+      const user = userEvent.setup();
+      stubApi([
+        READ_OK,
+        OVER_LENGTH_AMENDED,
+        {
+          method: "POST",
+          path: RETIRE_PATH,
+          status: 200,
+          body: {
+            designation: {
+              term: "Serum ferritin",
+              use: "synonym",
+              language: "en-AU",
+              status: "retired",
+              length: 14,
+            },
+            row_version: 5,
+          },
+        },
+      ]);
+      await renderLoaded();
+      await amendPreferredTerm(user);
+      await screen.findByRole("heading", { name: "Check these terms" });
+
+      await user.click(
+        screen.getByRole("button", { name: "Retire Serum ferritin (synonym)" }),
+      );
+      await user.type(inDialog().getByLabelText(/Changelog note/), "Retire the synonym");
+      await user.click(inDialog().getByRole("button", { name: "Retire term" }));
+
+      await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+      expect(
+        screen.getByText(/preferred term is 31 characters long/),
+      ).toBeInTheDocument();
     });
   });
 
@@ -1595,6 +1827,7 @@ describe("retiring a term", () => {
           ],
           warnings: [
             {
+              kind: "collision",
               term: "Serum ferritin",
               business_key: "NPTC-000900",
               preferred_term: "Iron studies",

@@ -204,8 +204,9 @@ against one.
 FR-86's maximum is deliberately unset out of the box: RCPA-QAP has never had one to
 enforce, and the platform owes them the data needed to choose one (PRD open item OI-1)
 before it makes sense to set anything. Once a value is set, saving a preferred term past
-it still succeeds — the amendment response carries a warning, never a 4xx, so an existing
-over-length entry never becomes uneditable. The amendment route also logs one warning record
+it still succeeds — the amendment response carries a length warning in its `warnings` list, never a
+4xx, so an existing over-length entry never becomes uneditable. The editing screen shows it
+under **Check these terms**. The amendment route also logs one warning record
 when it changes a preferred term to one over the maximum. The record names the entry's
 business key and its length, never the term. It is written as the save is made, so if the
 request fails afterwards and its transaction rolls back, the record remains although the
