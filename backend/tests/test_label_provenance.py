@@ -101,7 +101,7 @@ def _collect_models(root: type[BaseModel]) -> set[type[BaseModel]]:
 #: exhaustive by promise - `test_label_field_name_set_is_not_stale` below is
 #: what keeps it honest as the schema grows.
 LABEL_FIELD_NAMES: frozenset[str] = frozenset(
-    {"fsn", "au_preferred_term", "preferred_term", "term"}
+    {"fsn", "au_preferred_term", "preferred_term", "term", "terms"}
 )
 
 
@@ -351,8 +351,11 @@ def test_known_models_declare_provenance_for_exactly_their_own_label_fields() ->
         binding_from_row,
         designation_from_row,
         entry_summary_fields,
+        snomed_synonyms_for,
     )
     from nptc.catalogue import queries
+    from nptc.terminology.synonyms import SnomedSynonymSource
+    from nptc_shared.terminology import StubConcept, StubTerminologyClient
 
     binding_row = queries.BindingRow(
         id=uuid.uuid4(),
@@ -401,6 +404,27 @@ def test_known_models_declare_provenance_for_exactly_their_own_label_fields() ->
     )
     assert isinstance(synonym, Designation)
     assert synonym.label_provenance.model_dump() == {
+        "designation": "synonym",
+        "semantic_tag": "not_applicable",
+    }
+
+    snomed_synonyms = snomed_synonyms_for(
+        (binding_row,),
+        SnomedSynonymSource(
+            StubTerminologyClient(
+                concepts=[
+                    StubConcept(
+                        code="391483001",
+                        fsn="Microscopy (acid fast bacilli) (procedure)",
+                        synonyms=("AFB microscopy",),
+                    )
+                ]
+            )
+        ),
+    )
+    assert snomed_synonyms is not None
+    assert snomed_synonyms.terms == ["AFB microscopy"]
+    assert snomed_synonyms.label_provenance.model_dump() == {
         "designation": "synonym",
         "semantic_tag": "not_applicable",
     }

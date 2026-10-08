@@ -19,13 +19,19 @@ renderer, `nptc.exports.semantic_tag.render_display_term`, and its `label_proven
 declares that. The renderer is called from `entry_summary_fields` and the export surface,
 nowhere else. `EntryDetail` carries neither `fsn` nor `specimens`: a stored FSN the renderer
 refuses fails a list page, and must not also stop an entry opening where it can be repaired.
+
+**One live terminology call, and only on a detail read (FR-54).** `EntryDetail.snomed_synonyms`
+comes from `nptc.terminology.synonyms` through `snomed_synonyms_for`, cached by code and never
+stored. A failure there is a field value (`status: "unavailable"`), so the entry still opens.
+List and search rows make no terminology call.
 """
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Annotated, Any
+from typing import Annotated, Any, Literal
 
 from fastapi import Path, Query
 from pydantic import BaseModel, ConfigDict, Field
@@ -50,9 +56,11 @@ from nptc.catalogue.facets import (
     FilterSelection,
 )
 from nptc.db.models.catalogue_entry import CatalogueEntry
+from nptc.db.models.code_binding import SNOMED_CT_SYSTEM, CodeBindingStatus
 from nptc.exports.semantic_tag import render_display_term, trim_specimen_suffix
 from nptc.registry.handlers import DatatypeRegistry, SerialisationTarget
 from nptc.settings import ApiSettings
+from nptc.terminology.synonyms import SnomedSynonymSource
 
 __all__ = [
     "Binding",
@@ -74,6 +82,7 @@ __all__ = [
     "PropertyValue",
     "SearchHit",
     "SearchPage",
+    "SnomedSynonyms",
     "SystemTokenPath",
     "binding_from_row",
     "build_entry_detail",
@@ -82,6 +91,7 @@ __all__ = [
     "entry_summary_fields",
     "filter_parameter",
     "property_value_from_row",
+    "snomed_synonyms_for",
     "summary_from_entry",
 ]
 
@@ -512,6 +522,23 @@ class PropertyValue(BaseModel):
     justification: str | None
 
 
+class SnomedSynonyms(BaseModel):
+    """The active binding's SNOMED CT synonyms, as the terminology server serves them today.
+
+    Never stored, so never part of `row_version` or the audit trail. `terms` excludes the FSN
+    and the binding's AU preferred term, and is not limited to en-AU: no FHIR operation
+    separates the AU-acceptable synonyms, so US spellings can appear (see
+    `nptc.terminology.synonyms`). `status` is `unavailable` when the server could not answer;
+    `terms` is then empty, which is not the same as `available` with no terms.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    status: Literal["available", "unavailable"]
+    terms: list[str]
+    label_provenance: LabelProvenance
+
+
 class EntryDetail(EntryCore):
     """A summary plus everything attached to the entry.
 
@@ -547,6 +574,8 @@ class EntryDetail(EntryCore):
     designations: list[Designation]
     bindings: list[Binding]
     properties: list[PropertyValue]
+    #: `None` when the entry has no active SNOMED CT binding, so no lookup was made.
+    snomed_synonyms: SnomedSynonyms | None
 
 
 # --- assembling the entry-level models from query rows ---------------------
@@ -614,12 +643,17 @@ def summary_from_entry(entry: CatalogueEntry, facts: queries.RowFacts) -> EntryS
 
 
 def build_entry_detail(
-    session: Session, registry: DatatypeRegistry, entry: CatalogueEntry, settings: ApiSettings
+    session: Session,
+    registry: DatatypeRegistry,
+    entry: CatalogueEntry,
+    settings: ApiSettings,
+    synonyms: SnomedSynonymSource,
 ) -> EntryDetail:
     """Assembles the `EntryDetail` that every FR-17 URL form serves for the same
     entry. `catalogue.py`'s business-key route and its two code-lookup routes share
     it, so one edit cannot update only some copies."""
     entry_ids = (entry.id,)
+    bindings = queries.load_bindings(session, entry_ids)
     return EntryDetail(
         **entry_core_fields(
             entry.business_key,
@@ -633,13 +667,35 @@ def build_entry_detail(
         designations=[
             designation_from_row(row) for row in queries.load_designations(session, entry_ids)
         ],
-        bindings=[
-            binding_from_row(row, settings) for row in queries.load_bindings(session, entry_ids)
-        ],
+        bindings=[binding_from_row(row, settings) for row in bindings],
         properties=[
             property_value_from_row(row, registry)
             for row in queries.load_property_values(session, entry_ids)
         ],
+        snomed_synonyms=snomed_synonyms_for(bindings, synonyms),
+    )
+
+
+def snomed_synonyms_for(
+    bindings: Sequence[queries.BindingRow], source: SnomedSynonymSource
+) -> SnomedSynonyms | None:
+    """The `EntryDetail.snomed_synonyms` for an entry's bindings, shared by every route that
+    builds an `EntryDetail`. Asks `source` only when one binding is active and SNOMED CT."""
+    active = next(
+        (
+            row
+            for row in bindings
+            if row.status == CodeBindingStatus.ACTIVE.value and row.system == SNOMED_CT_SYSTEM
+        ),
+        None,
+    )
+    if active is None:
+        return None
+    result = source.synonyms_for(active.code, preferred_term=active.au_preferred_term)
+    return SnomedSynonyms(
+        status=result.status.value,
+        terms=list(result.terms),
+        label_provenance=SYNONYM_PROVENANCE,
     )
 
 

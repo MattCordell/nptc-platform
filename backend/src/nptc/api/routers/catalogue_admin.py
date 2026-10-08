@@ -41,7 +41,13 @@ from fastapi import APIRouter, Depends, Query, Request
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy.orm import Session
 
-from nptc.api.dependencies import ApiSettingsDep, get_datatype_registry, get_session, permission_dep
+from nptc.api.dependencies import (
+    ApiSettingsDep,
+    SnomedSynonymSourceDep,
+    get_datatype_registry,
+    get_session,
+    permission_dep,
+)
 from nptc.api.routers.auth import ErrorResponse
 from nptc.api.routers.catalogue_shared import (
     BusinessKeyPath,
@@ -57,6 +63,7 @@ from nptc.api.routers.catalogue_shared import (
     entry_core_fields,
     filter_parameter,
     property_value_from_row,
+    snomed_synonyms_for,
 )
 from nptc.auth.permissions import Permission
 from nptc.catalogue import maintenance, queries, search
@@ -430,6 +437,7 @@ def read_entry_any_status(
     session: SessionDep,
     registry: RegistryDep,
     settings: ApiSettingsDep,
+    synonyms: SnomedSynonymSourceDep,
     business_key: BusinessKeyPath,
 ) -> EntryDetail:
     """The `catalogue.edit_published`-gated counterpart to `catalogue.py`'s
@@ -441,6 +449,7 @@ def read_entry_any_status(
     state before the write routes save changes to it."""
     entry = load_entry_for_update(session, business_key)
     entry_ids = (entry.id,)
+    bindings = queries.load_bindings(session, entry_ids)
     return EntryDetail(
         **entry_core_fields(
             entry.business_key,
@@ -455,13 +464,12 @@ def read_entry_any_status(
             designation_from_row(row)
             for row in queries.load_designations_any_status(session, entry_ids)
         ],
-        bindings=[
-            binding_from_row(row, settings) for row in queries.load_bindings(session, entry_ids)
-        ],
+        bindings=[binding_from_row(row, settings) for row in bindings],
         properties=[
             property_value_from_row(row, registry)
             for row in queries.load_property_values(session, entry_ids)
         ],
+        snomed_synonyms=snomed_synonyms_for(bindings, synonyms),
     )
 
 
