@@ -5,6 +5,7 @@ import { AboutPage } from "../pages/about.tsx";
 import { AdminAuditPage } from "../pages/admin-audit.tsx";
 import { AdminCatalogueEditPage } from "../pages/admin-catalogue-edit.tsx";
 import { AdminCatalogueListPage } from "../pages/admin-catalogue-list.tsx";
+import { AdminHomePage } from "../pages/admin-home.tsx";
 import { AdminPropertyCreatePage } from "../pages/admin-property-create.tsx";
 import { AdminPropertyDetailPage } from "../pages/admin-property-detail.tsx";
 import { AdminPropertyEditPage } from "../pages/admin-property-edit.tsx";
@@ -298,22 +299,11 @@ const accountRoute = createRoute({
 // Deliberately no `/admin/submissions`: the reviewer queue is `/submissions`
 // above, and what a given user sees there is decided server-side (NFR-20).
 
-// The built admin screen offered from every admin stub as a way on. The
-// property registry and the audit log are built too, but only the admin home
-// links to them.
+// The built admin screen offered from every admin stub as a way on. The admin
+// home links to every admin route, built or planned.
 const ADMIN_NEAREST = {
   to: "/admin/catalogue",
   label: "Catalogue administration",
-} as const;
-
-const ADMIN_PROPERTY_REGISTRY = {
-  to: "/admin/properties",
-  label: "Property registry",
-} as const;
-
-const ADMIN_AUDIT_LOG = {
-  to: "/admin/audit",
-  label: "Audit log",
 } as const;
 
 const adminRoute = createRoute({
@@ -325,10 +315,7 @@ const adminRoute = createRoute({
 const adminHomeRoute = createRoute({
   getParentRoute: () => adminRoute,
   path: "/",
-  component: createPlaceholderPage({
-    title: "Administration",
-    nearest: [ADMIN_NEAREST, ADMIN_PROPERTY_REGISTRY, ADMIN_AUDIT_LOG],
-  }),
+  component: AdminHomePage,
   head: titled("Administration"),
 });
 

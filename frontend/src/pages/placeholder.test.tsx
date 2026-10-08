@@ -68,23 +68,6 @@ describe("placeholder screens", () => {
     ).toHaveAttribute("href", "/admin/catalogue");
   });
 
-  it("offers every built admin screen from the admin home", async () => {
-    await renderRoute("/admin", { auth: { status: "signed-in" } });
-
-    await screen.findByRole("heading", { level: 1, name: "Administration" });
-    expect(
-      main().getByRole("link", { name: "Catalogue administration" }),
-    ).toHaveAttribute("href", "/admin/catalogue");
-    expect(main().getByRole("link", { name: "Property registry" })).toHaveAttribute(
-      "href",
-      "/admin/properties",
-    );
-    expect(main().getByRole("link", { name: "Audit log" })).toHaveAttribute(
-      "href",
-      "/admin/audit",
-    );
-  });
-
   it("reaches the landing link, then the nearest link, in reading order from the keyboard", async () => {
     const user = userEvent.setup();
     await renderRoute("/admin/users", { auth: { status: "signed-in" } });

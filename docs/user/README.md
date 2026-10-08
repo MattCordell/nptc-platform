@@ -5,7 +5,8 @@
 - [Searching the catalogue](searching-the-catalogue.md) — issue #439.
 - [Reading an entry](reading-an-entry.md) — issue #440. The public page for one test.
 - [Roles](roles.md) — issue #60. What the Administrator and Reviewer roles can each do on
-  the screens shipped so far.
+  the screens shipped so far, and how an Administrator reaches each screen from the admin
+  home at `/admin` (issue #444).
 - [Finding and filtering entries for editing](finding-entries.md) — issue #267.
 - [Editing an entry](editing-an-entry.md) — issue #61, an orienting overview of the three
   guides below.
