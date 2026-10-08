@@ -26,7 +26,12 @@ from nptc_shared.terminology.ontoserver import OntoserverClient
 from nptc_shared.terminology.sweep import TerminologySweep
 from nptc_transform import __version__
 from nptc_transform.bands import Band
-from nptc_transform.dataset import DATASET_JSON_NAME, build_dataset, write_dataset
+from nptc_transform.dataset import (
+    DATASET_JSON_NAME,
+    ServedFSNMissingError,
+    build_dataset,
+    write_dataset,
+)
 from nptc_transform.pipeline import Mode, RunResult, read_source, run_transform_sheets
 from nptc_transform.report_writer import write_report
 from nptc_transform.workbook import WorkbookReadError
@@ -261,6 +266,14 @@ def run(
         try:
             dataset = build_dataset(sheets, result, release_name=release_name)
             write_dataset(dataset, report_dir)
+        except ServedFSNMissingError as exc:
+            typer.echo(
+                f"{exc}. No dataset was written. Check that the terminology server returns "
+                "designations (ADR-0005), then run again.",
+                err=True,
+            )
+            _remove_stale_dataset(report_dir)
+            raise typer.Exit(code=ExitCode.TERMINOLOGY_UNAVAILABLE) from exc
         except OSError as exc:
             typer.echo(
                 f"could not write the import dataset into {report_dir}: "

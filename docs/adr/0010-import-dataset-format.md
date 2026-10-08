@@ -158,6 +158,10 @@ design.
   `null` for a discipline or subgroup. The loader stores a specimen's `display` as given, and
   refuses a version 2 file. `report.json`'s `schema_version` moved from 9 to 10 for the new
   `SPECIMEN_MAP_NO_PREFERRED_TERM` finding.
+- Each code binding's `fsn` is now the FSN the server served, not the workbook's FSN column,
+  which is the published label with its tag already removed. This ends the deferral recorded
+  above: the list read model strips the tag from a stored FSN (FR-83), and stripping an
+  already-stripped label would over-strip it. A bound code with no served FSN stops the run.
 - `SPECIMEN_UNCONSTRAINED_RESOLVED` no longer exists. `SPECIMEN_VALUE_UNMAPPED` is a blocking
   data defect, not informational, because the loader refuses a specimen with no code. The
   decisions above that say otherwise record what was decided at the time.

@@ -33,11 +33,14 @@ blocking finding (``SPECIMEN_VALUE_UNMAPPED``), so ``build_dataset`` is not call
 workbook's wording. ``None`` when the run had no sweep; the CLI refuses ``--emit-dataset``
 without ``--check-terminology``, so an emitted dataset always carries it.
 
-**Other terminology-served enrichment is not done here.** Without
-``--check-terminology``, ``edition_hint`` is always ``"unknown"`` and
-``fsn``/``au_preferred_term`` come from the published cell text or ``None``.
-Filling them from a live sweep's served designations (FR-82) needs the per-code
-``SweepResult`` threaded further than ``RunResult`` carries it.
+**Code binding FSN: served, never the workbook's (FR-82).** The workbook's FSN column is
+the published, tag-stripped label, and stripping it again would be the double-strip hazard
+FR-83 exists to prevent. With a sweep, each binding's ``fsn`` is the FSN the server served for
+its code (``TerminologyRun.served_fsns``), tag intact. A run with no sweep keeps the workbook
+text, and the CLI refuses ``--emit-dataset`` without one.
+
+**Other terminology-served enrichment is not done here.** ``edition_hint`` is always
+``"unknown"`` and ``au_preferred_term`` is ``None``.
 """
 
 from __future__ import annotations
@@ -65,6 +68,11 @@ SCHEMA_VERSION = 3
 
 _SNOMED_SYSTEM = "http://snomed.info/sct"
 _LANGUAGE_EN_AU = "en-AU"
+
+
+class ServedFSNMissingError(ValueError):
+    """A sweep ran but served no FSN for a code the dataset binds. Every code that is not found
+    or inactive already blocks the run, so this means the server answered without designations."""
 
 
 @dataclass(frozen=True)
@@ -181,16 +189,24 @@ def _build_designations(row_cells: Mapping[ColumnRole, Cell]) -> tuple[Designati
     return tuple(designations)
 
 
-def _build_code_bindings(row_cells: Mapping[ColumnRole, Cell]) -> tuple[CodeBinding, ...]:
+def _build_code_bindings(
+    row_cells: Mapping[ColumnRole, Cell], served_fsns: Mapping[str, str] | None
+) -> tuple[CodeBinding, ...]:
     if not has_code_binding(row_cells):
         return ()
     code_cell = row_cells[ColumnRole.CODE]
-    fsn_cell = row_cells.get(ColumnRole.FSN)
+    code = correct_code_cell(_cell_text(code_cell))
+    if served_fsns is None:
+        fsn = _optional_cell_text(row_cells.get(ColumnRole.FSN))
+    elif code in served_fsns:
+        fsn = served_fsns[code]
+    else:
+        raise ServedFSNMissingError(f"the terminology server served no FSN for {code}")
     return (
         CodeBinding(
             system=_SNOMED_SYSTEM,
-            code=correct_code_cell(_cell_text(code_cell)),
-            fsn=_optional_cell_text(fsn_cell),
+            code=code,
+            fsn=fsn,
             au_preferred_term=None,
             edition_hint="unknown",
             status="active",
@@ -246,6 +262,7 @@ def build_dataset(
     key down by one; no gap is left.
     """
     preferred_terms = dict(result.specimen_map.preferred_terms) if result.specimen_map else {}
+    served_fsns = dict(result.terminology.served_fsns) if result.terminology else None
     entries: list[ImportEntry] = []
     for sequence, source_row in enumerate(seedable_rows(sheets), start=1):
         row_cells = source_row.cells
@@ -263,7 +280,7 @@ def build_dataset(
                 preferred_term=_cell_text(preferred_cell),
                 status="active",
                 designations=_build_designations(row_cells),
-                code_bindings=_build_code_bindings(row_cells),
+                code_bindings=_build_code_bindings(row_cells, served_fsns),
                 properties=EntryProperties(
                     discipline=_build_compound_property(row_cells, ColumnRole.DISCIPLINE),
                     subgroup=_build_compound_property(row_cells, ColumnRole.SUBGROUP),

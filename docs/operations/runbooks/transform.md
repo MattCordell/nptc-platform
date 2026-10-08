@@ -306,7 +306,7 @@ action:
 | `SPECIMEN_MAP_NO_PREFERRED_TERM` | data-defect | A terminologist must check why SNOMED CT-AU serves no preferred term for this code, and correct the target code in the specimen map to a concept that has one (FR-88). The import is blocked until it does. |
 | `SHEET_NOT_SPIA_DATA` | informational | No action required. This sheet is recognised as prose, not SPIA data, and was not scanned. The import is not blocked. |
 | `UNEXPECTED_SEMANTIC_TAG` | informational | No action required. Subsumption does not imply the tag (FR-99); review the served FSN in context if the tag is unexpected. The import is not blocked. |
-| `LABEL_DESIGNATION_DRIFT` | informational | No action required. Server-sourced FSN seeding is deferred (ADR-0010); the published label is seeded as-is, and the drift is recorded for editorial review only if unexpected (FR-97). The import is not blocked. |
+| `LABEL_DESIGNATION_DRIFT` | informational | No action required. The dataset seeds the FSN the server served, not the published label, and the drift is recorded for editorial review only if unexpected (FR-97). The import is not blocked. |
 | `LABEL_DIFFERS_FROM_PREFERRED_TERM` | informational | No action required. The current SNOMED CT-AU preferred term differs from the published label; review only if the drift is unexpected (FR-97, FR-82). The import is not blocked. |
 | `PROBABLE_MISSPELLING` | informational | No action required to proceed. A terminologist should review the flagged token against the cited in-entry reference and correct it manually if it is genuinely a misspelling; the transform never auto-corrects it (FR-79). The import is not blocked. |
 | `INCONSISTENT_SPELLING` | informational | No action required to proceed. A terminologist should review the flagged token against the cited corpus-common spelling and correct it manually if it is genuinely inconsistent; the transform never auto-corrects it (FR-79). The import is not blocked. |
@@ -398,6 +398,13 @@ string the map does not cover blocks the run, so no dataset is written
 (`SPECIMEN_ROOT_WITH_OTHERS`). `schema_version` 2 drops the
 `specimen_unconstrained` entry field that version 1 carried, so the loader
 refuses a version 1 file with a message that names the version.
+`schema_version` 3 also seeds each code binding's `fsn` as the FSN the server
+served for its code, tag intact (FR-82), where version 2 seeded the workbook's FSN
+column. That column is the published label with its tag already removed, and the
+catalogue list strips the tag from a stored FSN (FR-83), so a second strip would
+over-strip. A bound code the server serves no FSN for stops the run with exit `3` and
+writes no dataset. The lookup covers number-typed code cells too, which the validation
+sweep skips, at one `$expand` call per chunk and edition.
 `schema_version` 3 adds `display` to every property value. For a specimen it is
 the code's SNOMED CT-AU preferred term, resolved by the `--check-terminology`
 pass (the map's own `Target display` is the FSN with its tag, so it is not used).

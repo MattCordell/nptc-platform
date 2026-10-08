@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import dataclasses
 import json
 from pathlib import Path
 
@@ -15,6 +16,7 @@ from nptc_transform.dataset import (
     DATASET_JSON_NAME,
     ImportDataset,
     PropertyValue,
+    ServedFSNMissingError,
     build_dataset,
     write_dataset,
 )
@@ -201,7 +203,7 @@ def _build_with_server(
     sheets = read_workbook(workbook_path)
     server = StubTerminologyClient(
         concepts=[
-            StubConcept(code="122192001", fsn="A term", parents=(PROCEDURE_ROOT_CODE,)),
+            StubConcept(code="122192001", fsn="A term (procedure)", parents=(PROCEDURE_ROOT_CODE,)),
             *specimen_map_concepts,
         ],
         resolved_version={"au": "http://snomed.info/sct/32506021000036107/version/20260531"},
@@ -209,6 +211,68 @@ def _build_with_server(
     result = run_transform(workbook_path, mode=Mode.EMIT_DATASET, sweep=TerminologySweep(server))
     assert not result.has_blocking_findings, result.findings
     return build_dataset(sheets, result, release_name="2026-06")
+
+
+@pytest.mark.req("FR-82")
+def test_a_binding_carries_the_fsn_the_server_served_not_the_workbooks_stripped_text(
+    tmp_path: Path, specimen_map_concepts: tuple[StubConcept, ...]
+) -> None:
+    """The workbook's FSN column is the published label with its tag removed. Seeding it would
+    leave a stored FSN FR-83 cannot strip safely, and a second strip would over-strip."""
+    dataset = _build_with_server(_served_workbook(tmp_path, "Serum"), specimen_map_concepts)
+
+    (binding,) = dataset.entries[0].code_bindings
+    assert binding.fsn == "A term (procedure)"
+
+
+@pytest.mark.req("FR-82")
+def test_a_number_typed_code_cell_still_gets_the_served_fsn(
+    tmp_path: Path, specimen_map_concepts: tuple[StubConcept, ...]
+) -> None:
+    """A number-typed code cell is repaired, seeded and never swept, so its FSN is looked up
+    on its own. Without that, the repair would seed the workbook's stripped text."""
+    workbook_path = _workbook(
+        tmp_path, [["A term", "", "", 11, "Chemical", "", "Serum", 122192001, "A term", 4, ""]]
+    )
+
+    dataset = _build_with_server(workbook_path, specimen_map_concepts)
+
+    (binding,) = dataset.entries[0].code_bindings
+    assert (binding.code, binding.fsn) == ("122192001", "A term (procedure)")
+
+
+@pytest.mark.req("FR-82")
+def test_a_run_with_no_server_keeps_the_workbook_text_as_the_fsn(tmp_path: Path) -> None:
+    dataset = _build(_specimen_workbook(tmp_path, "Serum"))
+
+    (binding,) = dataset.entries[0].code_bindings
+    assert binding.fsn == "A term"
+
+
+@pytest.mark.req("FR-82")
+def test_a_bound_code_the_server_served_no_fsn_for_refuses_the_dataset(
+    tmp_path: Path, specimen_map_concepts: tuple[StubConcept, ...]
+) -> None:
+    """Seeding the workbook text instead would put an untagged FSN in the catalogue, which
+    FR-83's renderer refuses, so the list would fail for the whole page."""
+    workbook_path = _served_workbook(tmp_path, "Serum")
+    server = StubTerminologyClient(
+        concepts=[
+            StubConcept(code="122192001", fsn="A term (procedure)", parents=(PROCEDURE_ROOT_CODE,)),
+            *specimen_map_concepts,
+        ],
+        resolved_version={"au": "http://snomed.info/sct/32506021000036107/version/20260531"},
+    )
+    result = run_transform(workbook_path, mode=Mode.EMIT_DATASET, sweep=TerminologySweep(server))
+    assert result.terminology is not None
+    served_nothing = dataclasses.replace(result.terminology, served_fsns=())
+
+    with pytest.raises(ServedFSNMissingError, match="122192001"):
+        build_dataset(
+            read_workbook(workbook_path),
+            dataclasses.replace(result, terminology=served_nothing),
+            release_name="2026-06",
+        )
 
 
 @pytest.mark.req("FR-88")

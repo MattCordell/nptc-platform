@@ -18,6 +18,7 @@ from nptc_shared.terminology.stub import StubConcept, StubTerminologyClient
 from nptc_shared.terminology.sweep import TerminologySweep
 from nptc_transform import __version__
 from nptc_transform.cli import app
+from nptc_transform.dataset import ServedFSNMissingError
 from nptc_transform.specimen_map import SPECIMEN_MAP
 
 runner = CliRunner()
@@ -246,7 +247,7 @@ def test_emit_dataset_without_check_terminology_is_a_usage_error_and_writes_noth
 def test_emit_dataset_writes_the_report_and_the_import_dataset(
     tmp_path: Path, sample_workbook: Path, serve: Callable[..., None]
 ) -> None:
-    serve("10000006", fsn="Sample test")
+    serve("10000006", fsn="Sample test (procedure)")
     report_dir = tmp_path / "report"
     before = _tree(tmp_path)
 
@@ -283,11 +284,40 @@ def test_emit_dataset_writes_the_report_and_the_import_dataset(
     assert entry["business_key"] == "NPTC-000001"
     assert entry["code_bindings"][0]["code"] == "10000006"
     assert isinstance(entry["code_bindings"][0]["code"], str)
+    # The served FSN, tag intact, and not the workbook's "Sample test" (FR-82).
+    assert entry["code_bindings"][0]["fsn"] == "Sample test (procedure)"
     serum = SPECIMEN_MAP.resolve("Serum")
     assert serum is not None
     assert entry["properties"]["specimen"] == [
         {"value": "Serum", "code": serum.code, "display": f"Fixture specimen {serum.code}"}
     ]
+
+
+@pytest.mark.req("FR-82")
+def test_emit_dataset_exits_3_and_writes_no_dataset_when_the_server_served_no_fsn(
+    tmp_path: Path,
+    sample_workbook: Path,
+    serve: Callable[..., None],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    serve("10000006", fsn="Sample test (procedure)")
+
+    def _refuse(*_args: object, **_kwargs: object) -> None:
+        raise ServedFSNMissingError("the terminology server served no FSN for 10000006")
+
+    monkeypatch.setattr("nptc_transform.cli.build_dataset", _refuse)
+    report_dir = tmp_path / "report"
+    report_dir.mkdir()
+    (report_dir / "import-dataset.json").write_text("stale", encoding="utf-8")
+
+    result = runner.invoke(
+        app,
+        ["run", "--workbook", str(sample_workbook), "--report-dir", str(report_dir), *_EMIT],
+    )
+
+    assert result.exit_code == 3, result.output
+    assert "10000006" in result.output
+    assert not (report_dir / "import-dataset.json").exists()
 
 
 @pytest.mark.req("FR-71")
