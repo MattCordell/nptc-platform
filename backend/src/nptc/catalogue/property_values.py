@@ -488,6 +488,93 @@ def _conflict_outcome(business_key: str, report: ConflictReport) -> BulkProperty
     )
 
 
+def _save_for_one_entry(
+    session: Session,
+    ctx: AuditContext,
+    *,
+    target: EntryPropertyTarget,
+    property_key: str,
+    values: Sequence[PropertyValueInput],
+    reason: str,
+    registry: DatatypeRegistry,
+) -> BulkPropertyOutcome:
+    """One target's write and its outcome, for `save_property_values_for_entries`."""
+    try:
+        entry = load_entry_for_update(session, target.business_key)
+    except EntryNotFoundError:
+        return _not_found_outcome(target.business_key)
+
+    try:
+        assert_entry_row_version(session, entry, target.expected_row_version)
+    except EntryVersionConflictError as exc:
+        return _conflict_outcome(target.business_key, exc.report)
+
+    before_version = entry.row_version
+    # One savepoint per entry, around the write only; `save_property_values`
+    # opens none. Without it, a `version_id_col` collision at flush (past the
+    # precondition check) would abort the whole batch and could leave this
+    # entry's rows deleted but not reinserted, as in `save_entry`'s layer two.
+    savepoint = session.begin_nested()
+    try:
+        save_property_values(
+            session,
+            ctx,
+            entry=entry,
+            property_key=property_key,
+            values=values,
+            reason=reason,
+            registry=registry,
+            expected_row_version=target.expected_row_version,
+        )
+        savepoint.commit()
+    except StaleDataError, ObjectDeletedError:
+        savepoint.rollback()
+        return _outcome_after_stale_flush(session, entry, target)
+
+    status: _BulkOutcomeStatus = "unchanged" if entry.row_version == before_version else "applied"
+    return BulkPropertyOutcome(
+        business_key=target.business_key, status=status, row_version=entry.row_version
+    )
+
+
+def _outcome_after_stale_flush(
+    session: Session, entry: CatalogueEntry, target: EntryPropertyTarget
+) -> BulkPropertyOutcome:
+    """The outcome for a target whose write lost a race at flush, after its
+    savepoint was rolled back."""
+    session.expire(entry)
+    try:
+        refreshed = load_entry_for_update(session, target.business_key)
+    except EntryNotFoundError:
+        # Another transaction deleted the row between the precondition
+        # check and this flush. No entry is left to report a conflict
+        # against, and an escaping `EntryNotFoundError` would turn a
+        # partly successful batch into a whole-request 404, whose
+        # meaning is "unknown property_key".
+        return _not_found_outcome(target.business_key)
+    try:
+        # Reuses the pre-check's conflict path, so attribution does not
+        # depend on which layer caught it. `row_version` only increases
+        # and the flush already found it past `target.expected_row_version`,
+        # so this is expected to raise.
+        assert_entry_row_version(session, refreshed, target.expected_row_version)
+    except EntryVersionConflictError as exc:
+        return _conflict_outcome(target.business_key, exc.report)
+    # Defensive: the check above was expected to raise. The write's
+    # savepoint was rolled back, so `unchanged` would falsely claim the
+    # entry already holds the target values (for example after a delete
+    # and recreate under the same `business_key` landing at
+    # `row_version=1`). Report `conflict`, built from `refreshed`.
+    return _conflict_outcome(
+        target.business_key,
+        ConflictReport(
+            business_key=refreshed.business_key,
+            expected_row_version=target.expected_row_version,
+            current_row_version=refreshed.row_version,
+        ),
+    )
+
+
 def save_property_values_for_entries(
     session: Session,
     ctx: AuditContext,
@@ -540,96 +627,18 @@ def save_property_values_for_entries(
     if preflight.write_issues:
         raise PropertyValidationError(preflight.write_issues)
 
-    outcomes: list[BulkPropertyOutcome] = []
-
-    for target in targets:
-        try:
-            entry = load_entry_for_update(session, target.business_key)
-        except EntryNotFoundError:
-            outcomes.append(_not_found_outcome(target.business_key))
-            continue
-
-        try:
-            assert_entry_row_version(session, entry, target.expected_row_version)
-        except EntryVersionConflictError as exc:
-            outcomes.append(_conflict_outcome(target.business_key, exc.report))
-            continue
-
-        before_version = entry.row_version
-        # One savepoint per entry, around the write only; `save_property_values`
-        # opens none. Without it, a `version_id_col` collision at flush (past the
-        # precondition check) would abort the whole batch and could leave this
-        # entry's rows deleted but not reinserted, as in `save_entry`'s layer two.
-        savepoint = session.begin_nested()
-        try:
-            save_property_values(
-                session,
-                ctx,
-                entry=entry,
-                property_key=property_key,
-                values=values,
-                reason=validated_reason,
-                registry=registry,
-                expected_row_version=target.expected_row_version,
-            )
-            savepoint.commit()
-        except StaleDataError, ObjectDeletedError:
-            savepoint.rollback()
-            session.expire(entry)
-            try:
-                refreshed = load_entry_for_update(session, target.business_key)
-            except EntryNotFoundError:
-                # Another transaction deleted the row between the precondition
-                # check and this flush. No entry is left to report a conflict
-                # against, and an escaping `EntryNotFoundError` would turn a
-                # partly successful batch into a whole-request 404, whose
-                # meaning is "unknown property_key".
-                outcomes.append(_not_found_outcome(target.business_key))
-                continue
-            try:
-                # Reuses the pre-check's conflict path, so attribution does not
-                # depend on which layer caught it. `row_version` only increases
-                # and the flush already found it past `target.expected_row_version`,
-                # so this is expected to raise.
-                assert_entry_row_version(session, refreshed, target.expected_row_version)
-            except EntryVersionConflictError as exc:
-                outcomes.append(_conflict_outcome(target.business_key, exc.report))
-                continue
-            # Defensive: the check above was expected to raise. The write's
-            # savepoint was rolled back, so `unchanged` would falsely claim the
-            # entry already holds the target values (for example after a delete
-            # and recreate under the same `business_key` landing at
-            # `row_version=1`). Report `conflict`, built from `refreshed`.
-            outcomes.append(
-                _conflict_outcome(
-                    target.business_key,
-                    ConflictReport(
-                        business_key=refreshed.business_key,
-                        expected_row_version=target.expected_row_version,
-                        current_row_version=refreshed.row_version,
-                    ),
-                )
-            )
-            continue
-
-        if entry.row_version == before_version:
-            outcomes.append(
-                BulkPropertyOutcome(
-                    business_key=target.business_key,
-                    status="unchanged",
-                    row_version=entry.row_version,
-                )
-            )
-        else:
-            outcomes.append(
-                BulkPropertyOutcome(
-                    business_key=target.business_key,
-                    status="applied",
-                    row_version=entry.row_version,
-                )
-            )
-
-    result = tuple(outcomes)
+    result = tuple(
+        _save_for_one_entry(
+            session,
+            ctx,
+            target=target,
+            property_key=property_key,
+            values=values,
+            reason=validated_reason,
+            registry=registry,
+        )
+        for target in targets
+    )
     tallies = tally_bulk_outcomes(result)
 
     # A no-effect batch emits no header (ADR-0035), so a client retrying a stale
