@@ -32,12 +32,18 @@ _WRITE_RE = re.compile(
 
 def writes_property_value(source: str) -> bool:
     for node in ast.walk(ast.parse(source)):
-        if isinstance(node, ast.Constant) and isinstance(node.value, str):
-            if _WRITE_RE.search(node.value):
-                return True
-        elif isinstance(node, ast.Call) and _is_named(node.func, "bulk_insert"):
-            if "property_value" in ast.unparse(node):
-                return True
+        if (
+            isinstance(node, ast.Constant)
+            and isinstance(node.value, str)
+            and _WRITE_RE.search(node.value)
+        ):
+            return True
+        if (
+            isinstance(node, ast.Call)
+            and _is_named(node.func, "bulk_insert")
+            and "property_value" in ast.unparse(node)
+        ):
+            return True
     return False
 
 
