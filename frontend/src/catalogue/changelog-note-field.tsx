@@ -3,6 +3,7 @@ import { useState } from "react";
 import { validateChangelogNote } from "./changelog-note.ts";
 import type { FormError } from "../components/error-summary.tsx";
 import { Field } from "../components/field.tsx";
+import { INPUT_CLASSES } from "../components/input-classes.ts";
 
 /**
  * The one changelog note field every edit form composes (issue #62). Replaces
@@ -91,6 +92,7 @@ export function ChangelogNoteField({
       {(controlProps) => (
         <input
           {...controlProps}
+          className={INPUT_CLASSES}
           type="text"
           value={changelogNote.note}
           onChange={(event) => changelogNote.setNote(event.target.value)}

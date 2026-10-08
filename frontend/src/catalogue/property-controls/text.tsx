@@ -1,4 +1,5 @@
 import { Field } from "../../components/field.tsx";
+import { INPUT_CLASSES } from "../../components/input-classes.ts";
 import type { ControlProps } from "./types.ts";
 
 /** `ControlKind.TEXT` - a short string (`string` datatype, `maxLength <= 200`). */
@@ -8,6 +9,7 @@ export function TextControl({ id, label, hint, error, value, onChange }: Control
       {(controlProps) => (
         <input
           {...controlProps}
+          className={INPUT_CLASSES}
           type="text"
           value={typeof value === "string" ? value : ""}
           onChange={(event) => onChange(event.target.value)}

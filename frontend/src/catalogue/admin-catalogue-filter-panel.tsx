@@ -8,6 +8,7 @@ import {
 } from "../api/queries.ts";
 import { Checkbox } from "../components/checkbox.tsx";
 import { Field } from "../components/field.tsx";
+import { INPUT_CLASSES } from "../components/input-classes.ts";
 import { STATUS_OPTIONS } from "./status-options.ts";
 import { useDebouncedValue } from "./use-debounced-value.ts";
 
@@ -190,6 +191,7 @@ function PropertyFacetGroup({
         {(controlProps) => (
           <input
             {...controlProps}
+            className={INPUT_CLASSES}
             type="text"
             value={filterText}
             onChange={(event) => setFilterText(event.target.value)}

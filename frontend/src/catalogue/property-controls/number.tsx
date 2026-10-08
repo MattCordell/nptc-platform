@@ -1,4 +1,5 @@
 import { Field } from "../../components/field.tsx";
+import { INPUT_CLASSES } from "../../components/input-classes.ts";
 import type { ControlProps } from "./types.ts";
 
 /**
@@ -31,6 +32,7 @@ export function NumberControl({
       {(controlProps) => (
         <input
           {...controlProps}
+          className={INPUT_CLASSES}
           type="number"
           step={step}
           min={min}

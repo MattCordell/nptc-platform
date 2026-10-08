@@ -7,6 +7,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { createQueryClient } from "../../api/query-client.ts";
 import { AuthContext, type AuthContextValue } from "../../auth/session.ts";
+import { INPUT_CLASSES } from "../../components/input-classes.ts";
 import { expectNoA11yViolations } from "../../test/a11y.ts";
 import { CONTROLS, RepeatableValues } from "./index.ts";
 import type { ControlKind, PropertyValueSlot } from "./index.ts";
@@ -85,6 +86,34 @@ describe.each(["text", "textarea", "number", "uri"] as ControlKind[])(
       await user.type(control, kind === "number" ? "3" : "x");
       expect(onChange).toHaveBeenCalled();
       await expectNoA11yViolations(container);
+    });
+  },
+);
+
+// jsdom computes no styles, so this asserts the class contract: the shared
+// text-input look, so an edit screen's inputs match the landing page's.
+describe.each(["text", "number", "uri"] as ControlKind[])(
+  "CONTROLS.%s input style",
+  (kind) => {
+    it("uses the shared text-input classes", () => {
+      const Control = CONTROLS[kind];
+
+      render(
+        withProviders(
+          <Control
+            id="prop-0"
+            label="Usage guidance"
+            propertyKey="usage_guidance"
+            params={{}}
+            value={null}
+            onChange={vi.fn()}
+          />,
+        ),
+      );
+
+      expect(screen.getByLabelText("Usage guidance")).toHaveClass(
+        ...INPUT_CLASSES.split(" "),
+      );
     });
   },
 );

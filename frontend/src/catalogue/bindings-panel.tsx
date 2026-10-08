@@ -14,6 +14,7 @@ import { Dialog } from "../components/dialog.tsx";
 import type { FormError } from "../components/error-summary.tsx";
 import { Field } from "../components/field.tsx";
 import { Form } from "../components/form.tsx";
+import { INPUT_CLASSES } from "../components/input-classes.ts";
 import { LiveRegion } from "../components/live-region.tsx";
 import { useAnnounce } from "../components/use-announce.ts";
 import { ChangelogNoteField, useChangelogNote } from "./changelog-note-field.tsx";
@@ -248,6 +249,7 @@ function BindCodeForm({
         {(controlProps) => (
           <input
             {...controlProps}
+            className={INPUT_CLASSES}
             type="text"
             inputMode="numeric"
             value={code}
@@ -424,6 +426,7 @@ function ReplaceBindingDialog({
           {(controlProps) => (
             <input
               {...controlProps}
+              className={INPUT_CLASSES}
               type="text"
               inputMode="numeric"
               value={code}
