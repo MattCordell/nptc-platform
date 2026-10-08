@@ -1703,6 +1703,7 @@ export interface components {
             bindings: components["schemas"]["Binding"][];
             /** Properties */
             properties: components["schemas"]["PropertyValue"][];
+            snomed_synonyms: components["schemas"]["SnomedSynonyms"] | null;
         };
         /**
          * EntryPage
@@ -2401,6 +2402,26 @@ export interface components {
             permissions: string[];
             /** Mfa Satisfied */
             mfa_satisfied: boolean;
+        };
+        /**
+         * SnomedSynonyms
+         * @description The active binding's SNOMED CT synonyms, as the terminology server serves them today.
+         *
+         *     Never stored, so never part of `row_version` or the audit trail. `terms` excludes the FSN
+         *     and the binding's AU preferred term, and is not limited to en-AU: no FHIR operation
+         *     separates the AU-acceptable synonyms, so US spellings can appear (see
+         *     `nptc.terminology.synonyms`). `status` is `unavailable` when the server could not answer;
+         *     `terms` is then empty, which is not the same as `available` with no terms.
+         */
+        SnomedSynonyms: {
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "available" | "unavailable";
+            /** Terms */
+            terms: string[];
+            label_provenance: components["schemas"]["LabelProvenance"];
         };
         /**
          * TermsAcceptanceRequest

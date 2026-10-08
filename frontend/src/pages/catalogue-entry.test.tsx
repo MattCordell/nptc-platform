@@ -89,7 +89,20 @@ function entry(overrides: Record<string, unknown> = {}) {
         value: "kept",
       }),
     ],
+    snomed_synonyms: snomedSynonyms("available", [
+      "Ferritin level, serum",
+      "Ferritin concentration",
+    ]),
     ...overrides,
+  };
+}
+
+/** `EntryDetail.snomed_synonyms` as the API serves it. */
+function snomedSynonyms(status: "available" | "unavailable", terms: string[] = []) {
+  return {
+    status,
+    terms,
+    label_provenance: { designation: "synonym", semantic_tag: "not_applicable" },
   };
 }
 
@@ -342,7 +355,31 @@ describe("terms", () => {
       "Serum ferritinRCPA Synonym",
       `${FSN}SNOMED CT FSN`,
       "Ferritin levelSNOMED CT Preferred",
+      "Ferritin level, serumSNOMED CT Synonym",
+      "Ferritin concentrationSNOMED CT Synonym",
     ]);
+    expect(screen.queryByText(/synonyms could not be loaded/)).not.toBeInTheDocument();
+  });
+
+  it("says the SNOMED CT synonyms could not be loaded, and keeps every stored row (FR-54)", async () => {
+    const rows = await termRows({ snomed_synonyms: snomedSynonyms("unavailable") });
+
+    expect(rows.map((row) => row.textContent)).toEqual([
+      "FerritinRCPA Preferred",
+      "Serum ferritinRCPA Synonym",
+      `${FSN}SNOMED CT FSN`,
+      "Ferritin levelSNOMED CT Preferred",
+    ]);
+    expect(
+      screen.getByText("SNOMED CT synonyms could not be loaded. Try again later."),
+    ).toBeInTheDocument();
+  });
+
+  it("shows no synonym rows and no notice when the concept has no synonyms", async () => {
+    const rows = await termRows({ snomed_synonyms: snomedSynonyms("available") });
+
+    expect(rows).toHaveLength(4);
+    expect(screen.queryByText(/synonyms could not be loaded/)).not.toBeInTheDocument();
   });
 
   it("has a Term and a Type column, and no Language or Status column", async () => {
@@ -365,6 +402,7 @@ describe("terms", () => {
   it("leaves out the SNOMED CT Preferred row when there is no AU preferred term", async () => {
     const rows = await termRows({
       bindings: [binding({ status: "active", au_preferred_term: null })],
+      snomed_synonyms: snomedSynonyms("available"),
     });
 
     expect(rows.map((row) => row.textContent)).toEqual([
@@ -377,6 +415,7 @@ describe("terms", () => {
   it("shows the RCPA rows alone when no binding is active", async () => {
     const rows = await termRows({
       bindings: [binding({ status: "retired", retirement_reason: "Bound in error" })],
+      snomed_synonyms: null,
     });
 
     expect(rows.map((row) => row.textContent)).toEqual([
@@ -386,7 +425,12 @@ describe("terms", () => {
   });
 
   it("shows only the preferred term when there is nothing else", async () => {
-    const rows = await termRows({ designations: [], bindings: [], code: null });
+    const rows = await termRows({
+      designations: [],
+      bindings: [],
+      code: null,
+      snomed_synonyms: null,
+    });
 
     expect(rows.map((row) => row.textContent)).toEqual(["FerritinRCPA Preferred"]);
   });
