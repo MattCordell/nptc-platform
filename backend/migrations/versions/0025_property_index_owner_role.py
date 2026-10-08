@@ -16,8 +16,15 @@ superuser can, as in the compose stack. A non-superuser migration role needs
 `GRANT nptc_property_index_owner TO <that role>`, once; the same grant is needed to run this
 migration's `ALTER TABLE ... OWNER TO`. See `docs/operations/upgrade.md`.
 
-Downgrade gives the table back to the migration role. It does not drop the role, for the reason
-given in migration 0001: a role is cluster-wide, not schema.
+**Run the downgrade as the role that created the tables.** It gives `property_value` to
+`CURRENT_USER`, which is the original owner only when the original migration role runs it. A
+different role, such as a superuser on a deployment with a narrower migration role, becomes the
+owner instead. It does not drop the role, for the reason given in migration 0001: a role is
+cluster-wide, not schema.
+
+**A login that owns `property_value` can plant code that runs as the migration role.** A
+migration that writes the table calls `nptc.db.migration_guards.refuse_foreign_code_on_property_value`
+first. See `docs/operations/upgrade.md`.
 """
 
 from __future__ import annotations

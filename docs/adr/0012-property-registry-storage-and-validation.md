@@ -365,7 +365,13 @@ gaps, all fixed in the same PR before merge:
   `nptc_indexer` is a member, so the login holds these rights without being the migration
   owner or `nptc_app`. The cost is that the login can also alter, drop and truncate
   `property_value` and create objects in `public`; `backend/tests/test_indexer_role.py` pins
-  that it can touch no other table. The registry write path now dispatches the reconciler
+  that it can touch no other table. It can also plant a function, and a trigger, rule or index
+  expression that calls it, which then run as whoever writes the table: `nptc_app`, or the
+  migration role during a migration (a superuser in compose). So a leaked
+  `NPTC_INDEXER_DATABASE_URL` is as serious as the migration credential. This is accepted, not
+  removed: a migration that writes `property_value` calls
+  `nptc.db.migration_guards.refuse_foreign_code_on_property_value` first, and `upgrade.md` says
+  to run migrations as a non-superuser in production. The registry write path now dispatches the reconciler
   after the commit, through `nptc.db.session.after_commit`, not FastAPI's `BackgroundTasks`:
   those run before a request-scoped session commits, so a task would read the old
   definition (`backend/tests/test_after_commit.py` pins the ordering).

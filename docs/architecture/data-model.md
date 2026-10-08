@@ -1129,7 +1129,10 @@ subprocess could inherit it.
 the `NOLOGIN` role `nptc_property_index_owner` the owner of `property_value`, with `CREATE`
 on schema `public` (Postgres checks it for every new index) and `SELECT` on
 `property_definition` (the reconciler reads it). The `nptc_indexer` login is a member. The
-privileges `nptc_app` holds on `property_value` do not change.
+privileges `nptc_app` holds on `property_value` do not change. Owning the table lets the login
+plant a trigger, rule or function that runs as the next writer, so a migration that writes
+`property_value` first calls `nptc.db.migration_guards.refuse_foreign_code_on_property_value`
+(see [`upgrade.md`](../operations/upgrade.md)).
 
 Every generated index is named `ix_propval_p{index_seq}_{slot}` (see the truncation caveat
 above) - `slot` is always `1` today; `2` is reserved for a composite

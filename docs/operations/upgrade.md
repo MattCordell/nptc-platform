@@ -126,6 +126,30 @@ truncate `property_value`, and create new objects in `public`, because ownership
 `backend/tests/test_indexer_role.py` asserts both halves. An earlier version of this page said
 `GRANT CREATE ON TABLE property_value` was enough. That privilege does not exist.
 
+**The accepted risk: planted code runs as the writer.** With those rights the login can create
+a function in `public`, then a trigger or rule on `property_value`, or an index whose expression
+calls the function. That code runs as whichever role next writes the table, not as the login.
+The writers are the `nptc_app` runtime role and, during a migration, the migration role, which is
+a superuser in the compose stack. The API holds `NPTC_INDEXER_DATABASE_URL`, so a leaked copy of
+it could become superuser at the next migration that writes `property_value`.
+
+Three things limit this, and none removes it:
+
+- Treat `NPTC_INDEXER_DATABASE_URL` as a credential equal to the migration role's, not a minor
+  one. In production, run migrations as a role that is not a superuser.
+- A migration that writes `property_value` calls
+  `nptc.db.migration_guards.refuse_foreign_code_on_property_value` first. It stops with the names
+  if a trigger, a rule or a function owned by the index owner role or its members is present.
+  Migration 0024 does this in both directions. A new migration that writes the table must do the
+  same.
+- `test_indexer_role.py` creates a function and a trigger as the login. That test records the
+  risk, so changing it means changing this page.
+
+To look by hand, list non-internal triggers (`pg_trigger`), rules (`pg_rules`) and functions
+owned by `nptc_property_index_owner` or its members (`pg_proc`, `pg_auth_members`). Look at the
+indexes on `property_value` too: generated ones are named `ix_propval_p<n>_<slot>` and the
+reconciler rebuilds one whose definition no longer matches.
+
 **If you manage database roles yourself**, run this once after `alembic upgrade head`:
 
 ```sql
@@ -497,9 +521,15 @@ membership is needed for any later migration that alters `property_value`.
 
 **Existing grants are unchanged.** `nptc_app` keeps the privileges it had on `property_value`.
 
-The downgrade revokes the two grants and returns ownership of `property_value` to the role that
-runs it. It does not drop the role, for the reason given under
+The downgrade revokes the two grants and gives ownership of `property_value` to the role that
+runs it, so run it as the role that created the tables (normally the migration role). A different
+role, such as a superuser on a deployment with a narrower migration role, becomes the owner
+instead. It does not drop the role, for the reason given under
 [The asymmetric downgrade](#the-asymmetric-downgrade).
+
+Migration 0024 now calls the guard described under
+[the accepted risk](#provisioning-the-index-reconcilers-login-issues-54-and-274-fr-13) before
+it writes `property_value`, in both directions.
 
 ## Testcontainers and Docker
 

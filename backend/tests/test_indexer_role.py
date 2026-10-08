@@ -13,6 +13,10 @@ from sqlalchemy.exc import ProgrammingError
 from sqlalchemy.orm import Session
 from testcontainers.community.postgres import PostgresContainer
 
+from nptc.db.migration_guards import (
+    ForeignCodeOnPropertyValueError,
+    refuse_foreign_code_on_property_value,
+)
 from nptc.db.models.property_definition import (
     PropertyCardinality,
     PropertyDefinition,
@@ -153,3 +157,85 @@ def test_app_login_still_cannot_change_property_value_structure(
         app_db.execute(text(statement))
 
     assert getattr(refused.value.orig, "sqlstate", None) == "42501"
+
+
+_PLANT_FUNCTION = (
+    "CREATE FUNCTION public.planted_function() RETURNS trigger LANGUAGE plpgsql "
+    "AS $$ BEGIN RETURN NEW; END $$"
+)
+_PLANT_TRIGGER = (
+    "CREATE TRIGGER planted_trigger BEFORE INSERT ON property_value "
+    "FOR EACH ROW EXECUTE FUNCTION public.planted_function()"
+)
+_PLANT_RULE = "CREATE RULE planted_rule AS ON INSERT TO property_value DO ALSO NOTHING"
+
+
+@pytest.fixture
+def indexer_autocommit(
+    owner_engine: Engine, postgres_container: PostgresContainer, migrated: None
+) -> Iterator[Connection]:
+    """The indexer login on a committing connection, so what it plants is visible to others. The
+    planted objects are dropped afterwards even when the test fails."""
+    engine = create_engine(
+        _login_url(postgres_container, owner_engine), isolation_level="AUTOCOMMIT"
+    )
+    try:
+        with engine.connect() as connection:
+            try:
+                yield connection
+            finally:
+                connection.execute(text("DROP TRIGGER IF EXISTS planted_trigger ON property_value"))
+                connection.execute(text("DROP RULE IF EXISTS planted_rule ON property_value"))
+                connection.execute(
+                    text("DROP FUNCTION IF EXISTS public.planted_function() CASCADE")
+                )
+    finally:
+        engine.dispose()
+
+
+@pytest.mark.req("FR-13")
+@pytest.mark.integration
+def test_indexer_login_can_plant_a_trigger_on_property_value_which_is_the_accepted_cost(
+    indexer_autocommit: Connection,
+) -> None:
+    """Records the cost `docs/operations/upgrade.md` states. Ownership of `property_value` plus
+    `CREATE` on `public` lets the login make code that runs as whoever writes the table, so a
+    migration that writes it must call the guard below. Fixing this test means changing that
+    document."""
+    indexer_autocommit.execute(text(_PLANT_FUNCTION))
+    indexer_autocommit.execute(text(_PLANT_TRIGGER))
+
+
+@pytest.mark.req("FR-13")
+@pytest.mark.integration
+def test_the_migration_guard_passes_on_a_clean_property_value(
+    owner_engine: Engine, migrated: None
+) -> None:
+    with owner_engine.connect() as connection:
+        refuse_foreign_code_on_property_value(connection)
+
+
+@pytest.mark.req("FR-13")
+@pytest.mark.integration
+@pytest.mark.parametrize(
+    ("plant", "named"),
+    [
+        ([_PLANT_FUNCTION, _PLANT_TRIGGER], "planted_trigger"),
+        ([_PLANT_FUNCTION], "planted_function"),
+        ([_PLANT_RULE], "planted_rule"),
+    ],
+    ids=["trigger", "function", "rule"],
+)
+def test_the_migration_guard_refuses_code_the_indexer_login_planted(
+    owner_engine: Engine,
+    indexer_autocommit: Connection,
+    plant: list[str],
+    named: str,
+) -> None:
+    for statement in plant:
+        indexer_autocommit.execute(text(statement))
+
+    with owner_engine.connect() as connection, pytest.raises(ForeignCodeOnPropertyValueError) as e:
+        refuse_foreign_code_on_property_value(connection)
+
+    assert named in str(e.value)

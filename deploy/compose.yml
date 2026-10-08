@@ -88,9 +88,12 @@ services:
 
   # One-shot: applies every migration as the owning role, then creates the
   # app runtime login and the index reconciler's login. It is the only service
-  # that receives the owner DSN, so the long-running API never holds a
-  # credential that can alter the schema (NFR-09). The reconciler's login can
-  # create and drop indexes on property_value only.
+  # that receives the owner DSN, so the long-running API never holds the
+  # migration credential (NFR-09). It does hold the reconciler's login, which
+  # owns property_value: it can run DDL on that table and create objects in
+  # public, and nothing else. Code it planted there would run as the migration
+  # role, so migrations that write property_value check for it first. See
+  # docs/operations/upgrade.md.
   # Both DSNs are built here, not read from .env: the .env values point at
   # localhost for a backend run on the host, and inside the network the
   # database is `postgres`. Passwords must be URL-safe (no @ : / ? # %).
@@ -125,8 +128,8 @@ services:
     environment:
       NPTC_DATABASE_URL: postgresql+psycopg://nptc_app_login:${NPTC_APP_DB_PASSWORD:?set NPTC_APP_DB_PASSWORD in deploy/.env}@postgres:5432/${POSTGRES_DB}
       # The reconciler's own login (FR-13): it owns property_value and nothing else, so it
-      # can create the indexes a filterable property needs. The API runs the reconciler in
-      # a background task after a registry write commits.
+      # can create the indexes a filterable property needs. The API runs the reconciler on
+      # a worker thread after a registry write commits.
       NPTC_INDEXER_DATABASE_URL: postgresql+psycopg://nptc_indexer:${NPTC_INDEXER_DB_PASSWORD:?set NPTC_INDEXER_DB_PASSWORD in deploy/.env}@postgres:5432/${POSTGRES_DB}
       # The issuer is what the browser sees (Keycloak puts the request host in
       # `iss`), so it stays on localhost. The API fetches signing keys from
