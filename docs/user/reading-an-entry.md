@@ -69,8 +69,10 @@ Beside the main column, or below it on a narrow screen:
 happened, such as "Designation created", the fields it touched, and the note the editor
 wrote, if any. The list leaves out internal identifiers, which mean nothing to a reader.
 
-The name of the person who made a change appears only when you are signed in. This page does
-not link to the full history yet.
+The name of the person who made a change appears only when you are signed in. Choose **View
+full history** below the list to see every change, fifty at a time. See
+[Viewing an entry's change history](viewing-entry-history.md). The link is absent when no
+change is recorded or the recent changes could not be loaded.
 
 ## If the test is not found
 

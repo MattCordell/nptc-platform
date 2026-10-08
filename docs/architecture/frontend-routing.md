@@ -27,7 +27,7 @@ new screen adds a route here; it does not invent a path anywhere else. Full inve
 | `/` | landing (its search box navigates to `/catalogue` with the trimmed `q`) |
 | `/catalogue` (+ `q`, `after`, `filter.<key>` search params, issue #439) | FR-14, FR-15, FR-16, FR-18 |
 | `/catalogue/$businessKey` (issue #440) | FR-17, FR-18, FR-19 |
-| `/catalogue/$businessKey/history` | FR-19, FR-35 |
+| `/catalogue/$businessKey/history` (+ `before` search param, issue #441, a real screen: `pages/entry-history.tsx`) | FR-19, FR-35 |
 | `/catalogue/code/$systemToken/$code` | FR-17 |
 | `/catalogue/lookup?system=&code=` | FR-17 |
 | `/releases`, `/releases/compare?from=&to=`, `/releases/$releaseId` | FR-56–FR-61 |

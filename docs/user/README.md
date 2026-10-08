@@ -4,6 +4,8 @@
 - [Using the landing page](using-the-landing-page.md) — issue #428.
 - [Searching the catalogue](searching-the-catalogue.md) — issue #439.
 - [Reading an entry](reading-an-entry.md) — issue #440. The public page for one test.
+- [Viewing an entry's change history](viewing-entry-history.md) — issue #441. The full list
+  of changes to one test, opened from **Recent changes** on its page.
 - [Roles](roles.md) — issue #60. What the Administrator and Reviewer roles can each do on
   the screens shipped so far, and how an Administrator reaches each screen from the admin
   home at `/admin` (issue #444).

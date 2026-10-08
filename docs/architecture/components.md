@@ -279,6 +279,13 @@ render what the API sends and nothing else: a property value goes through
 `format-property-value.ts` whatever its type, because a branch on `datatype` is what
 ADR-0013 forbids, and a fully specified name is shown exactly as served (FR-83).
 
+`entry-audit-trail.tsx` (`EntryAuditTrail`, issue #441) is the audit trail pattern from the
+design system: an ordered list of an entry's changes with a rule down the left, each with a
+monospace time in UTC+10, the author when the API sends one, what happened, the fields and the
+reason. It only renders events. `pages/entry-history.tsx` owns the query, the `before` cursor in
+the URL and the Previous stack, and keeps the page on screen while the next one loads
+(`useEntryHistory`'s `keepPreviousPage`), so a focused paging button is not unmounted.
+
 ## Search and paging primitives
 
 Issue #438. The search box, filter controls and keyset paging that listings share, so the
