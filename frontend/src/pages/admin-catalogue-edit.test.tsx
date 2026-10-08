@@ -1279,6 +1279,56 @@ describe("amending a term", () => {
       );
     });
 
+    it("shows a length warning beside a duplicate, with Acknowledge only on the duplicate", async () => {
+      const user = userEvent.setup();
+      stubApi([
+        READ_OK,
+        {
+          method: "POST",
+          path: ADD_PATH,
+          status: 201,
+          body: {
+            designations: [
+              {
+                term: "Ferritin assay",
+                use: "synonym",
+                language: "en-AU",
+                status: "active",
+                length: 14,
+              },
+            ],
+            warnings: [
+              {
+                kind: "collision",
+                term: "Ferritin assay",
+                business_key: "NPTC-000900",
+                preferred_term: "Iron studies",
+              },
+              { kind: "length", length: 31, max_length: 10 },
+            ],
+            row_version: 4,
+          },
+        },
+      ]);
+      await renderLoaded();
+
+      await user.type(screen.getByLabelText("Synonyms"), "Ferritin assay");
+      await user.type(
+        inTermsPanel().getByLabelText(/Changelog note/),
+        "Add the assay wording",
+      );
+      await user.click(screen.getByRole("button", { name: "Add terms" }));
+
+      await screen.findByText(/preferred term is 31 characters long/);
+      expect(screen.getByText(/also on NPTC-000900/)).toBeInTheDocument();
+      expect(screen.getAllByRole("button", { name: /^Acknowledge/ })).toHaveLength(1);
+      await waitFor(() =>
+        expect(announced()).toContain(
+          "1 term added. 1 possible duplicate and 1 length warning to review.",
+        ),
+      );
+    });
+
     it("keeps the warning when an unrelated synonym is retired", async () => {
       // Retiring clears the collision warning about the retired term only; a
       // length warning is about the preferred term, which a retire never touches.

@@ -81,17 +81,24 @@ function withLanguage(
   return warnings.map((warning) => ({ ...warning, language }));
 }
 
-/** The clause an announcement appends so a length warning is heard as well as a duplicate. */
+/**
+ * How each warning class is counted in an announcement. A `Record` over `kind`,
+ * so a class added to the union fails to compile until it has a name here.
+ */
+const WARNING_NAMES: Record<DesignationWarning["kind"], { one: string; many: string }> = {
+  collision: { one: "possible duplicate", many: "possible duplicates" },
+  length: { one: "length warning", many: "length warnings" },
+};
+
+/** The clause an announcement appends so every warning class is heard, not only duplicates. */
 function warningSummary(warnings: DesignationWarning[]): string {
-  const duplicates = warnings.filter((warning) => warning.kind === "collision").length;
-  const lengths = warnings.length - duplicates;
-  const parts: string[] = [];
-  if (duplicates > 0) {
-    parts.push(`${duplicates} possible duplicate${duplicates === 1 ? "" : "s"}`);
-  }
-  if (lengths > 0) {
-    parts.push(`${lengths} length warning${lengths === 1 ? "" : "s"}`);
-  }
+  const parts = (Object.keys(WARNING_NAMES) as DesignationWarning["kind"][]).flatMap(
+    (kind) => {
+      const count = warnings.filter((warning) => warning.kind === kind).length;
+      const name = WARNING_NAMES[kind];
+      return count === 0 ? [] : [`${count} ${count === 1 ? name.one : name.many}`];
+    },
+  );
   return parts.length > 0 ? ` ${parts.join(" and ")} to review.` : "";
 }
 
