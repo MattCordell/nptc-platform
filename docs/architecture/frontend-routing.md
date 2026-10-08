@@ -59,9 +59,16 @@ A stub is one `createPlaceholderPage({ title, issue?, nearest? })` call in
 `router/route-tree.ts`. The factory renders a `NoticePage` with the title as the one `h1`,
 a text "Planned" status, the issue it lands with (when `issue` is set), a link back to the
 landing page and, when `nearest` is set, a link to each built screen it names. `nearest`
-takes one link or a list. Only the admin stubs set it: most point to `/admin/catalogue`,
-and the admin home lists both `/admin/catalogue` and `/admin/properties`. The public stubs
-leave it unset: the landing page link already leads to `/catalogue`.
+takes one link or a list. Only the admin stubs set it, and each points to
+`/admin/catalogue`. The public stubs leave it unset: the landing page link already leads to
+`/catalogue`.
+
+The admin home at `/admin` is a real page (`pages/admin-home.tsx`), not a stub. It holds one
+typed list of every `/admin/*` screen and renders a card for each. A planned screen's card
+links to its stub and carries a text "Planned" status. When a stub becomes a real screen,
+set that entry's `planned` to `false`. The page also shows a notice to a signed-in user whose
+`GET /auth/me` roles lack `administrator`. The notice is presentation only (NFR-20): no card
+is hidden, and the server refuses what the caller may not do.
 
 To replace a stub with the real screen:
 
