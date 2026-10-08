@@ -1,15 +1,16 @@
 import type { components } from "../api/schema.ts";
 import { StatusBadge } from "../components/status-badge.tsx";
 import { EntrySection } from "./entry-section.tsx";
+import { PropertyRows } from "./entry-property-rows.tsx";
 import { formatDate } from "./format-date.ts";
 import { statusLabelFor, statusToneFor } from "./status-options.ts";
 
 type EntryDetail = components["schemas"]["EntryDetail"];
 
 /**
- * The entry's own facts, beside the main column: identifier, status, term
- * length, disciplines and when it last changed. It shows no row version and no
- * internal id.
+ * The entry's own facts, beside the main column: identifier, status,
+ * disciplines, every other property, and when it last changed. It shows no
+ * term length (FR-85), no row version and no internal id.
  */
 export function EntryMetadata({ entry }: { entry: EntryDetail }) {
   return (
@@ -26,11 +27,6 @@ export function EntryMetadata({ entry }: { entry: EntryDetail }) {
           />
         </dd>
 
-        <dt className="font-medium">Term length</dt>
-        <dd className="m-0">
-          {entry.length} {entry.length === 1 ? "character" : "characters"}
-        </dd>
-
         <dt className="font-medium">Disciplines</dt>
         <dd className="m-0">
           {entry.disciplines.length > 0 ? (
@@ -39,6 +35,8 @@ export function EntryMetadata({ entry }: { entry: EntryDetail }) {
             <span className="text-[var(--color-text-muted)]">None recorded</span>
           )}
         </dd>
+
+        <PropertyRows properties={entry.properties} />
 
         <dt className="font-medium">Last updated</dt>
         <dd className="m-0">
