@@ -85,13 +85,8 @@ def get_terminology_client() -> TerminologyClient:
 
 @lru_cache(maxsize=1)
 def get_snomed_synonym_source() -> SnomedSynonymSource:
-    """The detail page's synonym cache, over its own client with a short failure budget.
-
-    A separate `OntoserverClient` from `get_terminology_client`'s, because the budget is a
-    property of the client's config. Built once per process, so its cache outlives a request.
-    `nptc.api.app.create_app` calls it at start-up for the same reason it calls
-    `get_terminology_client`.
-    """
+    """The detail page's synonym cache, over its own client with `interactive_config`'s short
+    failure budget. Built once per process, and at start-up by `create_app`."""
     return SnomedSynonymSource(OntoserverClient(interactive_config(TerminologyConfig.from_env())))
 
 

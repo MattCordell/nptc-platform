@@ -26,11 +26,8 @@ so a caller can tell the AU preferred term from a silent fallback to another one
 
 **No server-side cache and no bespoke rate limiter.** A cached FSN is the stale-label hazard
 FR-82 forbids, and `REGISTRY_READ` already limits traffic to signed-in, submission-capable
-callers. `SCTID(code)` rejects junk before a socket opens, and `OntoserverClient` already
-sits behind a process-wide `lru_cache` with a keep-alive pool. Caching belongs client-side.
-`EntryDetail.snomed_synonyms` does cache and is anonymous, for reasons that do not apply here:
-its code comes from a stored binding, never the caller, and its synonyms are never stored
-(`nptc.terminology.synonyms`).
+callers. `SCTID(code)` rejects junk before a socket opens. `EntryDetail.snomed_synonyms` may
+be anonymous and cached because its caller never chooses the code (`nptc.terminology.synonyms`).
 """
 
 from __future__ import annotations

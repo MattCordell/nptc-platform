@@ -323,6 +323,79 @@ not public catalogue browsing.
 | `is_concept_absence`, or any other terminology failure, on the `value_set` branch | 502 (`TerminologyUpstreamError`) - no `not_found` factory is passed to `classify_terminology_error` here, since an unresolved value set has no single code to report absent, unlike FR-26's own route |
 | `TerminologyRateLimitError`, or a timeout/transport failure, or another retryable `TerminologyStatusError` | 503 (`Retry-After` when the server supplied one) - only reachable on the `value_set` branch |
 
+## Entry detail: live SNOMED CT synonyms (issue #517)
+
+Every entry detail route fills `EntryDetail.snomed_synonyms` from
+`nptc.terminology.synonyms.SnomedSynonymSource`. This covers the public routes and
+`GET /catalogue/admin/entries/{business_key}`. It is the only terminology call on a public
+read path. The synonyms are display-only and never stored.
+
+### What is fetched
+
+One `CodeSystem/$lookup` per code, against `SNOMED_CT_AU` with
+`display_language=AU_LANGUAGE_TAG`. The source asks only when the entry has an active
+SNOMED CT binding. Otherwise the field is `null`. A synonym is any served designation
+that is none of these:
+
+- the FSN (its `use` is 900000000000003001);
+- a refset's preferred term, marked `use` `preferredForLanguage`;
+- a designation tagged with a refset language (`-x-sctlang-`), which is how the stub client
+  marks a preferred term;
+- the served AU preferred term, or the binding's stored one.
+
+Duplicates collapse, and the server's order is kept.
+
+### Why the synonyms are not limited to en-AU
+
+The issue asked for synonyms acceptable in the AU language refset (32570271000036106). A
+probe of Ontoserver 6.29.0 (`tx.ontoserver.csiro.au`) and 6.29.1 (`r4.ontoserver.csiro.au`)
+on 2026-10-09 found no FHIR operation that separates them:
+
+| Probe | Result |
+|---|---|
+| `$lookup` or `$expand` with designations | Every synonym is `en`/Synonym. Only each refset's preferred term carries its refset tag. |
+| `displayLanguage` set to the AU refset | Changes `display` only; the synonyms are unfiltered. |
+| `$expand` `designation` filter with the AU tag | Returns the AU preferred term only. |
+| `$validate-code` with `display` and `displayLanguage` | Accepts every designation, US spellings included. |
+| ECL `dialectId = ... (accept)` or `acceptableIn` | Rejected as unsupported. |
+
+So the field carries every synonym, and US spellings can appear. For 271737000 the terms
+are "Absolute anaemia", "Absolute anemia" and "Anemia". The API docs and the user docs
+say so. A true en-AU filter needs a server that exposes acceptability.
+
+### Cache and failure budget
+
+| Setting | Value | Why |
+|---|---|---|
+| Result lifetime | 24 h | AU releases are monthly. |
+| Failure lifetime | 60 s | A down server is asked at most once a minute per code. |
+| Maximum codes held | 10,000 | The catalogue holds about 2,000 active bindings, with a ceiling near 5,000. |
+| Timeout | 3 s, or `NPTC_TX_TIMEOUT_SECONDS` if shorter | Live lookups took 0.3 to 0.9 s on 2026-10-09. |
+| Retries | None | The page waits on this call. |
+
+The cache is in process, so each API process holds its own. The timeout and retries come
+from `interactive_config`, applied to a second `OntoserverClient` built by
+`get_snomed_synonym_source`. The shared client's defaults (30 s, three retries) could hold
+the page for over a minute.
+
+Any `TerminologyError` becomes `status: "unavailable"` with no terms, and the response
+is still 200 (FR-54). This covers a timeout, a transport failure, a 5xx, a rate limit and
+an unknown code. A `TerminologyConfigError` is the exception: it propagates to the 500
+that `nptc.api.errors` gives it.
+
+### Why this cache and anonymous access are acceptable here
+
+The FR-26 route above refuses both, for two reasons. An anonymous route that takes a
+code would make the platform an open proxy onto a shared public server (OI-8). A cached
+FSN is a stale label, which FR-82 forbids. Neither applies to the synonyms:
+
+- The code comes from the entry's stored active binding, never from the caller. An
+  anonymous caller cannot choose what is looked up.
+- Upstream calls are bounded by the number of active bindings, once per cache lifetime,
+  and the anonymous per-IP limit (FR-22) applies to the detail routes.
+- The synonyms are never stored or exported, and the stored FSN and AU preferred term are
+  not affected (FR-82).
+
 ## Not implemented here
 
 - FR-47's *forecast* finding — a concept inactivated in International while still active in
@@ -332,5 +405,6 @@ not public catalogue browsing.
 - FR-54's degradation *policy* — incomplete runs, cached prior results staying visible and
   dated. The sweep's obligation stops at raising; the transform CLI's response is to exit 3
   and write no report at all.
-- HTTP response caching and OAuth2 client-credentials — deferred; see ADR-0003's
-  Consequences.
+- HTTP response caching inside the client, and OAuth2 client-credentials — deferred; see
+  ADR-0003's Consequences. The entry detail's synonym cache sits above the client, for one
+  caller only.
