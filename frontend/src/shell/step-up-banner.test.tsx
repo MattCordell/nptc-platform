@@ -27,7 +27,7 @@ function sessionRoute(overrides: Record<string, unknown> = {}): Route {
         organisation: null,
         status: "active",
       },
-      roles: ["Administrator"],
+      roles: ["administrator"],
       permissions: [],
       mfa_satisfied: false,
       ...overrides,
