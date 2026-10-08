@@ -60,7 +60,7 @@ const ROUTES = [
   {
     to: "/catalogue/$businessKey/history",
     params: { businessKey: "NPTC-000247" },
-    heading: /Entry change history/i,
+    heading: /^Change history for NPTC-000247$/,
   },
   { to: "/releases", heading: /^Releases$/i },
   {

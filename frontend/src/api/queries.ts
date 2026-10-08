@@ -291,10 +291,16 @@ export function useEntryProperties(businessKey: string) {
   });
 }
 
+type HistoryPage = components["schemas"]["HistoryPage"];
+
 export interface EntryHistoryParams {
   limit?: number;
   /** The previous page's `next_cursor`, passed back unchanged (ADR-0024). */
   before?: string | null;
+  /** Keep the page already on screen while the next one loads, so a focused
+   * paging control is not unmounted. Never carries over to another entry or
+   * to a reader of the other sign-in state. */
+  keepPreviousPage?: boolean;
 }
 
 /**
@@ -312,16 +318,24 @@ export interface EntryHistoryParams {
 export function useEntryHistory(businessKey: string, params: EntryHistoryParams = {}) {
   const client = useApiClient();
   const { status } = useAuth();
-  const { limit, before } = params;
+  const { limit, before, keepPreviousPage = false } = params;
   const query: PublicHistoryQuery = { limit, before };
-  return useQuery({
+  const signedIn = status === "signed-in";
+  return useQuery<HistoryPage, Error, HistoryPage, readonly unknown[]>({
     queryKey: [
       "api",
       "/api/v1/catalogue/entries/{business_key}/history",
       businessKey,
       query,
-      { signedIn: status === "signed-in" },
+      { signedIn },
     ],
+    placeholderData: (previousData, previousQuery) =>
+      keepPreviousPage &&
+      previousQuery !== undefined &&
+      previousQuery.queryKey[2] === businessKey &&
+      JSON.stringify(previousQuery.queryKey[4]) === JSON.stringify({ signedIn })
+        ? previousData
+        : undefined,
     queryFn: async ({ signal }) =>
       unwrap(
         await client.GET("/api/v1/catalogue/entries/{business_key}/history", {
