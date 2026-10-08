@@ -1,4 +1,4 @@
-import { screen, waitFor } from "@testing-library/react";
+import { act, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
@@ -173,6 +173,22 @@ describe("a code that an entry binds", () => {
     expect(result).not.toHaveTextContent("Retired");
   });
 
+  it("shows an unlisted binding status as its own text, not as retired", async () => {
+    await renderLookup(LONG_CODE, [
+      lookupRoute(LONG_CODE, {
+        body: entry([
+          binding({ status: "suspended", retirement_reason: "Held for review" }),
+        ]),
+      }),
+    ]);
+
+    const result = await screen.findByRole("region", { name: "Matching entry" });
+    expect(result).toHaveTextContent("suspended");
+    expect(result).not.toHaveTextContent("Retired");
+    expect(result).not.toHaveTextContent("retired on this entry");
+    expect(result).not.toHaveTextContent("Held for review");
+  });
+
   it("still shows the entry when its bindings do not list the code", async () => {
     await renderLookup(LONG_CODE, [lookupRoute(LONG_CODE, { body: entry([]) })]);
 
@@ -267,6 +283,93 @@ describe("a lookup the server refuses or cannot answer", () => {
     expect(
       await screen.findByRole("region", { name: "Matching entry" }),
     ).toHaveTextContent("Ferritin");
+    expect(
+      screen.queryByRole("region", { name: "Lookup failed" }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("keeps the failure and focus on the button during a retry, and again when it fails", async () => {
+    const user = userEvent.setup();
+    stubApi([lookupRoute(LONG_CODE, { status: 500, body: { detail: "boom" } })]);
+    const inner = globalThis.fetch;
+    let holding = false;
+    let release: () => void = () => {};
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    vi.stubGlobal("fetch", async (request: Request) => {
+      if (holding) {
+        await gate;
+      }
+      return inner(request);
+    });
+    await renderRoute(`/catalogue/code/sct/${LONG_CODE}`);
+    await screen.findByRole("region", { name: "Lookup failed" });
+
+    holding = true;
+    await user.click(screen.getByRole("button", { name: "Try again" }));
+
+    const busy = await screen.findByRole("button", { name: "Trying again…" });
+    expect(busy).toHaveAttribute("aria-disabled", "true");
+    expect(busy).toHaveFocus();
+    expect(screen.getByRole("region", { name: "Lookup failed" })).toBeInTheDocument();
+    await expectAnnounced("Looking up the code again.");
+
+    release();
+    const again = await screen.findByRole("button", { name: "Try again" });
+    expect(again).not.toHaveAttribute("aria-disabled");
+    await expectAnnounced(
+      "This code could not be looked up. Try again in a moment.",
+      "alert",
+    );
+  });
+
+  it("shows the no-match answer when a retry finds the code has no entry", async () => {
+    const user = userEvent.setup();
+    let answer: Route = lookupRoute("999", { status: 500, body: { detail: "boom" } });
+    stubApi([], { vary: ({ path }) => (path.endsWith("/code/sct/999") ? answer : null) });
+    await renderRoute("/catalogue/code/sct/999");
+    await screen.findByRole("region", { name: "Lookup failed" });
+
+    answer = lookupRoute("999", { status: 404, body: { detail: NOT_FOUND_DETAIL } });
+    await user.click(screen.getByRole("button", { name: "Try again" }));
+
+    expect(
+      await screen.findByRole("region", { name: "No matching entry" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole("region", { name: "Lookup failed" }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("does not carry a retry over to the next code the user opens", async () => {
+    const user = userEvent.setup();
+    stubApi([
+      lookupRoute("111", { status: 500, body: { detail: "boom" } }),
+      lookupRoute("222", { status: 500, body: { detail: "boom" } }),
+    ]);
+    const inner = globalThis.fetch;
+    let holding = false;
+    vi.stubGlobal("fetch", async (request: Request) => {
+      if (holding) {
+        await new Promise(() => {});
+      }
+      return inner(request);
+    });
+    const { router } = await renderRoute("/catalogue/code/sct/111");
+    await screen.findByRole("region", { name: "Lookup failed" });
+
+    holding = true;
+    await user.click(screen.getByRole("button", { name: "Try again" }));
+    await screen.findByRole("button", { name: "Trying again…" });
+    await act(async () => {
+      await router.navigate({
+        to: "/catalogue/code/$systemToken/$code",
+        params: { systemToken: "sct", code: "222" },
+      });
+    });
+
+    expect(await visible("Looking up the code…")).toBeInTheDocument();
     expect(
       screen.queryByRole("region", { name: "Lookup failed" }),
     ).not.toBeInTheDocument();

@@ -1,4 +1,4 @@
-import { screen, waitFor } from "@testing-library/react";
+import { act, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
@@ -211,6 +211,24 @@ describe("an address that carries a system URI and a code", () => {
     }
     expect(screen.getByRole("textbox", { name: "Code" })).toHaveValue(LEADING_ZEROS);
     expect(router.state.location.pathname).toBe("/catalogue/lookup");
+  });
+
+  it("follows a move to another address on the same route", async () => {
+    stubApi([BY_URI]);
+    const { router } = await renderRoute(lookupUrl(SYSTEM_URI, LEADING_ZEROS));
+    await screen.findByRole("region", { name: "Matching entry" });
+    expect(screen.getByRole("textbox", { name: "Code" })).toHaveValue(LEADING_ZEROS);
+
+    await act(async () => {
+      await router.navigate({
+        to: "/catalogue/lookup",
+        search: { system: SYSTEM_URI, code: "0042" },
+      });
+    });
+
+    await waitFor(() =>
+      expect(screen.getByRole("textbox", { name: "Code" })).toHaveValue("0042"),
+    );
   });
 
   it("says no entry matches when the server answers 404", async () => {

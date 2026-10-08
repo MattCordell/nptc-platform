@@ -48,7 +48,9 @@ which. Check the code, then use **Look up another code**.
 
 - **Code not accepted** means the catalogue refused the system or code as written. Check both
   and look up again.
-- **Lookup failed** means the page could not reach the catalogue. Choose **Try again**.
+- **Lookup failed** means the page could not reach the catalogue. Choose **Try again**. The
+  button reads **Trying again…** and keeps focus while it works, and the failure box stays
+  until the answer arrives.
 
 ## Links that carry a code
 

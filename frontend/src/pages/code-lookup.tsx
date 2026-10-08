@@ -34,15 +34,21 @@ const SYSTEM_OPTIONS = CODE_SYSTEMS.map((system) => ({
   label: system.label,
 }));
 
-export function CodeLookupPage() {
-  const search = useSearch({ from: "/catalogue/lookup" });
+/**
+ * Owns what the user has typed. The page keys it on the address, so a move to
+ * another `?system=&code=` on this route starts it from that address instead of
+ * keeping the earlier text.
+ */
+function LookupForm({
+  initialToken,
+  initialCode,
+}: {
+  initialToken: string;
+  initialCode: string;
+}) {
   const navigate = useNavigate();
-  useDocumentTitle("Code lookup — NPTC Catalogue");
-
-  const [token, setToken] = useState(
-    codeSystemForUri(search.system)?.token ?? DEFAULT_CODE_SYSTEM.token,
-  );
-  const [code, setCode] = useState(search.code);
+  const [token, setToken] = useState(initialToken);
+  const [code, setCode] = useState(initialCode);
   const [attempted, setAttempted] = useState(false);
 
   const trimmedCode = code.trim();
@@ -50,10 +56,6 @@ export function CodeLookupPage() {
     attempted && trimmedCode === ""
       ? [{ fieldId: CODE_FIELD_ID, message: "Enter a code." }]
       : [];
-
-  const addressedCode = search.code.trim();
-  const addressed = useEntryBySystemCode(search.system.trim(), addressedCode);
-  const hasAddressedLookup = search.system.trim() !== "" && addressedCode !== "";
 
   function handleSubmit() {
     setAttempted(true);
@@ -65,6 +67,54 @@ export function CodeLookupPage() {
       params: { systemToken: token, code: trimmedCode },
     });
   }
+
+  return (
+    <Card className="max-w-3xl">
+      <Form
+        aria-label="Look up a code"
+        onSubmit={handleSubmit}
+        errors={errors}
+        errorSummaryTitle="Enter a code to look up"
+        submitLabel="Look up"
+      >
+        <Select
+          id={SYSTEM_FIELD_ID}
+          label="Code system"
+          options={SYSTEM_OPTIONS}
+          value={token}
+          onChange={(event) => setToken(event.target.value)}
+        />
+        <Field
+          id={CODE_FIELD_ID}
+          label="Code"
+          hint="Type the code exactly as written, including any leading zeros."
+          error={errors[0]?.message}
+        >
+          {(control) => (
+            <input
+              {...control}
+              type="text"
+              value={code}
+              onChange={(event) => setCode(event.target.value)}
+              autoComplete="off"
+              spellCheck={false}
+              className={INPUT_CLASSES}
+            />
+          )}
+        </Field>
+      </Form>
+    </Card>
+  );
+}
+
+export function CodeLookupPage() {
+  const search = useSearch({ from: "/catalogue/lookup" });
+  useDocumentTitle("Code lookup — NPTC Catalogue");
+
+  const addressedSystem = search.system.trim();
+  const addressedCode = search.code.trim();
+  const addressed = useEntryBySystemCode(addressedSystem, addressedCode);
+  const hasAddressedLookup = addressedSystem !== "" && addressedCode !== "";
 
   return (
     <section aria-labelledby={HEADING_ID}>
@@ -85,43 +135,19 @@ export function CodeLookupPage() {
           title="Code lookup"
           meta="Find the catalogue entry that binds a code."
         />
-        <Card className="max-w-3xl">
-          <Form
-            aria-label="Look up a code"
-            onSubmit={handleSubmit}
-            errors={errors}
-            errorSummaryTitle="Enter a code to look up"
-            submitLabel="Look up"
-          >
-            <Select
-              id={SYSTEM_FIELD_ID}
-              label="Code system"
-              options={SYSTEM_OPTIONS}
-              value={token}
-              onChange={(event) => setToken(event.target.value)}
-            />
-            <Field
-              id={CODE_FIELD_ID}
-              label="Code"
-              hint="Type the code exactly as written, including any leading zeros."
-              error={errors[0]?.message}
-            >
-              {(control) => (
-                <input
-                  {...control}
-                  type="text"
-                  value={code}
-                  onChange={(event) => setCode(event.target.value)}
-                  autoComplete="off"
-                  spellCheck={false}
-                  className={INPUT_CLASSES}
-                />
-              )}
-            </Field>
-          </Form>
-        </Card>
+        <LookupForm
+          key={`form|${search.system}|${search.code}`}
+          initialToken={
+            codeSystemForUri(search.system)?.token ?? DEFAULT_CODE_SYSTEM.token
+          }
+          initialCode={search.code}
+        />
         {hasAddressedLookup ? (
-          <CodeLookupResult query={addressed} code={addressedCode} />
+          <CodeLookupResult
+            key={`result|${addressedSystem}|${addressedCode}`}
+            query={addressed}
+            code={addressedCode}
+          />
         ) : null}
       </PageContainer>
     </section>

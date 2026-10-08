@@ -1,6 +1,6 @@
 import { Link } from "@tanstack/react-router";
 import type { UseQueryResult } from "@tanstack/react-query";
-import { useEffect, type ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 
 import { refusalDetail } from "../api/conflicts.ts";
 import type { components } from "../api/schema.ts";
@@ -56,6 +56,7 @@ function matchedBinding(entry: EntryDetail, code: string): Binding | undefined {
 function Match({ entry, code }: { entry: EntryDetail; code: string }) {
   const binding = matchedBinding(entry, code);
   const status = binding === undefined ? undefined : bindingStatus(binding.status);
+  const retired = binding?.status === "retired";
   return (
     <Card
       role="region"
@@ -91,7 +92,7 @@ function Match({ entry, code }: { entry: EntryDetail; code: string }) {
             <StatusBadge tone={status.tone} label={status.label} />
           )}
         </dd>
-        {binding !== undefined && binding.status !== "active" ? (
+        {binding !== undefined && retired ? (
           <>
             <dt className="text-[var(--color-text-muted)]">Retirement</dt>
             <dd className="m-0">
@@ -100,9 +101,7 @@ function Match({ entry, code }: { entry: EntryDetail; code: string }) {
           </>
         ) : null}
       </dl>
-      {binding !== undefined && binding.status !== "active" ? (
-        <p className="m-0">This code is retired on this entry.</p>
-      ) : null}
+      {retired ? <p className="m-0">This code is retired on this entry.</p> : null}
     </Card>
   );
 }
@@ -141,16 +140,26 @@ export function CodeLookupResult({
 }) {
   const { message, politeness, announce } = useAnnounce();
   const outcome = outcomeOf(query);
+  // A refetch after a first failure drops back to "loading", which would unmount
+  // the Try again button the user just pressed and leave focus on the page body.
+  const [retrying, setRetrying] = useState(false);
+  if (
+    retrying &&
+    (outcome === "match" || outcome === "no-match" || outcome === "refused")
+  ) {
+    setRetrying(false);
+  }
+  const showFailure = outcome === "failed" || (retrying && outcome === "loading");
   const found = outcome === "match" ? query.data : undefined;
   const preferredTerm = found?.preferred_term;
 
   useEffect(() => {
     if (outcome === "match" && preferredTerm !== undefined) {
-      announce(`Found the entry ${preferredTerm}.`);
+      announce(`Found the entry ${preferredTerm}.`, "polite");
     } else if (outcome === "no-match") {
-      announce("No entry matches this code.");
+      announce("No entry matches this code.", "polite");
     } else if (outcome === "refused") {
-      announce(REFUSED);
+      announce(REFUSED, "polite");
     } else if (outcome === "failed") {
       announce(LOAD_FAILURE, "assertive");
     }
@@ -159,7 +168,9 @@ export function CodeLookupResult({
   return (
     <>
       <LiveRegion message={message} politeness={politeness} />
-      {outcome === "loading" ? <p className="m-0">Looking up the code…</p> : null}
+      {outcome === "loading" && !showFailure ? (
+        <p className="m-0">Looking up the code…</p>
+      ) : null}
       {outcome === "match" && found !== undefined ? (
         <Match entry={found} code={code} />
       ) : null}
@@ -173,16 +184,24 @@ export function CodeLookupResult({
           <p className="m-0">{REFUSED}</p>
         </Notice>
       ) : null}
-      {outcome === "failed" ? (
+      {showFailure ? (
         <Notice title="Lookup failed">
           <p className="m-0 text-[var(--color-danger)]">{LOAD_FAILURE}</p>
           <div>
             <Button
               type="button"
               variant="secondary"
-              onClick={() => void query.refetch()}
+              aria-disabled={outcome === "loading" || undefined}
+              onClick={() => {
+                if (outcome === "loading") {
+                  return;
+                }
+                setRetrying(true);
+                announce("Looking up the code again.", "polite");
+                void query.refetch();
+              }}
             >
-              Try again
+              {outcome === "loading" ? "Trying again…" : "Try again"}
             </Button>
           </div>
         </Notice>

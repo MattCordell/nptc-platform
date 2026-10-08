@@ -47,7 +47,7 @@ export function CodeByTokenPage() {
             </span>
           }
         />
-        <CodeLookupResult query={query} code={code} />
+        <CodeLookupResult key={`${systemToken}|${code}`} query={query} code={code} />
         <div>
           <Link to="/catalogue/lookup" className={buttonClassName("secondary")}>
             Look up another code
