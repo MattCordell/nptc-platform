@@ -39,14 +39,16 @@ card for each administration screen. Select a card's title to open the screen.
 
 A planned card opens a page that says the screen has not been built yet.
 
-If you are signed in without the Administrator role, the home shows the notice "Your account
-does not have the administrator role" and keeps every card, because the server decides what
-you may do on each screen.
+If you are signed in without the Administrator role, the home shows a notice at the top and
+keeps every card, because the server decides what you may do on each screen. The notice has
+two wordings, chosen by whether you have finished the extra sign-in step:
 
-If you are an Administrator and have not finished the extra sign-in step, the notice reads
-"This session does not include the administrator role" instead, because the platform leaves
-the role out of your session until that step is done. Use **Verify now** in the banner at
-the top of the page, then reload.
+- **Step finished:** "Your account does not have the administrator role." Ask an
+  Administrator to grant you the role.
+- **Step not finished:** "This session does not include the administrator role." The platform
+  leaves the role out of your session until you finish the step, so this wording also appears
+  for an Administrator who has not done it yet, and for any other signed-in user. If you are
+  an Administrator, use **Verify now** in the banner at the top of the page, then reload.
 
 **Multi-factor authentication.** Every administrative action needs a second sign-in step
 beyond a password — see [Signing in](signing-in.md#multi-factor-authentication) for when
