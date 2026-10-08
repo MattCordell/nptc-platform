@@ -4305,20 +4305,24 @@
           },
           "warnings": {
             "items": {
-              "$ref": "#/components/schemas/CollisionWarning"
+              "oneOf": [
+                {
+                  "$ref": "#/components/schemas/CollisionWarning"
+                },
+                {
+                  "$ref": "#/components/schemas/LengthWarning"
+                }
+              ],
+              "discriminator": {
+                "propertyName": "kind",
+                "mapping": {
+                  "collision": "#/components/schemas/CollisionWarning",
+                  "length": "#/components/schemas/LengthWarning"
+                }
+              }
             },
             "type": "array",
             "title": "Warnings"
-          },
-          "length_warning": {
-            "anyOf": [
-              {
-                "$ref": "#/components/schemas/LengthWarning"
-              },
-              {
-                "type": "null"
-              }
-            ]
           },
           "row_version": {
             "type": "integer",
@@ -4329,11 +4333,10 @@
         "required": [
           "designation",
           "warnings",
-          "length_warning",
           "row_version"
         ],
         "title": "AmendDesignationResult",
-        "description": "The amended term, plus the entry's version after the write.\n\n`designation` is the same shape on both branches, including the one\nthat did not touch a `designation` row at all: the catalogue's own\nen-AU preferred term comes back rendered as\n`use=\"preferred\", language=\"en-AU\"`. That is this API's whole premise -\nevery term the catalogue holds is a designation, and ADR-0022's split\nbetween two storage homes is not something a client should have to\nmodel (see the module docstring).\n\n`row_version` is the entry's, on both branches, and is what a client\nsends back as `expected_row_version` on its next write - so a save\nnever has to be followed by a re-fetch just to learn the new token. It\nadvances on both branches (FR-38): a `designation` row has no version\nof its own, but amending one bumps the entry's counter via\n`nptc.catalogue.entries.entry_child_write`, the same way the\npreferred-term branch's `save_entry` always has.\n\n`length_warning` (FR-86) is set only on the preferred-term branch, and\nonly when a maximum is configured and exceeded - see `LengthWarning`'s\nown docstring for why it is a separate field rather than a member of\n`warnings`."
+        "description": "The amended term, plus the entry's version after the write.\n\n`designation` is the same shape on both branches, including the one\nthat did not touch a `designation` row at all: the catalogue's own\nen-AU preferred term comes back rendered as\n`use=\"preferred\", language=\"en-AU\"`. That is this API's whole premise -\nevery term the catalogue holds is a designation, and ADR-0022's split\nbetween two storage homes is not something a client should have to\nmodel (see the module docstring).\n\n`row_version` is the entry's, on both branches, and is what a client\nsends back as `expected_row_version` on its next write - so a save\nnever has to be followed by a re-fetch just to learn the new token. It\nadvances on both branches (FR-38): a `designation` row has no version\nof its own, but amending one bumps the entry's counter via\n`nptc.catalogue.entries.entry_child_write`, the same way the\npreferred-term branch's `save_entry` always has.\n\n`warnings` carries a `LengthWarning` (FR-86) only on the preferred-term\nbranch, and only when a maximum is configured and exceeded. A synonym\namend can carry only collision warnings."
       },
       "AmendPropertyDefinitionRequest": {
         "properties": {
@@ -4978,6 +4981,11 @@
       },
       "CollisionWarning": {
         "properties": {
+          "kind": {
+            "type": "string",
+            "const": "collision",
+            "title": "Kind"
+          },
           "term": {
             "type": "string",
             "title": "Term"
@@ -5000,6 +5008,7 @@
         },
         "type": "object",
         "required": [
+          "kind",
           "term",
           "business_key",
           "preferred_term",
@@ -5410,7 +5419,21 @@
           },
           "warnings": {
             "items": {
-              "$ref": "#/components/schemas/CollisionWarning"
+              "oneOf": [
+                {
+                  "$ref": "#/components/schemas/CollisionWarning"
+                },
+                {
+                  "$ref": "#/components/schemas/LengthWarning"
+                }
+              ],
+              "discriminator": {
+                "propertyName": "kind",
+                "mapping": {
+                  "collision": "#/components/schemas/CollisionWarning",
+                  "length": "#/components/schemas/LengthWarning"
+                }
+              }
             },
             "type": "array",
             "title": "Warnings"
@@ -5943,6 +5966,11 @@
       },
       "LengthWarning": {
         "properties": {
+          "kind": {
+            "type": "string",
+            "const": "length",
+            "title": "Kind"
+          },
           "length": {
             "type": "integer",
             "title": "Length"
@@ -5954,11 +5982,12 @@
         },
         "type": "object",
         "required": [
+          "kind",
           "length",
           "max_length"
         ],
         "title": "LengthWarning",
-        "description": "FR-86: the catalogue's own preferred term exceeds the configured\nmaximum length. Non-blocking, the same \"warn, never raise\" shape as\n`CollisionWarning` - a hard block would make an existing over-length\nentry uneditable, the specific failure FR-86 exists to prevent.\n\nA separate field from `CollisionWarning`/`warnings`, not a member of\nthat list: `warning_collisions` only ever looks for another live\nentry's active synonym, which has nothing to do with this entry's own\nlength, and `CollisionWarning`'s shape (a colliding entry's business\nkey, term, provenance) has no field this could honestly populate.\n\nOnly ever produced on `amend_designation_route`'s preferred-term\nbranch: FR-85's `length` is defined against the catalogue's own\npreferred term (`nptc.catalogue.term_hygiene.preferred_term_length`),\nwhich lives on `catalogue_entry.preferred_term`, never on a\n`designation` row (ADR-0022) - there is no other branch this could ever\napply to."
+        "description": "FR-86: the catalogue's own preferred term exceeds the configured\nmaximum length. Non-blocking, the same \"warn, never raise\" shape as\n`CollisionWarning` - a hard block would make an existing over-length\nentry uneditable, the specific failure FR-86 exists to prevent.\n\nA separate union member from `CollisionWarning`, not a widened\n`CollisionWarning`: its shape (a colliding entry's business key, term,\nprovenance) has no field this could honestly populate, and this one has\nno colliding entry to name. Both ride the one `warnings` list so a\nfurther warning class adds a member, not a response field.\n\nOnly ever produced on `amend_designation_route`'s preferred-term\nbranch: FR-85's `length` is defined against the catalogue's own\npreferred term (`nptc.catalogue.term_hygiene.preferred_term_length`),\nwhich lives on `catalogue_entry.preferred_term`, never on a\n`designation` row (ADR-0022) - there is no other branch this could ever\napply to."
       },
       "PatchEntryRequest": {
         "properties": {
@@ -6422,7 +6451,21 @@
           },
           "warnings": {
             "items": {
-              "$ref": "#/components/schemas/CollisionWarning"
+              "oneOf": [
+                {
+                  "$ref": "#/components/schemas/CollisionWarning"
+                },
+                {
+                  "$ref": "#/components/schemas/LengthWarning"
+                }
+              ],
+              "discriminator": {
+                "propertyName": "kind",
+                "mapping": {
+                  "collision": "#/components/schemas/CollisionWarning",
+                  "length": "#/components/schemas/LengthWarning"
+                }
+              }
             },
             "type": "array",
             "title": "Warnings"

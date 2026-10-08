@@ -38,7 +38,7 @@ so its 403 carries no step-up challenge.
 
 from __future__ import annotations
 
-from typing import Annotated, Any, Final
+from typing import Annotated, Any, Final, Literal
 
 from fastapi import APIRouter, Body, Depends, Response
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
@@ -248,6 +248,7 @@ class CollisionWarning(BaseModel):
 
     model_config = ConfigDict(frozen=True)
 
+    kind: Literal["collision"]
     term: str
     business_key: str
     preferred_term: str
@@ -265,6 +266,7 @@ _COLLISION_WARNING_LABEL_PROVENANCE: dict[str, LabelProvenance] = {
 
 def _collision_warning(collision: Collision) -> CollisionWarning:
     return CollisionWarning(
+        kind="collision",
         term=collision.term,
         business_key=collision.business_key,
         preferred_term=collision.preferred_term,
@@ -278,11 +280,11 @@ class LengthWarning(BaseModel):
     `CollisionWarning` - a hard block would make an existing over-length
     entry uneditable, the specific failure FR-86 exists to prevent.
 
-    A separate field from `CollisionWarning`/`warnings`, not a member of
-    that list: `warning_collisions` only ever looks for another live
-    entry's active synonym, which has nothing to do with this entry's own
-    length, and `CollisionWarning`'s shape (a colliding entry's business
-    key, term, provenance) has no field this could honestly populate.
+    A separate union member from `CollisionWarning`, not a widened
+    `CollisionWarning`: its shape (a colliding entry's business key, term,
+    provenance) has no field this could honestly populate, and this one has
+    no colliding entry to name. Both ride the one `warnings` list so a
+    further warning class adds a member, not a response field.
 
     Only ever produced on `amend_designation_route`'s preferred-term
     branch: FR-85's `length` is defined against the catalogue's own
@@ -294,8 +296,14 @@ class LengthWarning(BaseModel):
 
     model_config = ConfigDict(frozen=True)
 
+    kind: Literal["length"]
     length: int
     max_length: int
+
+
+#: Every write response's `warnings` item. `kind` is the discriminator, so the
+#: OpenAPI document and the generated client narrow on it (ADR-0045).
+DesignationWarning = Annotated[CollisionWarning | LengthWarning, Field(discriminator="kind")]
 
 
 def _length_warning(entry: CatalogueEntry, settings: ApiSettings) -> LengthWarning | None:
@@ -308,7 +316,7 @@ def _length_warning(entry: CatalogueEntry, settings: ApiSettings) -> LengthWarni
     length = entry.length
     if not exceeds_maximum_length(length, maximum):
         return None
-    return LengthWarning(length=length, max_length=maximum)
+    return LengthWarning(kind="length", length=length, max_length=maximum)
 
 
 class _WithLanguage(BaseModel):
@@ -391,7 +399,7 @@ class DesignationWriteResult(BaseModel):
     model_config = ConfigDict(frozen=True)
 
     designations: list[Designation]
-    warnings: list[CollisionWarning]
+    warnings: list[DesignationWarning]
     row_version: int
 
 
@@ -439,17 +447,15 @@ class AmendDesignationResult(BaseModel):
     `nptc.catalogue.entries.entry_child_write`, the same way the
     preferred-term branch's `save_entry` always has.
 
-    `length_warning` (FR-86) is set only on the preferred-term branch, and
-    only when a maximum is configured and exceeded - see `LengthWarning`'s
-    own docstring for why it is a separate field rather than a member of
-    `warnings`.
+    `warnings` carries a `LengthWarning` (FR-86) only on the preferred-term
+    branch, and only when a maximum is configured and exceeded. A synonym
+    amend can carry only collision warnings.
     """
 
     model_config = ConfigDict(frozen=True)
 
     designation: Designation
-    warnings: list[CollisionWarning]
-    length_warning: LengthWarning | None
+    warnings: list[DesignationWarning]
     row_version: int
 
 
@@ -505,7 +511,7 @@ class ReinstateDesignationResult(BaseModel):
     model_config = ConfigDict(frozen=True)
 
     designation: Designation
-    warnings: list[CollisionWarning]
+    warnings: list[DesignationWarning]
     row_version: int
 
 
@@ -721,13 +727,13 @@ def amend_designation_route(
             max_preferred_term_length=settings.max_preferred_term_length,
         )
         session.flush()
-        # No `warnings`, as in `add_designations`' preferred branch: a preferred
-        # term matching another entry's synonym is an *error*-severity collision
-        # `save_entry` has already raised.
+        # No collision warnings, as in `add_designations`' preferred branch: a
+        # preferred term matching another entry's synonym is an *error*-severity
+        # collision `save_entry` has already raised.
+        length_warning = _length_warning(entry, settings)
         return AmendDesignationResult(
             designation=_preferred_term_as_designation(entry),
-            warnings=[],
-            length_warning=_length_warning(entry, settings),
+            warnings=[] if length_warning is None else [length_warning],
             row_version=entry.row_version,
         )
 
@@ -765,7 +771,6 @@ def amend_designation_route(
     return AmendDesignationResult(
         designation=designation_from_row(row),
         warnings=[_collision_warning(warning) for warning in warnings],
-        length_warning=None,
         # The entry's, bumped by `entry_child_write`: a `designation` row has no
         # version of its own (FR-38).
         row_version=entry.row_version,

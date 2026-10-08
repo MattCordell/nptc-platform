@@ -25,11 +25,16 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+from pydantic import BaseModel
 from sqlalchemy import func, select
 from sqlalchemy.engine import Connection
 
 import nptc.db.models.catalogue_entry as catalogue_entry_module
-from nptc.api.routers.catalogue_designations import AmendDesignationResult
+from nptc.api.routers.catalogue_designations import (
+    AmendDesignationResult,
+    DesignationWriteResult,
+    ReinstateDesignationResult,
+)
 from nptc.audit.writer import AuditContext
 from nptc.auth.permissions import Role
 from nptc.catalogue.entries import create_entry
@@ -491,6 +496,7 @@ def test_add_returns_the_ada2_warning_and_it_stops_recurring_once_acknowledged(
     assert response.status_code == 201, response.text
     warnings = response.json()["warnings"]
     assert {w["business_key"] for w in warnings} == {first_entry, second_entry}
+    assert {w["kind"] for w in warnings} == {"collision"}
     # FR-98 (issue #144): `CollisionWarning.label_provenance` is a fixed
     # dict on every instance - `term` is always the colliding synonym,
     # `preferred_term` the colliding entry's own catalogue preferred term.
@@ -540,6 +546,7 @@ def test_reinstate_returns_a_warning_for_an_unacknowledged_collision(api: ApiTes
     assert reinstate_response.status_code == 200, reinstate_response.text
     warnings = reinstate_response.json()["warnings"]
     assert {w["business_key"] for w in warnings} == {first_entry}
+    assert {w["kind"] for w in warnings} == {"collision"}
 
 
 @pytest.mark.req("FR-05")
@@ -1522,7 +1529,12 @@ def test_a_stale_version_is_refused_even_when_the_term_would_not_change(
 # Only the preferred-term branch of /amendment can ever produce this warning:
 # FR-85's `length` is defined against `catalogue_entry.preferred_term`
 # (ADR-0022), never a `designation` row, so amending a synonym has nothing to
-# compare a maximum against.
+# compare a maximum against. It rides the same `warnings` list as a collision
+# warning, told apart by `kind` (ADR-0045).
+
+
+def _length_warnings(response: Any) -> list[dict[str, Any]]:
+    return [w for w in response.json()["warnings"] if w["kind"] == "length"]
 
 
 @pytest.mark.req("FR-86")
@@ -1544,7 +1556,7 @@ def test_no_maximum_configured_never_produces_a_length_warning(api: ApiTestApp) 
     )
 
     assert response.status_code == 200, response.text
-    assert response.json()["length_warning"] is None
+    assert _length_warnings(response) == []
 
 
 @pytest.mark.req("FR-86")
@@ -1558,7 +1570,7 @@ def test_a_term_within_the_configured_maximum_is_not_warned(api: ApiTestApp) -> 
     response = _amend(api, business_key, token, new_term="Iron", expected_row_version=version)
 
     assert response.status_code == 200, response.text
-    assert response.json()["length_warning"] is None
+    assert _length_warnings(response) == []
 
 
 @pytest.mark.req("FR-86")
@@ -1584,10 +1596,13 @@ def test_a_term_exceeding_the_configured_maximum_still_saves_with_a_warning(
 
     assert response.status_code == 200, response.text
     body = response.json()
-    assert body["length_warning"] == {
-        "length": len("Full blood count, automated"),
-        "max_length": 10,
-    }
+    assert body["warnings"] == [
+        {
+            "kind": "length",
+            "length": len("Full blood count, automated"),
+            "max_length": 10,
+        }
+    ]
     detail = api.get(f"/catalogue/admin/entries/{business_key}", token=token).json()
     assert detail["preferred_term"] == "Full blood count, automated"
 
@@ -1600,7 +1615,7 @@ def test_the_warning_reports_the_cleaned_length_not_the_raw_submission(api: ApiT
     non-breaking space shortens the published length by one once `clean_term`
     strips it, for roughly one entry in five. Every other test in this
     section submits an ASCII term where `len(submitted) == entry.length`, so
-    none of them can tell `length_warning.length` apart from a warning built
+    none of them can tell the warning's `length` apart from a warning built
     off the raw request body rather than `entry.length` - this is the one
     case where those two figures actually disagree."""
     nbsp = chr(0x00A0)
@@ -1624,7 +1639,7 @@ def test_the_warning_reports_the_cleaned_length_not_the_raw_submission(api: ApiT
     assert response.status_code == 200, response.text
     body = response.json()
     assert body["designation"]["term"] == cleaned
-    assert body["length_warning"]["length"] == len(cleaned)
+    assert [w["length"] for w in _length_warnings(response)] == [len(cleaned)]
 
 
 @pytest.mark.req("FR-86")
@@ -1643,7 +1658,7 @@ def test_a_term_exactly_at_the_configured_maximum_is_not_warned(api: ApiTestApp)
     )
 
     assert response.status_code == 200, response.text
-    assert response.json()["length_warning"] is None
+    assert _length_warnings(response) == []
 
 
 @pytest.mark.req("FR-86")
@@ -1705,10 +1720,20 @@ def test_an_over_length_amendment_is_logged_by_the_write_path_and_still_saves(
 
 
 @pytest.mark.req("FR-86")
-def test_the_nullable_length_warning_is_required_so_null_is_always_deliberate() -> None:
-    """`length_warning` may be `null` but not omitted: a default of `None`
-    would let a forgotten value read as "no warning"."""
-    assert AmendDesignationResult.model_fields["length_warning"].is_required()
+@pytest.mark.parametrize(
+    "result_model",
+    [DesignationWriteResult, AmendDesignationResult, ReinstateDesignationResult],
+)
+def test_every_write_response_types_warnings_as_a_union_discriminated_on_kind(
+    result_model: type[BaseModel],
+) -> None:
+    """A further warning class must be one new union member, not a new field
+    on any of the three responses (ADR-0045)."""
+    schema = result_model.model_json_schema(mode="serialization")
+    items = schema["properties"]["warnings"]["items"]
+    assert items["discriminator"]["propertyName"] == "kind"
+    assert set(items["discriminator"]["mapping"]) == {"collision", "length"}
+    assert "length_warning" not in schema["properties"]
 
 
 @pytest.mark.req("FR-86")
@@ -1733,7 +1758,7 @@ def test_amending_a_synonym_never_carries_a_length_warning(api: ApiTestApp) -> N
     )
 
     assert response.status_code == 200, response.text
-    assert response.json()["length_warning"] is None
+    assert _length_warnings(response) == []
 
 
 # --- FR-38 row-version lock across routes (issue #300) --------------------
