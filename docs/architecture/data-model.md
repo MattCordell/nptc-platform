@@ -1112,11 +1112,27 @@ a desired shape for it this run. Runs on its own `AUTOCOMMIT` connection
 (`NPTC_INDEXER_DATABASE_URL` - see [`configuration.md`](../operations/configuration.md)),
 since `CREATE INDEX CONCURRENTLY` cannot run inside a transaction block; guarded by a
 `pg_try_advisory_lock` so two concurrent runs converging on the same state is a no-op, not a
-race. Callable as a library (so a future `property_definition` write path can dispatch it as
-a background task - none exists yet) and via `scripts/reconcile_property_indexes.py` for an
+race. The registry write path dispatches it: after a property is created, deprecated, or
+amended with `filterable`, `nptc.db.property_reconciler_dispatch.request_reconciliation`
+queues one run through `nptc.db.session.after_commit`, which `session_scope` runs once the
+request's commit has succeeded (FastAPI's `BackgroundTasks` would run before the commit and
+read the old definition). The run happens on one worker thread; a held advisory lock is
+retried; a run that fails is logged and recorded as a `property_index.reconciliation_failed`
+audit event, and never undoes the registry write (see
+[the runbook](../operations/runbooks/reconcile-property-indexes.md#automatic-runs-issue-274)).
+It is also callable as a library and via `scripts/reconcile_property_indexes.py` for an
 operator or a scheduled check - the CLI takes the resolved DSN as a direct function
 argument, never via `os.environ`, so a DDL-capable credential is never left where a
 subprocess could inherit it.
+
+**Who owns `property_value`.** `CREATE INDEX` needs table ownership, so migration 0025 makes
+the `NOLOGIN` role `nptc_property_index_owner` the owner of `property_value`, with `CREATE`
+on schema `public` (Postgres checks it for every new index) and `SELECT` on
+`property_definition` (the reconciler reads it). The `nptc_indexer` login is a member. The
+privileges `nptc_app` holds on `property_value` do not change. Owning the table lets the login
+plant a trigger, rule or function that runs as the next writer, so a migration that writes
+`property_value` first calls `nptc.db.migration_guards.refuse_foreign_code_on_property_value`
+(see [`upgrade.md`](../operations/upgrade.md)).
 
 Every generated index is named `ix_propval_p{index_seq}_{slot}` (see the truncation caveat
 above) - `slot` is always `1` today; `2` is reserved for a composite

@@ -20,7 +20,13 @@ from sqlalchemy.exc import OperationalError, ProgrammingError
 from testcontainers.community.postgres import PostgresContainer
 
 from nptc.db import provision_login
-from nptc.db.provision_login import APP_LOGIN_ROLE, main, provision_app_login
+from nptc.db.provision_login import (
+    APP_LOGIN_ROLE,
+    INDEXER_LOGIN_ROLE,
+    main,
+    provision_app_login,
+    provision_indexer_login,
+)
 
 _conftest_spec = importlib.util.spec_from_file_location(
     "_test_provision_login_conftest", Path(__file__).parent / "conftest.py"
@@ -43,13 +49,17 @@ _HOSTILE_PASSWORD = "it's a \\ $$ 100% test-only-not-a-real-secret"
 _HOSTILE_URL_SAFE_PASSWORD = "it's a \\ $$ test-only-not-a-real-secret"
 
 
-def _login_engine(owner_engine: Engine, password: str) -> Engine:
-    url = owner_engine.url.set(username=APP_LOGIN_ROLE, password=password)
+#: `nptc_indexer` is cluster-wide too. No fixture provisions it, so `main()` tests set this.
+_INDEXER_LOGIN_PASSWORD = "nptc-indexer-cli-test-only-not-a-real-secret"
+
+
+def _login_engine(owner_engine: Engine, password: str, role: str = APP_LOGIN_ROLE) -> Engine:
+    url = owner_engine.url.set(username=role, password=password)
     return create_engine(url)
 
 
-def _can_log_in(owner_engine: Engine, password: str) -> bool:
-    engine = _login_engine(owner_engine, password)
+def _can_log_in(owner_engine: Engine, password: str, role: str = APP_LOGIN_ROLE) -> bool:
+    engine = _login_engine(owner_engine, password, role)
     try:
         with engine.connect() as connection:
             connection.execute(text("SELECT 1"))
@@ -123,13 +133,78 @@ def test_cli_provisions_from_the_environment_without_printing_the_password(
 ) -> None:
     monkeypatch.setenv("NPTC_MIGRATION_DATABASE_URL", postgres_container.get_connection_url())
     monkeypatch.setenv("NPTC_APP_DB_PASSWORD", _APP_LOGIN_PASSWORD)
+    monkeypatch.setenv("NPTC_INDEXER_DB_PASSWORD", _INDEXER_LOGIN_PASSWORD)
 
     exit_code = main()
 
     captured = capsys.readouterr()
     assert exit_code == 0
     assert _APP_LOGIN_PASSWORD not in captured.out + captured.err
+    assert _INDEXER_LOGIN_PASSWORD not in captured.out + captured.err
     assert _can_log_in(owner_engine, _APP_LOGIN_PASSWORD)
+    assert _can_log_in(owner_engine, _INDEXER_LOGIN_PASSWORD, INDEXER_LOGIN_ROLE)
+
+
+@pytest.mark.req("FR-13")
+@pytest.mark.integration
+def test_indexer_login_is_a_member_of_the_property_index_owner_role(
+    db: Connection, migrated: None, owner_engine: Engine
+) -> None:
+    provision_indexer_login(owner_engine, _INDEXER_LOGIN_PASSWORD)
+
+    is_member = db.execute(
+        text("SELECT pg_has_role(:login, 'nptc_property_index_owner', 'member')"),
+        {"login": INDEXER_LOGIN_ROLE},
+    ).scalar_one()
+
+    assert is_member is True
+
+
+@pytest.mark.req("FR-13")
+@pytest.mark.integration
+def test_provisioning_the_indexer_again_rotates_its_password(
+    owner_engine: Engine, migrated: None
+) -> None:
+    rotated = "rotated-indexer-test-only-not-a-real-secret"
+    provision_indexer_login(owner_engine, _INDEXER_LOGIN_PASSWORD)
+    provision_indexer_login(owner_engine, rotated)
+
+    assert _can_log_in(owner_engine, rotated, INDEXER_LOGIN_ROLE)
+    assert not _can_log_in(owner_engine, _INDEXER_LOGIN_PASSWORD, INDEXER_LOGIN_ROLE)
+
+
+@pytest.mark.req("FR-13")
+def test_cli_names_the_missing_indexer_password_variable(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.setenv("NPTC_MIGRATION_DATABASE_URL", "postgresql+psycopg://o:x@127.0.0.1:1/none")
+    monkeypatch.setenv("NPTC_APP_DB_PASSWORD", _APP_LOGIN_PASSWORD)
+    monkeypatch.delenv("NPTC_INDEXER_DB_PASSWORD", raising=False)
+
+    exit_code = main()
+
+    captured = capsys.readouterr()
+    assert exit_code == 1
+    assert "NPTC_INDEXER_DB_PASSWORD" in captured.err
+    assert "OperationalError" not in captured.err, "must refuse before connecting"
+
+
+@pytest.mark.req("FR-13")
+@pytest.mark.parametrize("delimiter", ["@", ":", "/", "?", "#", "%"])
+def test_cli_refuses_an_indexer_password_with_a_url_delimiter(
+    delimiter: str, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    password = f"before{delimiter}after-test-only-not-a-real-secret"
+    monkeypatch.setenv("NPTC_MIGRATION_DATABASE_URL", "postgresql+psycopg://o:x@127.0.0.1:1/none")
+    monkeypatch.setenv("NPTC_APP_DB_PASSWORD", _APP_LOGIN_PASSWORD)
+    monkeypatch.setenv("NPTC_INDEXER_DB_PASSWORD", password)
+
+    exit_code = main()
+
+    captured = capsys.readouterr()
+    assert exit_code == 1
+    assert "NPTC_INDEXER_DB_PASSWORD" in captured.err
+    assert password not in captured.out + captured.err
 
 
 def test_cli_names_the_missing_password_variable(
@@ -163,6 +238,7 @@ def test_cli_failure_prints_the_error_type_but_not_the_dsn_or_password(
         f"postgresql+psycopg://owner:{secret}@127.0.0.1:1/none?connect_timeout=3",
     )
     monkeypatch.setenv("NPTC_APP_DB_PASSWORD", _HOSTILE_URL_SAFE_PASSWORD)
+    monkeypatch.setenv("NPTC_INDEXER_DB_PASSWORD", _INDEXER_LOGIN_PASSWORD)
 
     exit_code = main()
 

@@ -22,6 +22,8 @@ from sqlalchemy import create_engine, text
 from sqlalchemy.engine import Engine, make_url
 from testcontainers.community.postgres import PostgresContainer
 
+from nptc.db.migration_guards import ForeignCodeOnPropertyValueError
+
 REPO_ROOT = Path(__file__).resolve().parents[2]
 _DB = "nptc_specimen_binding"
 _OLD_URI = "http://snomed.info/sct?fhir_vs=ecl/%3C123038009"
@@ -417,3 +419,66 @@ def test_the_downgrade_gives_the_app_role_its_column_grant_back(engine: Engine) 
             )
         ).scalar_one()
     assert granted
+
+
+def _plant_trigger(engine: Engine) -> None:
+    with engine.begin() as connection:
+        connection.execute(
+            text(
+                "CREATE FUNCTION public.planted_function() RETURNS trigger LANGUAGE plpgsql "
+                "AS $$ BEGIN RETURN NEW; END $$"
+            )
+        )
+        connection.execute(
+            text(
+                "CREATE TRIGGER planted_trigger BEFORE INSERT ON property_value "
+                "FOR EACH ROW EXECUTE FUNCTION public.planted_function()"
+            )
+        )
+
+
+def _remove_trigger(engine: Engine) -> None:
+    with engine.begin() as connection:
+        connection.execute(text("DROP TRIGGER IF EXISTS planted_trigger ON property_value"))
+        connection.execute(text("DROP FUNCTION IF EXISTS public.planted_function()"))
+
+
+def _revision(engine: Engine) -> str | None:
+    with engine.connect() as connection:
+        return MigrationContext.configure(connection).get_current_revision()
+
+
+@pytest.mark.req("FR-13")
+@pytest.mark.integration
+def test_the_upgrade_refuses_to_write_property_value_while_a_trigger_is_on_it(
+    engine: Engine,
+) -> None:
+    """Migration 0025 lets another login create triggers on `property_value`, and the conversion
+    would fire one as the migration role."""
+    _at_0023_with(engine, {"NPTC-900001": True})
+    _plant_trigger(engine)
+    try:
+        with pytest.raises(ForeignCodeOnPropertyValueError):
+            _migrate(engine, "upgrade", "0024")
+
+        assert _revision(engine) == "0023"
+        assert _specimen_rows(engine) == {}
+    finally:
+        _remove_trigger(engine)
+
+
+@pytest.mark.req("FR-13")
+@pytest.mark.integration
+def test_the_downgrade_refuses_to_write_property_value_while_a_trigger_is_on_it(
+    engine: Engine,
+) -> None:
+    _at_0023_with(engine, {"NPTC-900001": False}, {"NPTC-900001": [_ROOT]})
+    _migrate(engine, "upgrade", "0024")
+    _plant_trigger(engine)
+    try:
+        with pytest.raises(ForeignCodeOnPropertyValueError):
+            _migrate(engine, "downgrade", "0023")
+
+        assert _revision(engine) == "0024"
+    finally:
+        _remove_trigger(engine)

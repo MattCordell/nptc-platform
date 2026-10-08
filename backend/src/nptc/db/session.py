@@ -18,7 +18,8 @@ connection pool per request.
 
 from __future__ import annotations
 
-from collections.abc import Iterator
+import logging
+from collections.abc import Callable, Iterator
 from functools import lru_cache
 
 from sqlalchemy import Engine, create_engine
@@ -49,6 +50,33 @@ def get_sessionmaker() -> sessionmaker[Session]:
     return sessionmaker(bind=get_engine(), expire_on_commit=False)
 
 
+_POST_COMMIT_KEY = "nptc.post_commit_actions"
+
+_log = logging.getLogger(__name__)
+
+
+def after_commit(session: Session, action: Callable[[], None]) -> None:
+    """Queues `action` to run after `session_scope` commits this session; a rollback discards it.
+
+    FastAPI's `BackgroundTasks` run before that commit. `action` runs on the request's thread, so
+    it must return quickly and must not use `session`.
+    """
+    session.info.setdefault(_POST_COMMIT_KEY, []).append(action)
+
+
+def discard_after_commit_actions(session: Session) -> None:
+    session.info.pop(_POST_COMMIT_KEY, None)
+
+
+def run_after_commit_actions(session: Session) -> None:
+    """Runs and clears the queued actions. A failing one is logged and skipped: the commit is done."""
+    for action in session.info.pop(_POST_COMMIT_KEY, []):
+        try:
+            action()
+        except Exception as exc:
+            _log.error("a post-commit action failed (%s)", type(exc).__name__)
+
+
 def session_scope() -> Iterator[Session]:
     """One session per request, committed on success and rolled back on any exception. The commit
     lives here, not in each route, so a state change and the `audit_event` row recording it commit
@@ -60,6 +88,9 @@ def session_scope() -> Iterator[Session]:
         session.commit()
     except Exception:
         session.rollback()
+        discard_after_commit_actions(session)
         raise
+    else:
+        run_after_commit_actions(session)
     finally:
         session.close()

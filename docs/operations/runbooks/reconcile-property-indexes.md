@@ -8,11 +8,48 @@ searchable never depends on someone remembering to write a migration. It is a th
 operator wrapper around `nptc.db.property_reconciler.reconcile_property_indexes`; no new
 reconciliation logic lives here.
 
+**You normally do not need it.** The API runs the same reconciler by itself after a registry
+write commits (see [Automatic runs](#automatic-runs-issue-274)). Use this command to recover
+when an automatic run failed or could not run, and to check state with `--dry-run`.
+
 The three index shapes ([ADR-0012](../../adr/0012-property-registry-storage-and-validation.md),
 [ADR-0027](../../adr/0027-cast-safe-numeric-index-expression.md)), the naming scheme
 (`ix_propval_p{index_seq}_{slot}`), and the reconciler's own desired-state design are
 documented in [`data-model.md`](../../architecture/data-model.md#automatic-index-generation-issue-54-fr-13).
-This runbook covers only the operator-facing CLI.
+This runbook covers the automatic runs and the operator-facing CLI.
+
+## Automatic runs (issue #274)
+
+The API queues one reconciliation after each of these registry writes commits:
+
+- creating a property (`POST /registry/properties`);
+- deprecating one (`POST /registry/properties/{key}/deprecation`);
+- amending `filterable` (`PATCH /registry/properties/{key}` with a `filterable` field).
+
+An amendment that changes only a label, a constraint or another field queues nothing, because
+no generated index depends on it. The run starts after the commit, on a worker thread inside the
+API process, so the request does not wait for `CREATE INDEX CONCURRENTLY`. It reads
+`property_definition` when it starts, so it sees the write that queued it. Several writes that
+arrive close together can share one run.
+
+If another reconciliation holds the lock (the CLI, or another API process), the run waits two
+seconds and tries again, up to five attempts. A run that never gets the lock counts as a failure.
+
+**A failed run does not undo the registry write.** It leaves two traces:
+
+- an error line in the API log, such as
+  `property index reconciliation failed: did not converge: ix_propval_p7_1 (InsufficientPrivilege)`;
+- one audit event with action `property_index.reconciliation_failed`, entity type
+  `property_index`, no actor (the system) and the same sentence as its reason. Filter the audit
+  screen on that action to see them.
+
+Both name index names and exception types only, never an exception message. To recover, fix the
+cause, then run the CLI below. A real run repairs everything the failed run left.
+
+**With `NPTC_INDEXER_DATABASE_URL` unset**, the run does not start. The API logs a warning
+(`property index reconciliation is not configured`) and writes no audit event, because this is a
+valid setup. Run the CLI after each change that affects an index. The compose stack sets the
+variable for you.
 
 ## Usage
 
@@ -24,11 +61,13 @@ uv run python scripts/reconcile_property_indexes.py --dry-run
 
 | Flag | Default | Meaning |
 |---|---|---|
-| `--database-url` | *(none)* | DSN to reconcile with. Falls back to `NPTC_INDEXER_DATABASE_URL` if not given. Must be a role that can `CREATE`/`DROP INDEX` on `property_value` - see [`upgrade.md`](../upgrade.md#provisioning-the-index-reconcilers-login-issue-54-fr-13) for provisioning one. |
+| `--database-url` | *(none)* | DSN to reconcile with. Falls back to `NPTC_INDEXER_DATABASE_URL` if not given. Must be a role that owns `property_value` - see [`upgrade.md`](../upgrade.md#provisioning-the-index-reconcilers-login-issues-54-and-274-fr-13) for provisioning one. |
 | `--dry-run` | off | Reports what would change without executing any DDL. |
 
 ## When to run it
 
+- After a `property_index.reconciliation_failed` audit event or error log line, once you have
+  fixed the cause.
 - After flagging a property `filterable` (or un-flagging one), if
   `NPTC_INDEXER_DATABASE_URL` is not configured in the API process itself - this is the
   "converge now" path for that deployment shape.

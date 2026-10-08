@@ -30,6 +30,16 @@ def _require_non_blank(value: str, field_name: str) -> str:
     return value
 
 
+def _require_url_safe_secret(value: SecretStr, field_name: str) -> SecretStr:
+    secret = _require_non_blank(value.get_secret_value(), field_name)
+    if any(char in secret for char in _URL_DELIMITERS):
+        raise ValueError(
+            f"{field_name} must not contain any of {' '.join(_URL_DELIMITERS)} "
+            "because compose places it inside a database URL"
+        )
+    return value
+
+
 class DatabaseSettings(BaseSettings):
     """The app runtime role's DSN - ``nptc_app_login`` in tests, an
     equivalent least-privilege role in a deployment."""
@@ -274,13 +284,22 @@ class AppLoginSettings(BaseSettings):
     @field_validator("app_db_password")
     @classmethod
     def _url_safe_and_not_blank(cls, value: SecretStr) -> SecretStr:
-        secret = _require_non_blank(value.get_secret_value(), "app_db_password")
-        if any(char in secret for char in _URL_DELIMITERS):
-            raise ValueError(
-                f"app_db_password must not contain any of {' '.join(_URL_DELIMITERS)} "
-                "because compose places it inside a database URL"
-            )
-        return value
+        return _require_url_safe_secret(value, "app_db_password")
+
+
+class IndexerLoginSettings(BaseSettings):
+    """The password `nptc.db.provision_login` sets on the index reconciler's login role, under
+    the same rules as `AppLoginSettings.app_db_password`. The DSN that uses it is
+    `IndexerSettings.indexer_database_url`."""
+
+    model_config = SettingsConfigDict(env_prefix="NPTC_", extra="ignore")
+
+    indexer_db_password: SecretStr
+
+    @field_validator("indexer_db_password")
+    @classmethod
+    def _url_safe_and_not_blank(cls, value: SecretStr) -> SecretStr:
+        return _require_url_safe_secret(value, "indexer_db_password")
 
 
 class IndexerSettings(BaseSettings):
