@@ -89,18 +89,22 @@ function RoleNotice() {
     return null;
   }
 
+  const stepUpPending = !data.mfa_satisfied;
+
   return (
     <div
       role="status"
       className="flex max-w-3xl flex-col gap-2 rounded-[var(--radius-card)] border border-[var(--color-border)] bg-[var(--color-surface-sunken)] p-4 text-[var(--color-text)]"
     >
       <p className="m-0 font-medium">
-        Your account does not have the administrator role.
+        {stepUpPending
+          ? "This session does not include the administrator role."
+          : "Your account does not have the administrator role."}
       </p>
       <p className="m-0">
-        {data.mfa_satisfied
-          ? "The server will refuse most actions on these screens. Ask an administrator to grant you the role."
-          : "If you are an administrator, complete the extra sign-in step at the top of this page, then reload. Otherwise the server will refuse most actions on these screens."}
+        {stepUpPending
+          ? "If you are an administrator, complete the extra sign-in step at the top of this page, then reload. Otherwise the server will refuse most actions on these screens."
+          : "The server will refuse most actions on these screens. Ask an administrator to grant you the role."}
       </p>
     </div>
   );

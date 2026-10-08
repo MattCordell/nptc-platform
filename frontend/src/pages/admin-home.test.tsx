@@ -1,8 +1,10 @@
 import { screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import type { QueryClient } from "@tanstack/react-query";
 import { describe, expect, it } from "vitest";
 
 import { expectNoA11yViolations } from "../test/a11y.ts";
+import { SESSION_QUERY_KEY } from "../api/queries.ts";
 import { renderRoute } from "../test/render-route.tsx";
 import { stubApi } from "../test/stub-api.ts";
 import type { Route } from "../test/stub-api.ts";
@@ -53,6 +55,18 @@ const PLANNED = [
 ];
 
 const NOTICE = "Your account does not have the administrator role.";
+const SESSION_NOTICE = "This session does not include the administrator role.";
+
+/**
+ * Waits until the session read has an answer, so an assertion that the notice
+ * is absent runs after the page could have shown it. Without this wait such an
+ * assertion passes while the request is still in flight.
+ */
+async function sessionSettled(queryClient: QueryClient, status: "success" | "error") {
+  await waitFor(() =>
+    expect(queryClient.getQueryState(SESSION_QUERY_KEY)?.status).toBe(status),
+  );
+}
 
 describe("admin home", () => {
   it("links to every built admin screen", async () => {
@@ -96,10 +110,22 @@ describe("admin home", () => {
 
   it("shows no notice to an administrator", async () => {
     stubApi([sessionRoute()]);
-    await renderRoute("/admin", SIGNED_IN);
+    const { queryClient } = await renderRoute("/admin", SIGNED_IN);
 
     await screen.findByRole("heading", { level: 1, name: "Administration" });
-    await waitFor(() => expect(screen.queryByText(NOTICE)).not.toBeInTheDocument());
+    await sessionSettled(queryClient, "success");
+    expect(screen.queryByText(NOTICE)).not.toBeInTheDocument();
+    expect(screen.queryByText(SESSION_NOTICE)).not.toBeInTheDocument();
+  });
+
+  it("shows no notice to an administrator who has not finished the second sign-in step", async () => {
+    stubApi([sessionRoute({ mfa_satisfied: false })]);
+    const { queryClient } = await renderRoute("/admin", SIGNED_IN);
+
+    await screen.findByRole("heading", { level: 1, name: "Administration" });
+    await sessionSettled(queryClient, "success");
+    expect(screen.queryByText(NOTICE)).not.toBeInTheDocument();
+    expect(screen.queryByText(SESSION_NOTICE)).not.toBeInTheDocument();
   });
 
   it("tells a signed-in user without the role, and still shows every card", async () => {
@@ -117,8 +143,9 @@ describe("admin home", () => {
     stubApi([sessionRoute({ roles: ["member"], mfa_satisfied: false })]);
     await renderRoute("/admin", SIGNED_IN);
 
-    expect(await screen.findByText(NOTICE)).toBeVisible();
+    expect(await screen.findByText(SESSION_NOTICE)).toBeVisible();
     expect(screen.getByText(/complete the extra sign-in step at the top/)).toBeVisible();
+    expect(screen.queryByText(NOTICE)).not.toBeInTheDocument();
     expect(screen.queryByText(/grant you the role/)).not.toBeInTheDocument();
   });
 
@@ -133,10 +160,12 @@ describe("admin home", () => {
 
   it("shows no notice, and every card, when the session read fails", async () => {
     stubApi([{ method: "GET", path: "/auth/me", status: 500, body: { detail: "boom" } }]);
-    await renderRoute("/admin", SIGNED_IN);
+    const { queryClient } = await renderRoute("/admin", SIGNED_IN);
 
     await screen.findByRole("heading", { level: 1, name: "Administration" });
-    await waitFor(() => expect(screen.queryByText(NOTICE)).not.toBeInTheDocument());
+    await sessionSettled(queryClient, "error");
+    expect(screen.queryByText(NOTICE)).not.toBeInTheDocument();
+    expect(screen.queryByText(SESSION_NOTICE)).not.toBeInTheDocument();
     for (const { name } of [...BUILT, ...PLANNED]) {
       expect(main().getByRole("link", { name })).toBeVisible();
     }
