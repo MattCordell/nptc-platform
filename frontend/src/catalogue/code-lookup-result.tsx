@@ -68,7 +68,11 @@ function Match({ entry, code }: { entry: EntryDetail; code: string }) {
       <dl className="m-0 grid grid-cols-[max-content_1fr] gap-x-4 gap-y-2">
         <dt className="text-[var(--color-text-muted)]">Entry</dt>
         <dd className="m-0">
-          <Link to="/catalogue/$businessKey" params={{ businessKey: entry.business_key }}>
+          <Link
+            to="/catalogue/$businessKey"
+            params={{ businessKey: entry.business_key }}
+            className="inline-flex min-h-6 items-center text-[var(--color-accent)] underline underline-offset-2 hover:text-[var(--color-accent-hover)]"
+          >
             {entry.preferred_term}
           </Link>{" "}
           <span className="text-[var(--color-text-muted)]">({entry.business_key})</span>
