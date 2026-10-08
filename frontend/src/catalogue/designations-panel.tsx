@@ -32,55 +32,15 @@ import { useAnnounce } from "../components/use-announce.ts";
  * have to model that split - `POST .../designations/amendment` dispatches to
  * whichever home the term lives in. So the table below is one list of terms,
  * the preferred term first, and the split shows up in exactly two places: the
- * `use: "preferred"` this panel sends when amending that row, and the retire
- * action it does not offer on it.
+ * `target: "preferred_term"` this panel sends when amending that row, and the
+ * retire action it does not offer on it.
  *
- * **en-AU only.** The catalogue needs no other language today, and because
- * `ck_designation_no_en_au_preferred` forbids an en-AU *preferred designation*,
- * every `designation` row here is a synonym by construction. That is why the
- * add form has no `use` control: there is nothing else it could create.
+ * Every `designation` row is a synonym (ADR-0022), so the add form has no
+ * control for what kind of term it creates: there is nothing else it could create.
  */
 
 type EntryDetail = components["schemas"]["EntryDetail"];
 type Designation = components["schemas"]["Designation"];
-type DesignationUse = components["schemas"]["DesignationUse"];
-
-/**
- * The read model types `use` as a bare string; the write model types it as the
- * two values `ck_designation_use` allows. Narrowed at the boundary rather than
- * asserted, and anything unrecognised is treated as a synonym - the value the
- * constraint makes overwhelmingly likelier, and the one whose amendment is
- * harmless if the guess is wrong.
- */
-function designationUse(value: string): DesignationUse {
-  return value === "preferred" ? "preferred" : "synonym";
-}
-
-/**
- * The languages this screen offers. A one-element list rather than a free-text
- * field: `nptc_shared.language` checks BCP-47 *syntax* only and has no
- * registry, so an open control would accept `xx-ZZ` as readily as `mi-NZ`.
- * Widening this is a one-line change if the catalogue ever needs it.
- */
-const SUPPORTED_LANGUAGES = ["en-AU"] as const;
-const DEFAULT_LANGUAGE = SUPPORTED_LANGUAGES[0];
-
-/**
- * A warning, plus the language of the write it came back from.
- *
- * `CollisionWarning` carries no language of its own, and acknowledging one
- * addresses `(entry, language, term)` - so the language has to travel with it
- * rather than be assumed at the point of acknowledgement (review finding 1).
- */
-type PendingWarning = DesignationWarning & { language: string };
-type PendingCollision = CollisionWarning & { language: string };
-
-function withLanguage(
-  warnings: DesignationWarning[],
-  language: string,
-): PendingWarning[] {
-  return warnings.map((warning) => ({ ...warning, language }));
-}
 
 /**
  * How each warning class is counted in an announcement. A `Record` over `kind`,
@@ -111,13 +71,12 @@ function isCollisionOn(warning: DesignationWarning, term: string): boolean {
 /** A row in the terms table - a real designation, or the entry's own term. */
 interface TermRow {
   term: string;
-  use: string;
-  language: string;
+  use: "preferred" | "synonym";
   length: number;
   status: string;
   /**
-   * True for the entry's own en-AU preferred term. Drives the two places the
-   * ADR-0022 split is visible: the `use` sent on amendment, and whether the
+   * True for the entry's own preferred term. Drives the two places the
+   * ADR-0022 split is visible: the `target` sent on amendment, and whether the
    * retire action is offered at all.
    */
   isEntryPreferredTerm: boolean;
@@ -127,7 +86,6 @@ function termRows(entry: EntryDetail): TermRow[] {
   const preferred: TermRow = {
     term: entry.preferred_term,
     use: "preferred",
-    language: DEFAULT_LANGUAGE,
     // FR-85: the published figure, computed by the server from the stored
     // term. Never recomputed here - `CatalogueEntry.length` counts the term
     // *after* whitespace cleaning, so a browser-side `term.length` would
@@ -141,8 +99,7 @@ function termRows(entry: EntryDetail): TermRow[] {
   };
   const designations = entry.designations.map((designation: Designation) => ({
     term: designation.term,
-    use: designation.use,
-    language: designation.language,
+    use: "synonym" as const,
     length: designation.length,
     status: designation.status,
     isEntryPreferredTerm: false,
@@ -166,11 +123,11 @@ export function DesignationsPanel({ entry }: { entry: EntryDetail }) {
   // (`admin-catalogue-edit.tsx`), so navigating from one entry's edit screen
   // to another's cannot carry the first entry's warnings across (review
   // finding 4).
-  const [warnings, setWarnings] = useState<PendingWarning[]>([]);
+  const [warnings, setWarnings] = useState<DesignationWarning[]>([]);
   const [editing, setEditing] = useState<TermRow | null>(null);
   const [retiring, setRetiring] = useState<TermRow | null>(null);
   const [reinstating, setReinstating] = useState<TermRow | null>(null);
-  const [acknowledging, setAcknowledging] = useState<PendingCollision | null>(null);
+  const [acknowledging, setAcknowledging] = useState<CollisionWarning | null>(null);
   const { message, politeness, announce } = useAnnounce();
 
   const rows = sortedTermRows(termRows(entry));
@@ -192,7 +149,6 @@ export function DesignationsPanel({ entry }: { entry: EntryDetail }) {
         columns={[
           { key: "term", header: "Term", isRowHeader: true, render: (row) => row.term },
           { key: "use", header: "Use", render: (row) => row.use },
-          { key: "language", header: "Language", render: (row) => row.language },
           // FR-24/FR-85: rendered as text. There is no control here, in the
           // amend dialog, or on any other path - the figure is computed from
           // the preferred term and is not a thing anyone can type.
@@ -261,16 +217,13 @@ export function DesignationsPanel({ entry }: { entry: EntryDetail }) {
           },
         ]}
         rows={rows}
-        // `(language, use, term)` is not unique on its own: it is unique only
-        // among *active* designations (`ix_designation_no_duplicate_active_term`),
-        // so a term added, retired and re-added leaves two retired rows
-        // sharing all three - matching `bindings-panel.tsx`'s identical
-        // `getRowKey` reasoning for `Binding`, which carries no id for the
-        // same reason (NFR-04/NFR-26). `rows`' own stable order (from
-        // `sortedTermRows`) is what disambiguates.
-        getRowKey={(row) =>
-          `${row.language}:${row.use}:${row.term}:${row.status}:${rows.indexOf(row)}`
-        }
+        // `(use, term)` is not unique on its own: it is unique only among
+        // *active* designations (`ix_designation_no_duplicate_active_term`), so a
+        // term added, retired and re-added leaves two retired rows sharing both -
+        // matching `bindings-panel.tsx`'s identical `getRowKey` reasoning for
+        // `Binding`, which carries no id for the same reason (NFR-04/NFR-26).
+        // `rows`' own stable order (from `sortedTermRows`) is what disambiguates.
+        getRowKey={(row) => `${row.use}:${row.term}:${row.status}:${rows.indexOf(row)}`}
         emptyState="This entry has no terms."
       />
 
@@ -278,7 +231,7 @@ export function DesignationsPanel({ entry }: { entry: EntryDetail }) {
         businessKey={businessKey}
         rowVersion={entry.row_version}
         onSaved={(created, newWarnings) => {
-          setWarnings(withLanguage(newWarnings, DEFAULT_LANGUAGE));
+          setWarnings(newWarnings);
           announce(
             `${created} ${created === 1 ? "term" : "terms"} added.` +
               warningSummary(newWarnings),
@@ -300,7 +253,7 @@ export function DesignationsPanel({ entry }: { entry: EntryDetail }) {
           row={editing}
           onClose={() => setEditing(null)}
           onSaved={(newWarnings) => {
-            setWarnings(withLanguage(newWarnings, editing.language));
+            setWarnings(newWarnings);
             setEditing(null);
             announce(`Term saved.${warningSummary(newWarnings)}`);
           }}
@@ -336,7 +289,7 @@ export function DesignationsPanel({ entry }: { entry: EntryDetail }) {
           row={reinstating}
           onClose={() => setReinstating(null)}
           onSaved={(newWarnings) => {
-            setWarnings(withLanguage(newWarnings, reinstating.language));
+            setWarnings(newWarnings);
             setReinstating(null);
             announce(`Term reinstated.${warningSummary(newWarnings)}`);
           }}
@@ -436,9 +389,7 @@ function AddSynonymsForm({
         }
         add.mutate(
           {
-            language: DEFAULT_LANGUAGE,
             terms,
-            use: "synonym",
             reason: changelogNote.note,
             // FR-38 (issue #300): required now that a batch add bumps the
             // entry's counter as one write.
@@ -552,23 +503,14 @@ function AmendDialog({
           }
           amend.mutate(
             {
-              language: row.language,
               term: row.term,
               new_term: newTerm,
               // Which storage home `term` means. Sent on every amendment,
               // not just the preferred one: nothing forbids a synonym whose
               // comparison key equals its own entry's preferred term, and
-              // without `use` the route resolves designations first - so an
+              // without `target` the route resolves designations first - so an
               // unqualified request for either would silently move the other.
-              //
-              // The row's own value, never a ternary on
-              // `isEntryPreferredTerm`. The read route serves an entry's
-              // synonyms *and its non-en-AU preferred variants*, so a
-              // `use: "preferred"` designation is a shape this table renders
-              // today; hardcoding "synonym" for every non-entry row would
-              // mis-address exactly the term `use` was added to reach
-              // (review finding 1).
-              use: designationUse(row.use),
+              target: row.isEntryPreferredTerm ? "preferred_term" : "synonym",
               // FR-38 (issue #300): required on both branches, unconditionally
               // - the backend rejects either without it. One code path, and
               // no save that skips the lock.
@@ -641,7 +583,6 @@ function RetireDialog({
         onSubmit={() => {
           retire.mutate(
             {
-              language: row.language,
               term: row.term,
               reason: changelogNote.note,
               // FR-38 (issue #300): required now that retiring a term bumps
@@ -705,7 +646,6 @@ function ReinstateDialog({
         onSubmit={() => {
           reinstate.mutate(
             {
-              language: row.language,
               term: row.term,
               reason: changelogNote.note,
               // FR-38 (issue #300): required, same as add/amend/retire.
@@ -739,8 +679,8 @@ function WarningsPanel({
   warnings,
   onAcknowledge,
 }: {
-  warnings: PendingWarning[];
-  onAcknowledge: (warning: PendingCollision) => void;
+  warnings: DesignationWarning[];
+  onAcknowledge: (warning: CollisionWarning) => void;
 }) {
   return (
     <section aria-labelledby="warnings-heading">
@@ -786,8 +726,8 @@ function WarningItem({
   warning,
   onAcknowledge,
 }: {
-  warning: PendingWarning;
-  onAcknowledge: (warning: PendingCollision) => void;
+  warning: DesignationWarning;
+  onAcknowledge: (warning: CollisionWarning) => void;
 }) {
   switch (warning.kind) {
     case "collision":
@@ -835,7 +775,7 @@ function AcknowledgeDialog({
   onSaved,
 }: {
   businessKey: string;
-  warning: PendingCollision;
+  warning: CollisionWarning;
   onClose: () => void;
   onSaved: (term: string) => void;
 }) {
@@ -863,14 +803,7 @@ function AcknowledgeDialog({
         }
         onSubmit={() => {
           acknowledge.mutate(
-            // The language of the write this warning came back from, not an
-            // assumed default: an acknowledgement addresses
-            // `(entry, language, term)` (review finding 1).
-            {
-              language: warning.language,
-              term: warning.term,
-              reason: changelogNote.note,
-            },
+            { term: warning.term, reason: changelogNote.note },
             { onSuccess: () => onSaved(warning.term) },
           );
         }}

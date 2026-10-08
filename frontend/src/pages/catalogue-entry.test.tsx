@@ -38,22 +38,9 @@ function entry(overrides: Record<string, unknown> = {}) {
     designations: [
       {
         term: "Serum ferritin",
-        use: "synonym",
-        language: "en-AU",
         status: "active",
         length: 14,
         label_provenance: { designation: "synonym", semantic_tag: "not_applicable" },
-      },
-      {
-        term: "Ferritine",
-        use: "preferred",
-        language: "fr",
-        status: "active",
-        length: 9,
-        label_provenance: {
-          designation: "preferred_variant",
-          semantic_tag: "not_applicable",
-        },
       },
     ],
     bindings: [
@@ -353,7 +340,6 @@ describe("terms", () => {
     expect(rows.map((row) => row.textContent)).toEqual([
       "FerritinRCPA Preferred",
       "Serum ferritinRCPA Synonym",
-      "FerritineRCPA Preferred (fr)",
       `${FSN}SNOMED CT FSN`,
       "Ferritin levelSNOMED CT Preferred",
     ]);
@@ -373,7 +359,7 @@ describe("terms", () => {
   it("shows the FSN exactly as served, semantic tag included (FR-82, FR-83)", async () => {
     const rows = await termRows();
 
-    expect(within(rows[3]).getByText(FSN)).toBeInTheDocument();
+    expect(within(rows[2]).getByText(FSN)).toBeInTheDocument();
   });
 
   it("leaves out the SNOMED CT Preferred row when there is no AU preferred term", async () => {
@@ -384,7 +370,6 @@ describe("terms", () => {
     expect(rows.map((row) => row.textContent)).toEqual([
       "FerritinRCPA Preferred",
       "Serum ferritinRCPA Synonym",
-      "FerritineRCPA Preferred (fr)",
       `${FSN}SNOMED CT FSN`,
     ]);
   });
@@ -397,7 +382,6 @@ describe("terms", () => {
     expect(rows.map((row) => row.textContent)).toEqual([
       "FerritinRCPA Preferred",
       "Serum ferritinRCPA Synonym",
-      "FerritineRCPA Preferred (fr)",
     ]);
   });
 
@@ -405,24 +389,6 @@ describe("terms", () => {
     const rows = await termRows({ designations: [], bindings: [], code: null });
 
     expect(rows.map((row) => row.textContent)).toEqual(["FerritinRCPA Preferred"]);
-  });
-
-  it("shows an unlisted designation use as its raw value", async () => {
-    const rows = await termRows({
-      designations: [
-        {
-          term: "Odd term",
-          use: "abbreviation",
-          language: "en-AU",
-          status: "active",
-          length: 8,
-          label_provenance: {},
-        },
-      ],
-      bindings: [],
-    });
-
-    expect(rows[1].textContent).toBe("Odd termabbreviation");
   });
 });
 
