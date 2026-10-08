@@ -87,12 +87,12 @@ function groupByKey(properties: PropertyValue[]): PropertyGroup[] {
 function Value({ view }: { view: ValueView }) {
   return (
     <div className="flex flex-col gap-0.5">
-      <span className="flex flex-wrap items-center gap-2 break-words">
-        {view.text !== "" ? <span>{view.text}</span> : null}
+      <span className="flex flex-wrap items-center gap-2">
+        {view.text !== "" ? <span className="break-words">{view.text}</span> : null}
         {view.snomedCode !== null ? <CodeChip code={view.snomedCode} /> : null}
       </span>
       {view.justification !== null ? (
-        <span className="text-[var(--color-text-muted)]">
+        <span className="break-words text-[var(--color-text-muted)]">
           Justification: {view.justification}
         </span>
       ) : null}

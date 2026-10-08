@@ -277,7 +277,6 @@ describe("the entry heading and header", () => {
     ]);
 
     expect(await screen.findByText("No SNOMED CT code")).toBeInTheDocument();
-    expect(screen.getByText("This entry has no SNOMED CT code.")).toBeInTheDocument();
   });
 
   it("links the breadcrumb back to the home page and the catalogue", async () => {
@@ -341,180 +340,374 @@ describe("the open-finding indicator (FR-18)", () => {
 });
 
 describe("terms", () => {
-  it("lists synonyms and other-language terms with their type and language", async () => {
-    await renderEntry();
+  async function termRows(overrides: Record<string, unknown> = {}) {
+    await renderEntry([{ ...ENTRY_OK, body: entry(overrides) }, HISTORY_OK]);
     await screen.findByRole("heading", { level: 1, name: "Ferritin" });
-
-    const table = screen.getByRole("table", {
-      name: "Synonyms and other-language terms",
-    });
-    const rows = within(table).getAllByRole("row").slice(1);
-    expect(rows.map((row) => row.textContent)).toEqual([
-      "Serum ferritinSynonymen-AUActive",
-      "FerritinePreferred term in another languagefrActive",
-    ]);
-  });
-});
-
-describe("SNOMED CT codes", () => {
-  async function bindingRows() {
-    await renderEntry();
-    await screen.findByRole("heading", { level: 1, name: "Ferritin" });
-    const table = screen.getByRole("table", { name: "Code bindings" });
+    const table = screen.getByRole("table", { name: "Terms" });
     return within(table).getAllByRole("row").slice(1);
   }
 
-  it("lists the active binding before the retired ones", async () => {
-    const rows = await bindingRows();
+  it("lists the RCPA terms, then the active binding's names, in one table (FR-04)", async () => {
+    const rows = await termRows();
 
-    expect(within(rows[0]).getByText("Active")).toBeInTheDocument();
-    expect(within(rows[1]).getByText("Retired")).toBeInTheDocument();
-    expect(within(rows[2]).getByText("Retired")).toBeInTheDocument();
+    expect(rows.map((row) => row.textContent)).toEqual([
+      "FerritinRCPA Preferred",
+      "Serum ferritinRCPA Synonym",
+      "FerritineRCPA Preferred (fr)",
+      `${FSN}SNOMED CT FSN`,
+      "Ferritin levelSNOMED CT Preferred",
+    ]);
+  });
+
+  it("has a Term and a Type column, and no Language or Status column", async () => {
+    await termRows();
+
+    const table = screen.getByRole("table", { name: "Terms" });
+    expect(
+      within(table)
+        .getAllByRole("columnheader")
+        .map((header) => header.textContent),
+    ).toEqual(["Term", "Type"]);
+  });
+
+  it("shows the FSN exactly as served, semantic tag included (FR-82, FR-83)", async () => {
+    const rows = await termRows();
+
+    expect(within(rows[3]).getByText(FSN)).toBeInTheDocument();
+  });
+
+  it("leaves out the SNOMED CT Preferred row when there is no AU preferred term", async () => {
+    const rows = await termRows({
+      bindings: [binding({ status: "active", au_preferred_term: null })],
+    });
+
+    expect(rows.map((row) => row.textContent)).toEqual([
+      "FerritinRCPA Preferred",
+      "Serum ferritinRCPA Synonym",
+      "FerritineRCPA Preferred (fr)",
+      `${FSN}SNOMED CT FSN`,
+    ]);
+  });
+
+  it("shows the RCPA rows alone when no binding is active", async () => {
+    const rows = await termRows({
+      bindings: [binding({ status: "retired", retirement_reason: "Bound in error" })],
+    });
+
+    expect(rows.map((row) => row.textContent)).toEqual([
+      "FerritinRCPA Preferred",
+      "Serum ferritinRCPA Synonym",
+      "FerritineRCPA Preferred (fr)",
+    ]);
+  });
+
+  it("shows only the preferred term when there is nothing else", async () => {
+    const rows = await termRows({ designations: [], bindings: [], code: null });
+
+    expect(rows.map((row) => row.textContent)).toEqual(["FerritinRCPA Preferred"]);
+  });
+
+  it("shows an unlisted designation use as its raw value", async () => {
+    const rows = await termRows({
+      designations: [
+        {
+          term: "Odd term",
+          use: "abbreviation",
+          language: "en-AU",
+          status: "active",
+          length: 8,
+          label_provenance: {},
+        },
+      ],
+      bindings: [],
+    });
+
+    expect(rows[1].textContent).toBe("Odd termabbreviation");
+  });
+});
+
+describe("retired SNOMED CT codes", () => {
+  async function retiredTable() {
+    await renderEntry();
+    await screen.findByRole("heading", { level: 1, name: "Ferritin" });
+    return screen.getByRole("table", { name: "Retired code bindings" });
+  }
+
+  async function retiredRows() {
+    return within(await retiredTable())
+      .getAllByRole("row")
+      .slice(1);
+  }
+
+  it("lists only the retired bindings", async () => {
+    const table = await retiredTable();
+    const rows = within(table).getAllByRole("row").slice(1);
+
+    expect(rows).toHaveLength(2);
+    expect(within(rows[0]).getByText(OLD_CODE)).toBeInTheDocument();
+    expect(within(rows[1]).getByText(OLD_CODE)).toBeInTheDocument();
+    expect(within(table).queryByText("Ferritin level")).toBeNull();
   });
 
   it("shows two retired rows that share a code, without a key clash", async () => {
     const errors = vi.spyOn(console, "error");
-    const rows = await bindingRows();
+    const rows = await retiredRows();
 
-    expect(rows).toHaveLength(3);
-    expect(within(rows[1]).getByText(OLD_CODE)).toBeInTheDocument();
-    expect(within(rows[2]).getByText(OLD_CODE)).toBeInTheDocument();
+    expect(rows).toHaveLength(2);
     expect(errors).not.toHaveBeenCalled();
     errors.mockRestore();
   });
 
-  it("gives a retired binding its reason and its replacement code", async () => {
-    const rows = await bindingRows();
+  it("gives a retired binding its reason and its replacement code (FR-08)", async () => {
+    const rows = await retiredRows();
 
     expect(
-      within(rows[1]).getByText("Superseded by a more specific concept"),
+      within(rows[0]).getByText("Superseded by a more specific concept"),
     ).toBeInTheDocument();
-    const replacement = within(rows[1]).getByText(LONG_CODE, { selector: "code" });
+    const replacement = within(rows[0]).getByText(LONG_CODE, { selector: "code" });
     expect(replacement.textContent).toBe(LONG_CODE);
     expect(replacement.className).toContain("font-mono");
-    expect(within(rows[1]).getByText(/Replaced by/)).toBeInTheDocument();
+    expect(within(rows[0]).getByText(/Replaced by/)).toBeInTheDocument();
   });
 
   it("shows a retired binding with no replacement as just its reason", async () => {
-    const rows = await bindingRows();
+    const rows = await retiredRows();
 
-    expect(within(rows[2]).getByText("Bound in error")).toBeInTheDocument();
-    expect(within(rows[2]).queryByText(/Replaced by/)).toBeNull();
+    expect(within(rows[1]).getByText("Bound in error")).toBeInTheDocument();
+    expect(within(rows[1]).queryByText(/Replaced by/)).toBeNull();
   });
 
-  it("shows the fully specified name exactly as served (FR-83)", async () => {
-    const rows = await bindingRows();
-
-    expect(within(rows[0]).getByText(FSN)).toBeInTheDocument();
-  });
-
-  it("shows an unknown binding status as its raw text", async () => {
+  it("is absent when every binding is active", async () => {
     await renderEntry([
-      {
-        ...ENTRY_OK,
-        body: entry({ bindings: [binding({ status: "suspended" })] }),
-      },
+      { ...ENTRY_OK, body: entry({ bindings: [binding({ status: "active" })] }) },
       HISTORY_OK,
     ]);
+    await screen.findByRole("heading", { level: 1, name: "Ferritin" });
 
-    expect(await screen.findByText("suspended")).toBeInTheDocument();
+    expect(screen.queryByRole("table", { name: "Retired code bindings" })).toBeNull();
+    expect(screen.queryByText("Retired SNOMED CT codes")).toBeNull();
   });
 });
 
-describe("properties", () => {
-  it("shows every property received, with a multi-valued one in recorded order", async () => {
-    await renderEntry();
+describe("the details sidebar", () => {
+  async function details(overrides: Record<string, unknown> = {}) {
+    await renderEntry([{ ...ENTRY_OK, body: entry(overrides) }, HISTORY_OK]);
     await screen.findByRole("heading", { level: 1, name: "Ferritin" });
+    const sidebar = screen.getByRole("complementary", { name: "Entry details" });
+    return within(sidebar).getByRole("heading", { name: "Details" })
+      .parentElement as HTMLElement;
+  }
 
-    const discipline = screen.getByText("Discipline", { selector: "dt" });
-    const values = within(discipline.nextElementSibling as HTMLElement).getAllByRole(
-      "listitem",
-    );
-    expect(values.map((value) => value.textContent)).toEqual([
-      "Chemical pathology",
-      "Haematology",
-    ]);
-    expect(screen.getByText("Fasting is not required.")).toBeInTheDocument();
-    expect(
-      screen.getByText(/Justification: Agreed with the working group\./),
-    ).toBeInTheDocument();
+  function labels(facts: HTMLElement) {
+    return Array.from(facts.querySelectorAll("dt")).map((term) => term.textContent);
+  }
+
+  function valueOf(facts: HTMLElement, label: string) {
+    return within(facts).getByText(label, { selector: "dt" })
+      .nextElementSibling as HTMLElement;
+  }
+
+  it("shows the entry's own facts, and no term length (FR-85)", async () => {
+    const facts = await details();
+
+    expect(facts.textContent).toContain(KEY);
+    expect(facts.textContent).toContain("Chemical pathology, Haematology");
+    expect(facts.textContent).toContain("1 September 2026");
+    expect(facts.textContent).not.toMatch(/term length|characters/i);
   });
 
-  it("shows a coded value as its term, with a SNOMED CT code in mono beside it (FR-06)", async () => {
-    await renderEntry();
-    await screen.findByRole("heading", { level: 1, name: "Ferritin" });
+  it("lists identifier, status, disciplines, the properties, then last updated", async () => {
+    const facts = await details();
 
-    const specimen = screen.getByText("Specimen", { selector: "dt" })
-      .nextElementSibling as HTMLElement;
-    expect(within(specimen).getByText("Urine")).toBeInTheDocument();
-    const chip = within(specimen).getByText(LONG_CODE, { selector: "code" });
+    expect(labels(facts)).toEqual([
+      "Identifier",
+      "Status",
+      "Disciplines",
+      "Specimen",
+      "Usage guidance",
+      "Legacy flagDeprecated",
+      "Last updated",
+    ]);
+  });
+
+  it("shows the discipline once, as the Disciplines row", async () => {
+    const facts = await details();
+
+    expect(within(facts).queryByText("Discipline", { selector: "dt" })).toBeNull();
+    expect(within(facts).getAllByText(/Chemical pathology/)).toHaveLength(1);
+  });
+
+  it("shows a specimen as its trimmed term, without a code chip (FR-04)", async () => {
+    const facts = await details({
+      properties: [
+        property({
+          key: "specimen",
+          label: "Specimen",
+          value: coded(LONG_CODE, "Serum specimen", "http://snomed.info/sct"),
+        }),
+      ],
+    });
+
+    const specimen = valueOf(facts, "Specimen");
+    expect(specimen.textContent).toBe("Serum");
+    expect(specimen.querySelector("code")).toBeNull();
+  });
+
+  it("keeps a bare Specimen term as it is", async () => {
+    const facts = await details({
+      properties: [
+        property({
+          key: "specimen",
+          label: "Specimen",
+          value: coded(LONG_CODE, "Specimen", "http://snomed.info/sct"),
+        }),
+      ],
+    });
+
+    expect(valueOf(facts, "Specimen").textContent).toBe("Specimen");
+  });
+
+  it("lists specimens in stored order and once each after trimming", async () => {
+    const facts = await details({
+      properties: [
+        property({
+          key: "specimen",
+          label: "Specimen",
+          ordinal: 2,
+          value: coded("3", "Plasma", "http://snomed.info/sct"),
+        }),
+        property({
+          key: "specimen",
+          label: "Specimen",
+          ordinal: 0,
+          value: coded("1", "Serum", "http://snomed.info/sct"),
+        }),
+        property({
+          key: "specimen",
+          label: "Specimen",
+          ordinal: 1,
+          value: coded("2", "Serum specimen", "http://snomed.info/sct"),
+        }),
+      ],
+    });
+
+    const items = within(valueOf(facts, "Specimen")).getAllByRole("listitem");
+    expect(items.map((item) => item.textContent)).toEqual(["Serum", "Plasma"]);
+  });
+
+  it("shows a specimen with no recorded term as its code, in plain text (FR-06)", async () => {
+    const facts = await details({
+      properties: [
+        property({
+          key: "specimen",
+          label: "Specimen",
+          value: coded(OLD_CODE, null, "http://snomed.info/sct"),
+        }),
+      ],
+    });
+
+    const specimen = valueOf(facts, "Specimen");
+    expect(specimen.textContent).toBe(OLD_CODE);
+    expect(specimen.querySelector("code")).toBeNull();
+  });
+
+  it("shows a coded value that is not a specimen as its term with a mono code (FR-06)", async () => {
+    const facts = await details({
+      properties: [
+        property({
+          key: "subgroup",
+          label: "Subgroup",
+          value: coded(LONG_CODE, "Iron studies", "http://snomed.info/sct"),
+        }),
+      ],
+    });
+
+    const subgroup = valueOf(facts, "Subgroup");
+    expect(within(subgroup).getByText("Iron studies")).toBeInTheDocument();
+    const chip = within(subgroup).getByText(LONG_CODE, { selector: "code" });
     expect(chip.textContent).toBe(LONG_CODE);
     expect(chip.className).toContain("font-mono");
   });
 
   it("shows a local code by its term only, never as raw JSON", async () => {
-    const { container } = await renderEntry();
-    await screen.findByRole("heading", { level: 1, name: "Ferritin" });
+    const facts = await details({
+      properties: [
+        property({
+          key: "setting",
+          label: "Setting",
+          value: coded("outpatient", "Outpatient", LOCAL_SYSTEM),
+        }),
+      ],
+    });
 
-    expect(screen.getAllByText("Chemical pathology").length).toBeGreaterThan(0);
-    expect(container.textContent).not.toContain("chemical_pathology");
-    expect(container.textContent).not.toContain('{"code"');
+    expect(valueOf(facts, "Setting").textContent).toBe("Outpatient");
+    expect(facts.textContent).not.toContain('{"code"');
   });
 
-  it("marks a property whose definition is deprecated, keeping its value (FR-11)", async () => {
-    await renderEntry();
-    await screen.findByRole("heading", { level: 1, name: "Ferritin" });
+  it("shows usage guidance with its justification", async () => {
+    const facts = await details();
 
-    const term = screen.getByText(/Legacy flag/, { selector: "dt" });
-    expect(within(term).getByText("Deprecated")).toBeInTheDocument();
-    expect(screen.getByText("kept")).toBeInTheDocument();
-  });
-
-  it("says so when there are none", async () => {
-    await renderEntry([{ ...ENTRY_OK, body: entry({ properties: [] }) }, HISTORY_OK]);
-
+    expect(within(facts).getByText("Fasting is not required.")).toBeInTheDocument();
     expect(
-      await screen.findByText("This entry has no recorded properties."),
+      within(facts).getByText(/Justification: Agreed with the working group\./),
     ).toBeInTheDocument();
   });
 
+  it("lets a long usage guidance value wrap inside the card", async () => {
+    const long = `${"Collect before any iron supplement is given. ".repeat(12)}Done.`;
+    const facts = await details({
+      properties: [
+        property({ key: "usage_guidance", label: "Usage guidance", value: long }),
+      ],
+    });
+
+    const value = within(facts).getByText(long);
+    expect(value.className).toContain("break-words");
+    expect((value.closest("dd") as HTMLElement).className).toContain("min-w-0");
+  });
+
+  it("shows a multi-valued property in recorded order", async () => {
+    const facts = await details({
+      properties: [
+        property({ key: "tags", label: "Tags", ordinal: 1, value: "second" }),
+        property({ key: "tags", label: "Tags", ordinal: 0, value: "first" }),
+      ],
+    });
+
+    const items = within(valueOf(facts, "Tags")).getAllByRole("listitem");
+    expect(items.map((item) => item.textContent)).toEqual(["first", "second"]);
+  });
+
+  it("marks a property whose definition is deprecated, keeping its value (FR-11)", async () => {
+    const facts = await details();
+
+    const term = within(facts).getByText(/Legacy flag/, { selector: "dt" });
+    expect(within(term).getByText("Deprecated")).toBeInTheDocument();
+    expect(within(facts).getByText("kept")).toBeInTheDocument();
+  });
+
   it("renders a value that is not text without breaking", async () => {
-    await renderEntry([
-      {
-        ...ENTRY_OK,
-        body: entry({
-          properties: [
-            property({ key: "n", label: "Count", value: 12 }),
-            property({ key: "o", label: "Shape", value: { a: 1 } }),
-          ],
-        }),
-      },
-      HISTORY_OK,
+    const facts = await details({
+      properties: [
+        property({ key: "n", label: "Count", value: 12 }),
+        property({ key: "o", label: "Shape", value: { a: 1 } }),
+      ],
+    });
+
+    expect(within(facts).getByText("12")).toBeInTheDocument();
+    expect(within(facts).getByText('{"a":1}')).toBeInTheDocument();
+  });
+
+  it("has no Properties card, and no property row when there are none", async () => {
+    const facts = await details({ properties: [] });
+
+    expect(screen.queryByRole("heading", { name: "Properties" })).toBeNull();
+    expect(labels(facts)).toEqual([
+      "Identifier",
+      "Status",
+      "Disciplines",
+      "Last updated",
     ]);
-
-    expect(await screen.findByText("12")).toBeInTheDocument();
-    expect(screen.getByText('{"a":1}')).toBeInTheDocument();
-  });
-});
-
-describe("the details sidebar", () => {
-  it("shows the entry's own facts", async () => {
-    await renderEntry();
-    await screen.findByRole("heading", { level: 1, name: "Ferritin" });
-
-    const sidebar = screen.getByRole("complementary", { name: "Entry details" });
-    const facts = within(sidebar).getByRole("heading", { name: "Details" }).parentElement;
-    expect(facts?.textContent).toContain(KEY);
-    expect(facts?.textContent).toContain("8 characters");
-    expect(facts?.textContent).toContain("Chemical pathology, Haematology");
-    expect(facts?.textContent).not.toContain("Any specimen");
-    expect(facts?.textContent).toContain("1 September 2026");
-  });
-
-  it("writes a one-character term length in the singular", async () => {
-    await renderEntry([{ ...ENTRY_OK, body: entry({ length: 1 }) }, HISTORY_OK]);
-
-    expect(await screen.findByText("1 character")).toBeInTheDocument();
   });
 
   it("never shows a row version", async () => {
@@ -664,7 +857,7 @@ describe("recent changes", () => {
       await screen.findByRole("heading", { level: 1, name: "Ferritin" }),
     ).toBeInTheDocument();
     expect(screen.getByText("Loading recent changes…")).toBeInTheDocument();
-    expect(screen.getByRole("table", { name: "Code bindings" })).toBeInTheDocument();
+    expect(screen.getByRole("table", { name: "Terms" })).toBeInTheDocument();
 
     await act(async () => hold.release());
     expect(await screen.findByText("Catalogue entry updated")).toBeInTheDocument();
@@ -683,7 +876,7 @@ describe("recent changes", () => {
     expect(
       screen.getByRole("heading", { level: 1, name: "Ferritin" }),
     ).toBeInTheDocument();
-    expect(screen.getByRole("table", { name: "Code bindings" })).toBeInTheDocument();
+    expect(screen.getByRole("table", { name: "Terms" })).toBeInTheDocument();
   });
 });
 
@@ -826,7 +1019,7 @@ describe("accessibility (NFR-31)", () => {
   // A table that scrolls at a narrow width must take focus, or a keyboard user
   // cannot scroll it. jsdom has no layout, so axe cannot report this itself:
   // the test checks the markup its `scrollable-region-focusable` rule needs.
-  it.each(["Synonyms and other-language terms", "Code bindings"])(
+  it.each(["Terms", "Retired code bindings"])(
     "makes the scrollable %s table a focusable, named region",
     async (name) => {
       await renderEntry();
