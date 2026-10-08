@@ -10,6 +10,7 @@ running it, not here.
 from __future__ import annotations
 
 import importlib.util
+import ipaddress
 import re
 from pathlib import Path
 from typing import Any
@@ -17,6 +18,8 @@ from typing import Any
 import pytest
 from sqlalchemy import text
 from sqlalchemy.engine import Connection
+
+from nptc.settings import ApiSettings
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 COMPOSE_FILE = REPO_ROOT / "deploy" / "compose.yml"
@@ -118,6 +121,23 @@ def test_backend_reads_signing_keys_from_the_internal_keycloak_address() -> None
 
     assert environment["NPTC_JWKS_URL"].startswith("http://keycloak:8080/realms/nptc/")
     assert "localhost" in environment["NPTC_OIDC_ISSUER"]
+
+
+@pytest.mark.req("NFR-24")
+@pytest.mark.parametrize("web_address", ["172.18.0.4", "172.31.255.2", "192.168.16.3", "10.1.2.3"])
+def test_backend_trusts_the_forwarded_address_of_every_network_docker_assigns(
+    web_address: str,
+) -> None:
+    """Without it the limiter sees Caddy as the only caller and every visitor shares one
+    budget. Safe only because `backend` publishes no port, which another test pins."""
+    entry = _services()["backend"]["environment"]["NPTC_TRUSTED_PROXIES"]
+    default = re.fullmatch(r"\$\{NPTC_TRUSTED_PROXIES-(.*)\}", entry)
+    assert default is not None, entry
+
+    trusted = ApiSettings(trusted_proxies=default.group(1)).trusted_proxies
+
+    assert any(ipaddress.ip_address(web_address) in network for network in trusted)
+    assert not any(ipaddress.ip_address("203.0.113.7") in network for network in trusted)
 
 
 @pytest.mark.req("NFR-41")

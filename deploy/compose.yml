@@ -144,6 +144,16 @@ services:
       NPTC_FSN_SEMANTIC_TAG: ${NPTC_FSN_SEMANTIC_TAG:-intact}
       NPTC_MAX_PREFERRED_TERM_LENGTH: ${NPTC_MAX_PREFERRED_TERM_LENGTH:-}
       NPTC_TERMS_CURRENT_VERSION: ${NPTC_TERMS_CURRENT_VERSION:-}
+      NPTC_ANON_RATE_LIMIT_REQUESTS: ${NPTC_ANON_RATE_LIMIT_REQUESTS:-}
+      NPTC_ANON_RATE_LIMIT_WINDOW_SECONDS: ${NPTC_ANON_RATE_LIMIT_WINDOW_SECONDS:-}
+      NPTC_BULK_ARTEFACTS_URL: ${NPTC_BULK_ARTEFACTS_URL:-}
+      # The private ranges Docker assigns to compose networks. `backend` publishes no port, so
+      # the only peer that can reach it is a container on this network, and the only one that
+      # forwards a caller is `web`. Trusting these ranges lets the limiter and the audit log
+      # read the caller's address from `web`'s `X-Forwarded-For` instead of recording Caddy's.
+      # `-`, not `:-`, so an explicit empty value turns the trust off rather than reverting
+      # to this default.
+      NPTC_TRUSTED_PROXIES: ${NPTC_TRUSTED_PROXIES-10.0.0.0/8,172.16.0.0/12,192.168.0.0/16}
       NPTC_TX_BASE_URL: ${NPTC_TX_BASE_URL:-https://tx.ontoserver.csiro.au/fhir}
       NPTC_TX_TOKEN: ${NPTC_TX_TOKEN:-}
       NPTC_TX_TIMEOUT_SECONDS: ${NPTC_TX_TIMEOUT_SECONDS:-30}

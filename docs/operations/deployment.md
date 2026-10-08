@@ -203,6 +203,8 @@ Run `down -v` and start again.
 | `backend` never becomes healthy | Run `docker compose -f deploy/compose.yml logs backend`. A settings error names the variable. |
 | Keycloak shows "Invalid parameter: redirect_uri" | `NPTC_FRONTEND_BASE_URL` does not match the address in your browser. Fix it, then recreate `keycloak`. |
 | Every API call fails with a 401 after sign-in | `NPTC_OIDC_ISSUER` does not match the address Keycloak signed the token with. Use the address your browser uses. |
+| Every visitor gets `429 Too Many Requests` after a few pages, or an anonymous script is refused much sooner than `NPTC_ANON_RATE_LIMIT_REQUESTS` suggests | The API is counting every visitor as one caller, because it does not trust the proxy's `X-Forwarded-For`. Check that `NPTC_TRUSTED_PROXIES` is not set to an empty value and covers the address `web` reaches `backend` from. See [Anonymous rate limit](configuration.md#anonymous-rate-limit-fr-22-nfr-24). |
+| A caller is refused with `429` | The caller is anonymous and used up its budget. The `Retry-After` header says how many seconds to wait. Signed-in requests are not counted. Raise `NPTC_ANON_RATE_LIMIT_REQUESTS` if a legitimate consumer needs more. |
 | Sign-in works, but pages say you lack permission | You have no role yet, or you hold the administrator role but have not completed the second-factor step. See [Create the first user and administrator](#create-the-first-user-and-administrator). |
 
 To run the API or web app on your own machine instead, see

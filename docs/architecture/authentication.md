@@ -228,6 +228,12 @@ attribute history the `user.renamed` diff needs (issue #167).
 feeds a parser that raises on anything else — so a non-IP value is recorded as `None`
 rather than fabricated or allowed to 500 the request.
 
+The address recorded is the one `nptc.api.rate_limit.AnonymousRateLimitMiddleware` decided,
+not `request.client.host` itself: behind Caddy that would be Caddy's address, so the middleware
+reads `X-Forwarded-For` from a trusted proxy (`NPTC_TRUSTED_PROXIES`, see
+[`public-api.md`](public-api.md#rate-limiting-and-caching)) and `request_audit_context` takes
+the result from the request. Events written before this change recorded the proxy's address.
+
 The `correlation_id` is minted once per request and stashed on `request.state`, so the
 resolution events and every later write in the same request share one — which is the only
 thing a correlation id is for.

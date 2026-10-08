@@ -75,7 +75,8 @@ does not exist yet.
 
 None required. `Role.ANON` holds `Permission.CATALOGUE_BROWSE`, and every route above
 depends on that permission (FR-44: the check is against a permission, never a role
-name), so an anonymous request is served a 200.
+name), so an anonymous request is served a 200, unless that caller's address has used up its
+request budget and gets a 429 (see [Rate limiting and caching](#rate-limiting-and-caching)).
 
 Presenting a *bad* credential is a different thing from presenting none, and is refused:
 an unparseable `Authorization` header or an unverifiable token is a 401, never a silent
@@ -383,7 +384,7 @@ populated.
 
 ## Errors
 
-Every refusal is `{"detail": "<one sentence>"}`. Detail strings are fixed, client-facing
+Every refusal is `{"detail": "<one sentence>"}`, and a 429 adds one field, `bulk_artefacts`. Detail strings are fixed, client-facing
 sentences: they never name a role, a permission, an internal identifier, or echo back
 user-supplied text (FR-44, NFR-04, NFR-26).
 
@@ -392,6 +393,7 @@ user-supplied text (FR-44, NFR-04, NFR-26).
 | 401 | A credential was presented and could not be verified. Sending none is not an error. |
 | 404 | No published entry has this business key - including one that exists but is not published. On `/catalogue/code/{system_token}/{code}` and `/catalogue/lookup`, the identical fixed sentence also covers an unregistered `system_token`/`system` (see "Exact-code lookup" above). Not produced by `/catalogue/entries` or `/catalogue/search`: an unmatched query is an empty page, not a missing resource. |
 | 422 | A malformed `business_key` or `system_token`, a blank `q`/`system`/`code`, a cursor this API did not issue (including one issued for a different `q`), or a `limit` out of range. |
+| 429 | An anonymous caller exceeded the per-address request budget. Carries `Retry-After` (whole seconds) and a body naming the bulk release artefacts. See [Rate limiting and caching](#rate-limiting-and-caching). Never produced for a request that carries an `Authorization` header. |
 
 Every status each endpoint can produce is declared in `docs/api/openapi.json`, and only
 the ones it can actually produce - so a generated client (#147) has no branch for a
@@ -418,8 +420,73 @@ repeats dropped, declared as AU preferred terms.
 
 ## Rate limiting and caching
 
-Neither is implemented yet (FR-22). There are no `Cache-Control` or `ETag` headers, and
-no request budget. Clients should page politely and not poll tighter than they need to.
+There are no `Cache-Control` or `ETag` headers. Clients should not poll tighter than they need
+to.
+
+### Anonymous per-IP limit (FR-22, NFR-24)
+
+NFR-24 asks for rate limiting at three layers. This is the first: a request budget for each
+anonymous client address. The other two are not built. They are a per-user limit on
+authenticated actions, and the domain-level submission quotas of FR-43 (`QUOTAS` in
+`nptc.auth.permissions` holds the numbers, and ADR-0019 says that exceeding one is a 429 with
+its own audit story). The three layers are independent. This one never reads a user record, and
+neither of the others should read this one's counters.
+
+**Behaviour.**
+
+- Each client address may make `NPTC_ANON_RATE_LIMIT_REQUESTS` requests in each
+  `NPTC_ANON_RATE_LIMIT_WINDOW_SECONDS` window (600 and 60 by default). The window opens at the
+  address's first counted request and closes at a fixed time after it. A refused request does not
+  extend it.
+- A request over the budget gets `429` with a `Retry-After` header. The header is the whole
+  number of seconds until the window closes, rounded up and never below 1, so a client that waits
+  that long is served. The body is
+  `{"detail": "<one sentence>", "bulk_artefacts": "<url>"}`, and `bulk_artefacts` is
+  `NPTC_BULK_ARTEFACTS_URL`. Like every other refusal, the body never repeats anything from the
+  request.
+- The 429 is declared on every operation in `docs/api/openapi.json` with its `Retry-After`
+  header, and `Retry-After` is in the CORS `expose_headers`, so a browser calling cross-origin
+  can read it.
+
+**What counts.** A request with no `Authorization` header: the same test the API uses to decide
+a caller is anonymous. A request that carries any `Authorization` header is never counted, even
+when its token is refused with a 401. A caller who sends a junk token to escape the limit gets
+the 401 instead, and the refusal costs them a signature check, so it is not a way round the
+limit that pays. Loopback addresses are never limited, because the compose healthcheck calls
+from one. A preflight (`OPTIONS`) request is answered by the CORS layer before the limiter sees
+it.
+
+**Where it runs.** `nptc.api.rate_limit.AnonymousRateLimitMiddleware` sits inside the CORS layer
+and outside routing. A refused request therefore opens no database session, verifies no token,
+and still carries the CORS headers. It also covers `/docs` and `/openapi.json`, which are
+anonymous too.
+
+**Which address.** `nptc.api.client_ip` decides it. Behind Caddy the connecting address is
+Caddy's, so the API reads `X-Forwarded-For` when, and only when, the connecting address is in
+`NPTC_TRUSTED_PROXIES`. It reads the header from the right and stops at the first address that
+is not trusted, so an address a caller writes at the left of the header is never believed. A
+connecting address that is not an IP (a unix socket, or a test client) shares one budget rather
+than escaping the limit. Every address in one IPv6 `/64` shares a budget. The same address goes
+into the audit log's actor address.
+
+**Limits of the design.**
+
+- Counters are in the API process's memory. They reset on a restart, and a second worker or
+  replica keeps its own, so the budget a caller sees is the limit times the number of processes.
+  The compose stack runs one process. A deployment that scales out should either accept that or
+  enforce the limit at the proxy as well. A shared counter in Postgres was considered and set
+  aside for now: it would cost a database write on every anonymous request, and the platform has
+  no Redis (ADR-0001).
+- A caller behind a shared address, such as an office network, shares a budget with everyone
+  there. The defaults are generous for that reason.
+
+### Bulk release artefacts
+
+FR-22 says the refusal must direct heavy consumers to the bulk release artefacts, which are the
+published release files of FR-21. No release exists to serve until P4, so
+`NPTC_BULK_ARTEFACTS_URL` defaults to this section. When releases are published, set it to
+their location. Until then, a consumer who needs the whole catalogue can page
+`GET /catalogue/entries` within the limit, or ask the maintainers for an export.
 
 ## Compatibility and breaking changes
 
