@@ -22,46 +22,53 @@ results](searching-the-catalogue.md).
 
 ### Terms
 
-The **Terms** table lists the test's synonyms and its preferred terms in other languages.
-Each row gives the term, its type, its language and its status. The test's own requesting
-term is the page heading, so it is not repeated here.
+The **Terms** table lists every name the test goes by. Each row gives the term and its type.
+The rows come in this order:
 
-### SNOMED CT codes
+1. **RCPA Preferred** is the test's requesting term, the same as the page heading.
+2. **RCPA Synonym** rows follow, one for each synonym.
+3. **RCPA Preferred (fr)**, or another language code, appears only if the test has a
+   preferred term in another language.
+4. **SNOMED CT FSN** is the fully specified name of the code the test is bound to now. It
+   appears exactly as SNOMED CT gives it, with its bracketed tag, such as "(procedure)".
+5. **SNOMED CT Preferred** is the Australian preferred term for that code. The row is
+   absent if none is recorded.
 
-The **SNOMED CT codes** table lists every code the test has been bound to.
+A test with no active SNOMED CT code shows the RCPA rows only.
+
+### Retired SNOMED CT codes
+
+The **Retired SNOMED CT codes** table appears only when the test has been bound to a code
+that is now retired. It stays listed so that you can recognise a code you already hold and
+see what replaced it.
 
 | Column | What it shows |
 |---|---|
 | **Code** | The SNOMED CT code, as an exact string of digits. |
-| **Fully specified name** | The name SNOMED CT gives the code, exactly as recorded. It keeps its bracketed tag, such as "(procedure)". |
-| **AU preferred term** | The Australian preferred term, if one is recorded. |
-| **Status** | **Active** or **Retired**, in words. |
-| **Retirement** | For a retired code, the reason it was retired and, if there is one, **Replaced by** the code that took its place. |
-
-The active code comes first. Retired codes follow. They stay listed so that you can
-recognise a code you already hold and see what replaced it.
-
-### Properties
-
-**Properties** lists every property recorded for the test, such as its disciplines or usage
-guidance. A value taken from a code list shows its term, such as **Urine**. When the code
-is a SNOMED CT code, the code follows in a grey box. A property with several values lists
-them one under another. Where a reason was
-recorded for a value, it appears below the value as **Justification**. A property marked
-**Deprecated** is no longer used for new entries, but its recorded value is kept.
+| **Fully specified name** | The name SNOMED CT gives the code, exactly as recorded. |
+| **Retirement** | The reason it was retired and, if there is one, **Replaced by** the code that took its place. |
 
 ## The details column
 
-Beside the main column, or below it on a narrow screen:
+Beside the main column, or below it on a narrow screen. **Details** lists, in this order:
 
 - **Identifier** is the test's NPTC identifier.
 - **Status** repeats the status.
-- **Term length** is the number of characters in the requesting term.
 - **Disciplines** lists each discipline recorded for the test. **None recorded** means none
   is.
-- A test that accepts any specimen lists one specimen value in **Properties**, the root
-  concept **Specimen** (code `123038009`). There is no separate **Any specimen** row.
+- **Every other property** recorded for the test, such as **Specimen**, **Subgroup** and
+  **Usage guidance**. A value taken from a code list shows its term. When the code is a
+  SNOMED CT code, the code follows in a grey box, except for **Specimen**, which shows its
+  term alone. A property with several values lists them one under another. Where a reason
+  was recorded for a value, it appears below the value as **Justification**. A property
+  marked **Deprecated** is no longer used for new entries, but its recorded value is kept.
 - **Last updated** is the date the entry last changed.
+
+**Specimen** drops a closing word "specimen", so "Serum specimen" reads **Serum**. A test
+that accepts any specimen lists the root concept, which reads **Specimen**. There is no
+separate **Any specimen** row.
+
+The page does not show the length of the requesting term.
 
 ### Recent changes
 
@@ -96,7 +103,7 @@ catalogue** to find the test by name or code.
 
 Press Tab to move through the page: the breadcrumb links, then any links and controls in the
 main column. A visible ring shows where you are. The page has one main heading, and each
-block below it has its own heading, so a screen reader can jump between **Terms**, **SNOMED
-CT codes**, **Properties**, **Details** and **Recent changes**. Status is always written in
+block below it has its own heading, so a screen reader can jump between **Terms**, **Retired
+SNOMED CT codes** (when it appears), **Details** and **Recent changes**. Status is always written in
 words as well as shown in colour. A screen reader announces it when the entry cannot be
 loaded or refreshed, and when **Recent changes** cannot be loaded.
