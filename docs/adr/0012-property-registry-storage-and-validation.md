@@ -356,6 +356,19 @@ gaps, all fixed in the same PR before merge:
   `IndexerSettings.indexer_database_url` gained a `field_validator` that strips the value,
   so `"   "` now correctly triggers `IndexerNotConfiguredError` instead of failing later,
   less legibly, inside `create_engine`.
+- **The indexer role's documented grant did not exist, and nothing dispatched the
+  reconciler.** `upgrade.md` told operators to `GRANT CREATE ON TABLE property_value`;
+  Postgres has no such privilege, and the tests hid it by connecting as a superuser. A login
+  needs ownership of the table, plus `CREATE` on schema `public` (checked for every new index)
+  and `SELECT` on `property_definition` (the reconciler reads it). Migration 0025 gives
+  ownership of `property_value` to a `NOLOGIN` role, `nptc_property_index_owner`, and
+  `nptc_indexer` is a member, so the login holds these rights without being the migration
+  owner or `nptc_app`. The cost is that the login can also alter, drop and truncate
+  `property_value` and create objects in `public`; `backend/tests/test_indexer_role.py` pins
+  that it can touch no other table. The registry write path now dispatches the reconciler
+  after the commit, through `nptc.db.session.after_commit`, not FastAPI's `BackgroundTasks`:
+  those run before a request-scoped session commits, so a task would read the old
+  definition (`backend/tests/test_after_commit.py` pins the ordering).
 - **`finally: connection.execute(_UNLOCK_SQL, ...)` could mask the original exception** if
   the connection had already died - the unlock is now itself wrapped in a suppressing `try`;
   the lock is session-scoped on a `NullPool` connection about to close regardless.

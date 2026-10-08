@@ -57,8 +57,11 @@ uv run python -m nptc.db.provision_login
 ```
 
 The second command creates the `nptc_app_login` role with the password in
-`NPTC_APP_DB_PASSWORD`. Make sure the password in `NPTC_DATABASE_URL` matches it. Both
-commands are safe to repeat.
+`NPTC_APP_DB_PASSWORD`, and the `nptc_indexer` role with the password in
+`NPTC_INDEXER_DB_PASSWORD`. Make sure the password in `NPTC_DATABASE_URL` matches the first.
+To build indexes for filterable properties while you work, set `NPTC_INDEXER_DATABASE_URL` to
+the `nptc_indexer` DSN with the second password. Without it, the API logs a warning and builds
+none. Both commands are safe to repeat.
 
 ## 5. Start the API
 

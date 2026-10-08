@@ -30,10 +30,11 @@ least-privilege `nptc_app_login` role and never receives `NPTC_MIGRATION_DATABAS
    ```
 
 2. Replace each `change-me` in `deploy/.env` with a local-only password. Keep
-   `POSTGRES_PASSWORD` and `NPTC_APP_DB_PASSWORD` free of `@ : / ? # %`, because compose
-   places them inside database URLs. `migrate` refuses an `NPTC_APP_DB_PASSWORD` with one
-   of these characters and names the variable. It cannot check `POSTGRES_PASSWORD`, so a
-   bad value there shows up as a `migrate` authentication failure.
+   `POSTGRES_PASSWORD`, `NPTC_APP_DB_PASSWORD` and `NPTC_INDEXER_DB_PASSWORD` free of
+   `@ : / ? # %`, because compose places them inside database URLs. `migrate` refuses an
+   `NPTC_APP_DB_PASSWORD` or `NPTC_INDEXER_DB_PASSWORD` with one of these characters and
+   names the variable. It cannot check `POSTGRES_PASSWORD`, so a bad value there shows up
+   as a `migrate` authentication failure.
 
 3. Build and start everything:
 
@@ -197,7 +198,7 @@ Run `down -v` and start again.
 
 | Symptom | Likely cause and fix |
 |---|---|
-| `required variable NPTC_APP_DB_PASSWORD is missing a value` | Your `deploy/.env` predates this variable. Add it from `deploy/.env.example`. |
+| `required variable NPTC_APP_DB_PASSWORD is missing a value` (or `NPTC_INDEXER_DB_PASSWORD`) | Your `deploy/.env` predates this variable. Add it from `deploy/.env.example`. |
 | `migrate` exits with an error | Run `docker compose -f deploy/compose.yml logs migrate`. The last line names the failure type. A wrong database password is the usual cause after you edit `POSTGRES_PASSWORD` on an existing volume. |
 | `backend` never becomes healthy | Run `docker compose -f deploy/compose.yml logs backend`. A settings error names the variable. |
 | Keycloak shows "Invalid parameter: redirect_uri" | `NPTC_FRONTEND_BASE_URL` does not match the address in your browser. Fix it, then recreate `keycloak`. |

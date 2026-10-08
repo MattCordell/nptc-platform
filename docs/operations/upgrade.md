@@ -68,6 +68,7 @@ and/or `data-model.md`, so it gets no section of its own below.
 | [`0022_terms_acceptance.py`](../../backend/migrations/versions/0022_terms_acceptance.py) | `terms_acceptance` (see [`data-model.md`](../architecture/data-model.md#terms_acceptance-nfr-45-nfr-47-adr-0043)) | See [below](#0022_terms_acceptancepy) - every existing user must accept the current terms before their next contribution |
 | [`0023_specimen_binding_includes_root.py`](../../backend/migrations/versions/0023_specimen_binding_includes_root.py) | The `specimen` binding `<<123038009` (see [`data-model.md`](../architecture/data-model.md)) | See [below](#0023_specimen_binding_includes_rootpy) - re-emit any dataset made before this release |
 | [`0024_retire_specimen_unconstrained.py`](../../backend/migrations/versions/0024_retire_specimen_unconstrained.py) | Drops `catalogue_entry.specimen_unconstrained` (see [`data-model.md`](../architecture/data-model.md#catalogue_entry-issue-46-fr-03-fr-38)) | See [below](#0024_retire_specimen_unconstrainedpy) - converts the flag to the specimen root first |
+| [`0025_property_index_owner_role.py`](../../backend/migrations/versions/0025_property_index_owner_role.py) | The `nptc_property_index_owner` role, which takes over ownership of `property_value` (see [`data-model.md`](../architecture/data-model.md#automatic-index-generation-issue-54-fr-13)) | See [below](#0025_property_index_owner_rolepy) - a non-superuser migration role needs membership of the new role |
 
 ## Provisioning the app role's login
 
@@ -98,34 +99,61 @@ CREATE ROLE nptc_app_login LOGIN PASSWORD '<a real, generated secret>';
 GRANT nptc_app TO nptc_app_login;
 ```
 
-## Provisioning the index reconciler's login (issue #54, FR-13)
+## Provisioning the index reconciler's login (issues #54 and #274, FR-13)
 
-Filterable-property index generation (`nptc.db.property_reconciler.
-reconcile_property_indexes`, `scripts/reconcile_property_indexes.py`) needs its own DDL-
-capable role, distinct from both `nptc_app_login` above (which cannot do DDL at all) and
-the migration owner (which can `CREATE ROLE`/`DROP TABLE` - too broad a credential to hand
-to a runtime reconciliation path). Provision a role scoped to exactly the one privilege it
-needs:
+After a registry write commits, the API builds or drops the index a `filterable` property needs
+(`nptc.db.property_reconciler_dispatch`, `nptc.db.property_reconciler`). It does this as its own
+login, `nptc_indexer`. It does not use `nptc_app_login`, which cannot run DDL. It does not use the
+migration owner either, which can `CREATE ROLE` and `DROP TABLE`, far more than an index needs.
+
+**The compose stack provisions this for you.** The `migrate` service runs
+`python -m nptc.db.provision_login`. That command creates `nptc_indexer` with the password in
+`NPTC_INDEXER_DB_PASSWORD` and makes it a member of `nptc_property_index_owner`. Compose gives
+the `backend` service the matching `NPTC_INDEXER_DATABASE_URL`. Run the command again to rotate
+the password. A `deploy/.env` from before this change makes compose stop with "required variable
+NPTC_INDEXER_DB_PASSWORD is missing a value". Copy the line from `deploy/.env.example`.
+
+**What the login can do, and why.** Postgres has no "create index" privilege. `CREATE INDEX`
+needs ownership of the table, and Postgres also checks `CREATE` on the schema that will hold the
+index. Migration `0025_property_index_owner_role.py` therefore creates a `NOLOGIN` role,
+`nptc_property_index_owner`. That role owns `property_value`, holds `CREATE` on schema `public`
+and holds `SELECT` on `property_definition`, which the reconciler reads. `nptc_indexer` is a
+member of it.
+
+So the login can create and drop indexes on `property_value`. It can also alter, drop and
+truncate `property_value`, and create new objects in `public`, because ownership and schema
+`CREATE` carry those rights. It cannot read or change any other table.
+`backend/tests/test_indexer_role.py` asserts both halves. An earlier version of this page said
+`GRANT CREATE ON TABLE property_value` was enough. That privilege does not exist.
+
+**If you manage database roles yourself**, run this once after `alembic upgrade head`:
 
 ```sql
 CREATE ROLE nptc_indexer LOGIN PASSWORD '<a real, generated secret>';
-GRANT CREATE ON TABLE property_value TO nptc_indexer;
+GRANT nptc_property_index_owner TO nptc_indexer;
 ```
 
-(Postgres has no narrower "create index" grant than table-level `CREATE` - see
-[ADR-0012](../adr/0012-property-registry-storage-and-validation.md)'s note that this is
-exactly why the reconciler's role is never `nptc_app`'s ownership, which would additionally
-confer `DROP`/`ALTER`/`TRUNCATE`.)
+**Who runs migrations after 0025.** The migration role no longer owns `property_value`. A
+superuser migration role, such as the compose `POSTGRES_USER`, needs nothing more. A
+non-superuser migration role must be a member of `nptc_property_index_owner` to run 0025's
+`ALTER TABLE ... OWNER TO`, and to alter `property_value` in any later migration. Before you
+upgrade to 0025, create the role and grant it to the migration role:
 
-Set `NPTC_INDEXER_DATABASE_URL` to this role's DSN wherever the reconciliation path runs -
-see [`configuration.md`](configuration.md). Leaving it unset is a valid, safe posture
-(`IndexerSettings`'s own fail-closed default): reconciliation simply does not run until an
-operator configures it, and `filterable` flags on `property_definition` accumulate no
-consequence until then. `backend/tests/conftest.py` does not provision this role - the
-integration tests that need it (`test_db_property_indexes.py`,
-`test_db_property_index_plan.py`) point `NPTC_INDEXER_DATABASE_URL` at the container's own
-bootstrap superuser instead, since a real deployment's narrower role has no equivalent
-already sitting in the fixture graph.
+```sql
+CREATE ROLE nptc_property_index_owner NOLOGIN;
+GRANT nptc_property_index_owner TO <migration role>;
+```
+
+Migration 0025 skips creating a role that already exists.
+
+**Leaving `NPTC_INDEXER_DATABASE_URL` unset** is still a valid, safe setup (`IndexerSettings`
+fails closed). A registry write then logs a warning and builds no index. Run
+`scripts/reconcile_property_indexes.py` to converge, as the
+[runbook](runbooks/reconcile-property-indexes.md) describes.
+
+`backend/tests/conftest.py` does not provision `nptc_indexer`. `test_db_property_indexes.py` and
+`test_db_property_index_plan.py` point `NPTC_INDEXER_DATABASE_URL` at the container's bootstrap
+superuser. `test_indexer_role.py` provisions the real login.
 
 ## The asymmetric downgrade
 
@@ -452,6 +480,26 @@ The downgrade re-adds the column and re-grants `nptc_app` its `UPDATE` on it. An
 specimen is the root becomes flagged again, and that value is removed, which restores the old
 rule that an entry holds the flag or specimens, never both. An entry that holds the root beside
 named specimens (the new rule refuses that pair) is left as it is.
+
+## `0025_property_index_owner_role.py`
+
+Creates the `NOLOGIN` role `nptc_property_index_owner` and makes it the owner of
+`property_value` (FR-13). It also grants the role `SELECT` on `property_definition` and `CREATE`
+on schema `public`. The reconciler's login, `nptc_indexer`, is a member of it. See
+[Provisioning the index reconciler's login](#provisioning-the-index-reconcilers-login-issues-54-and-274-fr-13)
+for why Postgres needs all three, and for what the login can then do.
+
+**Who runs the upgrade.** A superuser migration role, such as the compose `POSTGRES_USER`, needs
+nothing more. A non-superuser migration role must be a member of `nptc_property_index_owner`
+before 0025 runs, because `ALTER TABLE ... OWNER TO` needs it. Create the role by hand and grant
+it to the migration role first. The migration skips creating a role that already exists. The same
+membership is needed for any later migration that alters `property_value`.
+
+**Existing grants are unchanged.** `nptc_app` keeps the privileges it had on `property_value`.
+
+The downgrade revokes the two grants and returns ownership of `property_value` to the role that
+runs it. It does not drop the role, for the reason given under
+[The asymmetric downgrade](#the-asymmetric-downgrade).
 
 ## Testcontainers and Docker
 
