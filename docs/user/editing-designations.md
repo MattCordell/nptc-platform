@@ -136,11 +136,12 @@ table, marked **retired** in the Status column, rather than disappearing.
 
 An administrator can set a maximum length for preferred terms. If you save a preferred term
 longer than that maximum, the save still goes through. The term appears under **Check these
-terms** with its length and the maximum, for example "The preferred term is 31 characters long,
-which is over the maximum of 10."
+terms** with its length and the maximum. For example: "The preferred term is 31 characters
+long, which is over the maximum of 10. Consider shortening it."
 
 There is nothing to acknowledge. Edit the preferred term again if you want to shorten it. The
-note is gone once you save the next change. If no maximum is set, which is the default, you
+note is gone once you save the next change, even if that change is to a different term and the
+preferred term is still over the maximum. If no maximum is set, which is the default, you
 never see this note.
 
 ## If something goes wrong

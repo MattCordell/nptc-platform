@@ -746,6 +746,13 @@ function WarningsPanel({
         These changes were saved. Each warning below is worth a look, and none of them
         blocks the save.
       </p>
+      {warnings.some((warning) => warning.kind === "collision") && (
+        <p>
+          A term can be on two entries, because two entries can legitimately share a
+          synonym. Acknowledge a duplicate to confirm it is intended and stop it being
+          reported on every save.
+        </p>
+      )}
       <ul>
         {warnings.map((warning) => (
           <WarningItem
@@ -788,8 +795,7 @@ function WarningItem({
         <li>
           <span>
             &ldquo;{warning.term}&rdquo; is also on {warning.business_key} —{" "}
-            {warning.preferred_term}. Acknowledge it to confirm it is intended and stop it
-            being reported on every save.
+            {warning.preferred_term}
           </span>{" "}
           <Button
             type="button"
@@ -803,8 +809,9 @@ function WarningItem({
       );
     case "length":
       // FR-86: the preferred term is over the configured maximum. It has no
-      // action: shortening it is an ordinary edit, and the warning clears on the
-      // next save of a term within the maximum.
+      // action: shortening it is an ordinary edit. Like every warning here it
+      // describes the last write, so the next add, amend or reinstate replaces it
+      // whatever that write was.
       return (
         <li>
           The preferred term is {warning.length} characters long, which is over the

@@ -1265,6 +1265,7 @@ describe("amending a term", () => {
       expect(
         screen.queryByRole("button", { name: /^Acknowledge/ }),
       ).not.toBeInTheDocument();
+      expect(screen.queryByText(/Acknowledge a duplicate/)).not.toBeInTheDocument();
     });
 
     it("announces the length warning to a screen reader", async () => {
@@ -1326,6 +1327,73 @@ describe("amending a term", () => {
         expect(announced()).toContain(
           "1 term added. 1 possible duplicate and 1 length warning to review.",
         ),
+      );
+    });
+
+    it("explains acknowledging once, however many duplicates are listed", async () => {
+      const user = userEvent.setup();
+      const collision = (term: string) => ({
+        kind: "collision",
+        term,
+        business_key: "NPTC-000900",
+        preferred_term: "Iron studies",
+      });
+      stubApi([
+        READ_OK,
+        {
+          method: "POST",
+          path: ADD_PATH,
+          status: 201,
+          body: {
+            designations: [],
+            warnings: [collision("Ferritin assay"), collision("Serum iron")],
+            row_version: 4,
+          },
+        },
+      ]);
+      await renderLoaded();
+
+      await user.type(screen.getByLabelText("Synonyms"), "Ferritin assay; Serum iron");
+      await user.type(
+        inTermsPanel().getByLabelText(/Changelog note/),
+        "Add the assay wording",
+      );
+      await user.click(screen.getByRole("button", { name: "Add terms" }));
+
+      await screen.findByRole("heading", { name: "Check these terms" });
+      expect(screen.getAllByRole("button", { name: /^Acknowledge/ })).toHaveLength(2);
+      expect(screen.getAllByText(/Acknowledge a duplicate to confirm/)).toHaveLength(1);
+    });
+
+    it("drops the length warning when the next write returns none", async () => {
+      // Every warning describes the last write, so a later add replaces the list
+      // even though the preferred term is still over the maximum.
+      const user = userEvent.setup();
+      stubApi([
+        READ_OK,
+        OVER_LENGTH_AMENDED,
+        {
+          method: "POST",
+          path: ADD_PATH,
+          status: 201,
+          body: { designations: [], warnings: [], row_version: 5 },
+        },
+      ]);
+      await renderLoaded();
+      await amendPreferredTerm(user);
+      await screen.findByText(/preferred term is 31 characters long/);
+
+      await user.type(screen.getByLabelText("Synonyms"), "Ferritin assay");
+      await user.type(
+        inTermsPanel().getByLabelText(/Changelog note/),
+        "Add the assay wording",
+      );
+      await user.click(screen.getByRole("button", { name: "Add terms" }));
+
+      await waitFor(() =>
+        expect(
+          screen.queryByText(/preferred term is 31 characters long/),
+        ).not.toBeInTheDocument(),
       );
     });
 
