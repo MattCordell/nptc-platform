@@ -586,39 +586,18 @@ def test_a_lost_flush_time_bind_race_is_a_domain_error(
     owner_engine: Engine,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Issue #225: with the up-front append lock removed, `create_binding`'s entry-side race translation
-    (`_ONE_ACTIVE_PER_ENTRY_CONSTRAINT`) used to re-read `entry.id` from the
-    ORM instance *inside* the `except IntegrityError` block, after
-    `record_change`'s own flush had already failed. A failed flush leaves
-    every instance the session tracks expired, so that read triggered a
-    reload against a session not yet rolled back, raising
-    `sqlalchemy.exc.PendingRollbackError` in place of
-    `CodeBindingAlreadyActiveError` (409) - an unhandled 500 in exactly
-    the race case the translation exists to prevent.
+    """With the up-front append lock removed, two binders race past the
+    `existing_active_id` pre-check and the loser's flush fails. Its
+    `CodeBindingAlreadyActiveError` must come from the translation of that
+    `IntegrityError`, not from `PendingRollbackError`: a failed flush expires
+    every instance the session tracks, so reading `entry.id` inside the
+    `except` block would reload against a session not yet rolled back.
 
-    `test_a_lost_concurrent_code_race_is_a_domain_error_not_a_raw_
-    integrityerror` above uses an `after_cursor_execute` hook, which
-    cannot reproduce this: it commits the competing row from a second
-    *connection* while this thread's own session is never left in a
-    post-failed-flush state. Only two real threads, each racing
-    `create_binding` on the same entry with its own `Session`, put the
-    loser's session through an actual failed flush - the shape
-    `test_two_concurrent_acknowledgements_of_the_same_collision_are_
-    serialised` in `test_catalogue_collisions.py` established for the
-    designation-collision equivalent of this bug (issue #224).
-
-    The barrier only narrows the window - it does not guarantee the
-    loser reaches the flush-time translation this test exists to
-    exercise rather than the earlier pre-check (`create_binding`'s
-    `existing_active_id` `SELECT`), which raises the same
-    `CodeBindingAlreadyActiveError` without ever touching the buggy
-    `except IntegrityError` branch. The two are told apart below by
-    whether the caught error chains from an `IntegrityError`
-    (`raise ... from exc`, only true of the flush-time branch) - a
-    `\"precheck\"` outcome fails the test loudly instead of passing
-    without having exercised the fix, matching
-    `test_a_lost_concurrent_code_race_...`'s own `assert fired` guard
-    against a vacuous pass (issue #225 review)."""
+    Only two real threads, each with its own `Session`, put the loser through
+    an actual failed flush; an `after_cursor_execute` hook that commits a
+    competing row from a second connection does not. The barrier only narrows
+    the window, so a `"precheck"` outcome fails the test instead of passing
+    without having exercised the translation."""
     monkeypatch.setattr(bindings, "acquire_append_lock", lambda session: None)
     outcomes = _race_two_binds(app_engine, owner_engine)
     assert outcomes != ["ok", "precheck"], (

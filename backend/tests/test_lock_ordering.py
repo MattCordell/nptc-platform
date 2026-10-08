@@ -312,7 +312,7 @@ def _derive_from_sources(sources: Mapping[str, str]) -> dict[_FuncKey, _FuncDef]
     """Every function, across the given modules (name to source), that must
     acquire the append lock before anything else - derived from source rather
     than hand-listed, so a new writer is caught automatically rather than
-    silently sitting outside a maintained allowlist (round-2 review).
+    silently sitting outside a maintained allowlist.
 
     Two passes: a function is in the **base** set if `_DIRECT_TRIGGER_
     CALL_NAMES`/`_assigns_row_version` finds it taking a contended lock
