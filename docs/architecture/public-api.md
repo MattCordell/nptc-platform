@@ -393,7 +393,7 @@ user-supplied text (FR-44, NFR-04, NFR-26).
 | 401 | A credential was presented and could not be verified. Sending none is not an error. |
 | 404 | No published entry has this business key - including one that exists but is not published. On `/catalogue/code/{system_token}/{code}` and `/catalogue/lookup`, the identical fixed sentence also covers an unregistered `system_token`/`system` (see "Exact-code lookup" above). Not produced by `/catalogue/entries` or `/catalogue/search`: an unmatched query is an empty page, not a missing resource. |
 | 422 | A malformed `business_key` or `system_token`, a blank `q`/`system`/`code`, a cursor this API did not issue (including one issued for a different `q`), or a `limit` out of range. |
-| 429 | An anonymous caller exceeded the per-address request budget. Carries `Retry-After` (whole seconds) and a body naming the bulk release artefacts. See [Rate limiting and caching](#rate-limiting-and-caching). Never produced for a request that carries an `Authorization` header. |
+| 429 | An anonymous caller exceeded the per-address request budget, or a caller kept sending credentials the API rejected. Carries `Retry-After` (whole seconds) and a body naming the bulk release artefacts. See [Rate limiting and caching](#rate-limiting-and-caching). A valid credential is never counted. |
 
 Every status each endpoint can produce is declared in `docs/api/openapi.json`, and only
 the ones it can actually produce - so a generated client (#147) has no branch for a
@@ -448,13 +448,30 @@ neither of the others should read this one's counters.
   header, and `Retry-After` is in the CORS `expose_headers`, so a browser calling cross-origin
   can read it.
 
-**What counts.** A request with no `Authorization` header: the same test the API uses to decide
-a caller is anonymous. A request that carries any `Authorization` header is never counted, even
-when its token is refused with a 401. A caller who sends a junk token to escape the limit gets
-the 401 instead, and the refusal costs them a signature check, so it is not a way round the
-limit that pays. Loopback addresses are never limited, because the compose healthcheck calls
-from one. A preflight (`OPTIONS`) request is answered by the CORS layer before the limiter sees
-it.
+**Two budgets per address.** Both use the same limit and window, and each is counted per client
+address.
+
+- **The anonymous budget.** A request with no `Authorization` header spends it: the same test the
+  API uses to decide a caller is anonymous.
+- **The rejected-credential budget.** A request that carries an `Authorization` header spends
+  nothing, unless the route answers 401. A rejected token is not free to the server, because
+  `current_principal` opens a database session before it refuses one. Each 401 therefore spends
+  this second budget, and once an address has used it up, every request from that address that
+  carries an `Authorization` header gets a 429 until the window closes. Routes that never check a
+  token (`/docs`, `/openapi.json`) answer 200 and spend nothing, so a header sent to them costs
+  the caller no more than an anonymous request would.
+
+The limiter verifies no token, and the two budgets are separate on purpose. A valid credential
+is never counted, and anonymous traffic never refuses a signed-in user. The price is that it
+cannot tell a good credential from a bad one before the route runs, so a shared address (an
+office network) whose rejected-credential budget is used up refuses its signed-in users too,
+until the window closes. Expired tokens that a client keeps sending spend that budget too.
+
+**The healthcheck.** The compose healthcheck probes `/api/v1/openapi.json` from loopback, and a
+refused probe would mark a healthy container unhealthy. That one path from a loopback address is
+not limited. Every other request from loopback is, so an API behind a proxy on the same host
+with no `NPTC_TRUSTED_PROXIES` shows every caller as `127.0.0.1` and they share one budget. A
+preflight (`OPTIONS`) request is answered by the CORS layer before the limiter sees it.
 
 **Where it runs.** `nptc.api.rate_limit.AnonymousRateLimitMiddleware` sits inside the CORS layer
 and outside routing. A refused request therefore opens no database session, verifies no token,
@@ -465,8 +482,9 @@ anonymous too.
 Caddy's, so the API reads `X-Forwarded-For` when, and only when, the connecting address is in
 `NPTC_TRUSTED_PROXIES`. It reads the header from the right and stops at the first address that
 is not trusted, so an address a caller writes at the left of the header is never believed. A
-connecting address that is not an IP (a unix socket, or a test client) shares one budget rather
-than escaping the limit. Every address in one IPv6 `/64` shares a budget. The same address goes
+header sent as several lines is read as one list, and a hop with a port (`203.0.113.7:51234`,
+`[2001:db8::1]:443`) is read without it. A connecting address that is not an IP (a unix socket,
+or a test client) shares one budget rather than escaping the limit. Every address in one IPv6 `/64` shares a budget. The same address goes
 into the audit log's actor address.
 
 **Limits of the design.**
@@ -479,6 +497,12 @@ into the audit log's actor address.
   no Redis (ADR-0001).
 - A caller behind a shared address, such as an office network, shares a budget with everyone
   there. The defaults are generous for that reason.
+- Where Docker's userland proxy handles the connection (Docker Desktop and rootless Docker do),
+  Caddy sees the Docker gateway address, such as `172.18.0.1`, as every visitor's address. That
+  address is inside the trusted ranges, so the API resolves it as the caller, and every visitor
+  shares one budget and the audit log records the gateway. This is a limit of the platform
+  Docker runs on, not of `NPTC_TRUSTED_PROXIES`. For local use, raise the limit; for a real
+  deployment, use a host setup that preserves source addresses.
 
 ### Bulk release artefacts
 

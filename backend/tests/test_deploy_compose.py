@@ -19,8 +19,6 @@ import pytest
 from sqlalchemy import text
 from sqlalchemy.engine import Connection
 
-from nptc.settings import ApiSettings
-
 REPO_ROOT = Path(__file__).resolve().parents[2]
 COMPOSE_FILE = REPO_ROOT / "deploy" / "compose.yml"
 ENV_EXAMPLE = REPO_ROOT / "deploy" / ".env.example"
@@ -35,6 +33,17 @@ assert _conftest_spec is not None and _conftest_spec.loader is not None
 _conftest = importlib.util.module_from_spec(_conftest_spec)
 _conftest_spec.loader.exec_module(_conftest)
 compose_config = _conftest.compose_config
+
+# Not `ApiSettings(...)`, which would also read every other `NPTC_*` variable in the
+# developer's shell.
+_hermetic_spec = importlib.util.spec_from_file_location(
+    "_test_deploy_compose_hermetic_settings",
+    Path(__file__).parent / "hermetic_settings_support.py",
+)
+assert _hermetic_spec is not None and _hermetic_spec.loader is not None
+_hermetic = importlib.util.module_from_spec(_hermetic_spec)
+_hermetic_spec.loader.exec_module(_hermetic)
+hermetic_api_settings = _hermetic.hermetic_api_settings
 
 _ENV_LINE_RE = re.compile(r"^(#?)\s*([A-Z][A-Z0-9_]*)=(.*)$")
 _COMPOSE_VARIABLE_RE = re.compile(r"\$\{([A-Z][A-Z0-9_]*)")
@@ -134,7 +143,7 @@ def test_backend_trusts_the_forwarded_address_of_every_network_docker_assigns(
     default = re.fullmatch(r"\$\{NPTC_TRUSTED_PROXIES-(.*)\}", entry)
     assert default is not None, entry
 
-    trusted = ApiSettings(trusted_proxies=default.group(1)).trusted_proxies
+    trusted = hermetic_api_settings(trusted_proxies=default.group(1)).trusted_proxies
 
     assert any(ipaddress.ip_address(web_address) in network for network in trusted)
     assert not any(ipaddress.ip_address("203.0.113.7") in network for network in trusted)

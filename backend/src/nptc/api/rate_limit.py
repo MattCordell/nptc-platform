@@ -5,19 +5,18 @@ database session and verifies no token, and it covers the routes FastAPI serves 
 (`/docs`, `/openapi.json`). It sits inside `CORSMiddleware`, so the 429 carries the CORS headers
 a browser needs to read it.
 
-**Who counts.** A request with no `Authorization` header. The same test
-`dependencies.current_principal` uses to return `ANONYMOUS`. A request that carries any
-`Authorization` header is never counted, even when its token is later refused: the refusal costs
-the caller a signature check, and verifying tokens here would charge every refused request that
-cost twice. The per-user layer (NFR-24) is a separate control.
+**Two budgets per address, with the same limit and window.** A request with no `Authorization`
+header (the test `dependencies.current_principal` uses to return `ANONYMOUS`) spends the
+anonymous budget. A request that carries one spends nothing unless the route answers 401: a
+rejected token costs the server a database session, so it is charged to a second, separate
+budget, and an address that has used it up is refused whatever it sends next. The limiter
+verifies no token. A valid credential is never counted, and anonymous traffic never refuses a
+signed-in user. The per-user layer (NFR-24) is a separate control.
 
 **The budget.** A fixed window per address. The window opens at the first counted request, and
 `Retry-After` is the time left in it, so a caller who waits that long is served. Counters live in
 this process: a second worker or replica keeps its own, so the budget a caller sees is the limit
 times the number of processes. `docs/architecture/public-api.md` records this.
-
-**Loopback is never limited.** The compose healthcheck calls the API from 127.0.0.1, and a
-limited healthcheck would restart a healthy container.
 """
 
 from __future__ import annotations
@@ -31,9 +30,10 @@ from typing import Any, Final
 from fastapi import FastAPI
 from pydantic import BaseModel, Field
 from starlette.responses import JSONResponse
-from starlette.types import ASGIApp, Receive, Scope, Send
+from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
-from nptc.api.client_ip import IPNetwork, bucket_key, resolve_client_address
+from nptc.api.client_ip import IPAddress, IPNetwork, bucket_key, resolve_client_address
+from nptc.api.prefix import API_PREFIX
 
 RATE_LIMITED_DETAIL: Final = (
     "Too many requests from this address. Wait for the time in the Retry-After header, then "
@@ -43,6 +43,14 @@ RATE_LIMITED_DETAIL: Final = (
 #: Where a caller whose address is not an IP lands. Sharing one budget is the safe answer: a
 #: bypass would let any caller on such a deployment opt out of the limit.
 _UNKNOWN_ADDRESS_KEY: Final = "unknown"
+
+#: Prefixes the key of the budget for credentials a route rejected, kept apart from the
+#: anonymous budget so a signed-in user is never refused because of anonymous traffic.
+_REJECTED_KEY_PREFIX: Final = "rejected:"
+
+#: No liveness endpoint exists, so the compose healthcheck probes this path from loopback. A
+#: refused probe would mark a healthy container unhealthy.
+HEALTH_PROBE_PATH: Final = f"{API_PREFIX}/openapi.json"
 
 
 class RateLimitedResponse(BaseModel):
@@ -93,36 +101,63 @@ class AnonymousRateLimitMiddleware:
         # `dependencies._client_ip` reads this, so the audit log records the same address.
         scope.setdefault("state", {})["client_address"] = None if address is None else str(address)
 
-        anonymous = _header(headers, b"authorization") is None
-        if anonymous and (address is None or not address.is_loopback):
-            retry_after = self._charge(
-                _UNKNOWN_ADDRESS_KEY if address is None else bucket_key(address)
+        key = _UNKNOWN_ADDRESS_KEY if address is None else bucket_key(address)
+        retry_after: int | None = None
+        if _header(headers, b"authorization") is not None:
+            rejected_key = _REJECTED_KEY_PREFIX + key
+            retry_after = self._time_left(rejected_key)
+            send = self._charging_rejections(send, rejected_key)
+        elif not _is_health_probe(address, scope):
+            retry_after = self._charge(key)
+
+        if retry_after is not None:
+            response = JSONResponse(
+                {"detail": RATE_LIMITED_DETAIL, "bulk_artefacts": self._bulk_artefacts_url},
+                status_code=429,
+                headers={"Retry-After": str(retry_after)},
             )
-            if retry_after is not None:
-                response = JSONResponse(
-                    {"detail": RATE_LIMITED_DETAIL, "bulk_artefacts": self._bulk_artefacts_url},
-                    status_code=429,
-                    headers={"Retry-After": str(retry_after)},
-                )
-                await response(scope, receive, send)
-                return
+            await response(scope, receive, send)
+            return
 
         await self.app(scope, receive, send)
 
+    def _charging_rejections(self, send: Send, key: str) -> Send:
+        """Counts a 401 against `key` as it leaves, so the budget is spent only by credentials
+        the route actually rejected, with no token verified here."""
+
+        async def charging(message: Message) -> None:
+            if message["type"] == "http.response.start" and message["status"] == 401:
+                self._count(key, self._monotonic())
+            await send(message)
+
+        return charging
+
     def _charge(self, key: str) -> int | None:
-        """Counts one request. `None` when it is within budget, otherwise the whole seconds
-        until the window closes: rounded up so waiting that long always works, and at least 1
-        so a client never retries immediately."""
+        """Counts one request. `None` when it is within budget, otherwise the seconds to wait."""
+        retry_after = self._time_left(key)
+        if retry_after is None:
+            self._count(key, self._monotonic())
+        return retry_after
+
+    def _time_left(self, key: str) -> int | None:
+        """`None` while `key` has budget, otherwise the whole seconds until its window closes:
+        rounded up so waiting that long always works, and at least 1 so a client never
+        retries immediately."""
         now = self._monotonic()
         self._sweep(now)
         window = self._windows.get(key)
         if window is None or now >= window.opened_at + self._window_seconds:
-            self._windows[key] = _Window(opened_at=now, count=1)
             return None
         if window.count < self._limit:
-            window.count += 1
             return None
         return max(1, math.ceil(window.opened_at + self._window_seconds - now))
+
+    def _count(self, key: str, now: float) -> None:
+        window = self._windows.get(key)
+        if window is None or now >= window.opened_at + self._window_seconds:
+            self._windows[key] = _Window(opened_at=now, count=1)
+        else:
+            window.count += 1
 
     def _sweep(self, now: float) -> None:
         """Drops closed windows once per window length, so memory follows the callers seen in
@@ -139,6 +174,10 @@ class AnonymousRateLimitMiddleware:
             del self._windows[key]
 
 
+def _is_health_probe(address: IPAddress | None, scope: Scope) -> bool:
+    return address is not None and address.is_loopback and scope["path"] == HEALTH_PROBE_PATH
+
+
 def _header(headers: Sequence[tuple[bytes, bytes]], name: bytes) -> str | None:
     """Every line of the header, joined in order as RFC 9110 defines them to mean: a proxy
     may append its own `X-Forwarded-For` line rather than extend the caller's."""
@@ -151,10 +190,11 @@ _HTTP_METHODS: Final = frozenset(
 )
 _REFUSAL_REF: Final = {"$ref": "#/components/schemas/RateLimitedResponse"}
 _REFUSAL_DESCRIPTION: Final = (
-    "An anonymous caller exceeded the per-address request budget (FR-22). Wait for the number "
-    "of seconds in `Retry-After`, then try again. Requests that carry an `Authorization` header "
-    "are never refused for this reason. The body's `bulk_artefacts` names where to fetch the "
-    "whole catalogue instead."
+    "An address exceeded its request budget (FR-22): an anonymous caller its anonymous budget, "
+    "or a caller whose credentials the API kept rejecting its budget for rejected credentials. "
+    "Wait for the number of seconds in `Retry-After`, then try again. A valid credential is "
+    "never counted. The body's `bulk_artefacts` names where to fetch the whole catalogue "
+    "instead."
 )
 _RETRY_AFTER_HEADER: Final = {
     "description": "Whole seconds until the caller's request budget is available again.",

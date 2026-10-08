@@ -47,7 +47,10 @@ build_api_test_app = _api_support.build_api_test_app
 ApiTestApp = _api_support.ApiTestApp
 hermetic_api_settings = _api_support.hermetic_api_settings
 
-_COUNTED = f"{API_PREFIX}/openapi.json"
+#: A route FastAPI serves itself, so it needs no database. Not `/openapi.json`, which the
+#: compose healthcheck probes from loopback and the limiter therefore lets through.
+_COUNTED = f"{API_PREFIX}/docs"
+_SCHEMA = f"{API_PREFIX}/openapi.json"
 _BULK_URL = "https://releases.example.org/nptc"
 
 
@@ -166,18 +169,114 @@ def test_a_refused_request_does_not_extend_the_window() -> None:
 
 
 @pytest.mark.req("NFR-24")
-def test_requests_carrying_an_authorization_header_are_never_counted() -> None:
-    """Including one whose token is junk: the 401 it earns downstream already cost the
-    caller a signature check, and the limiter does not verify tokens."""
+def test_a_credentialed_request_that_nothing_rejects_is_never_counted() -> None:
+    """The anonymous budget is for requests with no credential. A route that never checks the
+    token answers 200, so there is no rejection to charge."""
     client = _app_client(_Clock(), limit=1)
 
     for _ in range(5):
-        assert (
-            client.get(_COUNTED, headers={"Authorization": "Bearer not-a-token"}).status_code == 200
-        )
+        assert client.get(_COUNTED, headers={"Authorization": "Bearer anything"}).status_code == 200
 
     assert client.get(_COUNTED).status_code == 200
     assert client.get(_COUNTED).status_code == 429
+
+
+def _credential_checking_client(
+    clock: _Clock, *, limit: int = 2, peer: tuple[str, int] = ("203.0.113.7", 50000)
+) -> TestClient:
+    """The limiter around an app that, like the catalogue routes, answers 401 to a bad
+    credential and 200 to a good one or none, with no database."""
+
+    async def endpoint(request: Request) -> PlainTextResponse:
+        authorization = request.headers.get("Authorization")
+        if authorization is not None and authorization != "Bearer good":
+            return PlainTextResponse("no", status_code=401)
+        return PlainTextResponse("ok")
+
+    middleware = AnonymousRateLimitMiddleware(
+        Starlette(routes=[Route("/", endpoint)]),
+        limit=limit,
+        window_seconds=60,
+        bulk_artefacts_url=_BULK_URL,
+        trusted_proxies=(),
+        monotonic=clock,
+    )
+    return TestClient(middleware, client=peer)
+
+
+_JUNK = {"Authorization": "Bearer junk"}
+_GOOD = {"Authorization": "Bearer good"}
+
+
+@pytest.mark.req("NFR-24")
+def test_a_caller_who_keeps_sending_rejected_credentials_is_eventually_refused() -> None:
+    """A junk token costs the server a database session before the 401, so the header cannot
+    be a free way round the limit."""
+    client = _credential_checking_client(_Clock(), limit=2)
+
+    assert client.get("/", headers=_JUNK).status_code == 401
+    assert client.get("/", headers=_JUNK).status_code == 401
+    refused = client.get("/", headers=_JUNK)
+
+    assert refused.status_code == 429
+    assert int(refused.headers["Retry-After"]) >= 1
+    assert refused.json()["bulk_artefacts"] == _BULK_URL
+
+
+@pytest.mark.req("NFR-24")
+def test_a_caller_with_rejected_credentials_is_served_after_the_retry_after() -> None:
+    clock = _Clock()
+    client = _credential_checking_client(clock, limit=1)
+    client.get("/", headers=_JUNK)
+    refused = client.get("/", headers=_JUNK)
+    assert refused.status_code == 429
+
+    clock.now += int(refused.headers["Retry-After"])
+
+    assert client.get("/", headers=_JUNK).status_code == 401
+
+
+@pytest.mark.req("NFR-24")
+def test_a_valid_credential_is_never_counted_against_either_budget() -> None:
+    client = _credential_checking_client(_Clock(), limit=1)
+
+    for _ in range(5):
+        assert client.get("/", headers=_GOOD).status_code == 200
+
+    assert client.get("/").status_code == 200
+    assert client.get("/", headers=_JUNK).status_code == 401
+
+
+@pytest.mark.req("NFR-24")
+def test_rejected_credentials_do_not_spend_the_anonymous_budget_or_the_reverse() -> None:
+    client = _credential_checking_client(_Clock(), limit=1)
+    client.get("/", headers=_JUNK)
+    assert client.get("/", headers=_JUNK).status_code == 429
+
+    assert client.get("/").status_code == 200
+    assert client.get("/").status_code == 429
+
+
+@pytest.mark.req("NFR-24")
+def test_an_address_over_its_rejected_credential_budget_is_refused_whatever_it_sends() -> None:
+    """The limiter verifies no token, so it cannot tell a good credential from a junk one
+    before the route runs. A shared address that has used up the budget waits for the window
+    to close. This is the price of the cap, and `public-api.md` says so."""
+    client = _credential_checking_client(_Clock(), limit=1)
+    client.get("/", headers=_JUNK)
+
+    assert client.get("/", headers=_GOOD).status_code == 429
+
+
+@pytest.mark.req("NFR-24")
+def test_the_rejected_credential_budget_is_kept_per_address() -> None:
+    clock = _Clock()
+    first = _credential_checking_client(clock, limit=1, peer=("203.0.113.7", 1))
+    second = TestClient(first.app, client=("198.51.100.9", 1))
+    first.get("/", headers=_JUNK)
+    assert first.get("/", headers=_JUNK).status_code == 429
+
+    assert second.get("/", headers=_JUNK).status_code == 401
 
 
 @pytest.mark.req("NFR-24")
@@ -192,11 +291,30 @@ def test_each_address_has_its_own_budget() -> None:
 
 
 @pytest.mark.req("NFR-24")
-def test_loopback_is_never_limited() -> None:
-    """The compose healthcheck calls from 127.0.0.1 every ten seconds."""
+def test_the_compose_healthcheck_is_never_limited() -> None:
+    """It probes `/openapi.json` from 127.0.0.1, and a refused probe would mark a healthy
+    container unhealthy."""
     client = _app_client(_Clock(), limit=1, peer=("127.0.0.1", 1))
 
-    assert all(client.get(_COUNTED).status_code == 200 for _ in range(5))
+    assert all(client.get(_SCHEMA).status_code == 200 for _ in range(5))
+
+
+@pytest.mark.req("NFR-24")
+def test_loopback_is_limited_on_every_other_route() -> None:
+    """A proxy on the same host with no `NPTC_TRUSTED_PROXIES` makes every caller look like
+    loopback. Exempting loopback wholesale would turn the limit off for all of them."""
+    client = _app_client(_Clock(), limit=1, peer=("127.0.0.1", 1))
+
+    assert client.get(_COUNTED).status_code == 200
+    assert client.get(_COUNTED).status_code == 429
+
+
+@pytest.mark.req("NFR-24")
+def test_a_caller_that_is_not_loopback_is_limited_on_the_healthcheck_route() -> None:
+    client = _app_client(_Clock(), limit=1)
+
+    assert client.get(_SCHEMA).status_code == 200
+    assert client.get(_SCHEMA).status_code == 429
 
 
 @pytest.mark.req("NFR-24")
@@ -322,7 +440,7 @@ def test_the_audit_context_records_the_address_the_limiter_decided() -> None:
 
 @pytest.mark.req("FR-22")
 def test_every_operation_declares_the_429_with_its_retry_after_header() -> None:
-    schema = _app_client(_Clock()).get(_COUNTED).json()
+    schema = _app_client(_Clock()).get(_SCHEMA).json()
 
     operations = [operation for path in schema["paths"].values() for operation in path.values()]
     assert operations
@@ -380,3 +498,20 @@ def test_a_signed_in_caller_is_not_charged_to_the_anonymous_budget(
     assert limited_api.get("/catalogue/entries").status_code == 200
     assert limited_api.get("/catalogue/entries").status_code == 200
     assert limited_api.get("/catalogue/entries").status_code == 429
+
+
+@pytest.mark.req("NFR-24")
+@pytest.mark.integration
+def test_junk_tokens_on_a_real_route_are_refused_after_the_budget(
+    limited_api: ApiTestApp,
+) -> None:
+    """`current_principal` opens a database session before it rejects a token, so this is the
+    cost the cap exists to bound."""
+    junk = {"Authorization": "Bearer not-a-token"}
+
+    first = limited_api.get("/catalogue/entries", headers=junk)
+    second = limited_api.get("/catalogue/entries", headers=junk)
+    third = limited_api.get("/catalogue/entries", headers=junk)
+
+    assert (first.status_code, second.status_code, third.status_code) == (401, 401, 429)
+    assert limited_api.get("/catalogue/entries").status_code == 200

@@ -2633,7 +2633,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description An anonymous caller exceeded the per-address request budget (FR-22). Wait for the number of seconds in `Retry-After`, then try again. Requests that carry an `Authorization` header are never refused for this reason. The body's `bulk_artefacts` names where to fetch the whole catalogue instead. */
+            /** @description An address exceeded its request budget (FR-22): an anonymous caller its anonymous budget, or a caller whose credentials the API kept rejecting its budget for rejected credentials. Wait for the number of seconds in `Retry-After`, then try again. A valid credential is never counted. The body's `bulk_artefacts` names where to fetch the whole catalogue instead. */
             429: {
                 headers: {
                     /** @description Whole seconds until the caller's request budget is available again. */
@@ -2691,7 +2691,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description An anonymous caller exceeded the per-address request budget (FR-22). Wait for the number of seconds in `Retry-After`, then try again. Requests that carry an `Authorization` header are never refused for this reason. The body's `bulk_artefacts` names where to fetch the whole catalogue instead. */
+            /** @description An address exceeded its request budget (FR-22): an anonymous caller its anonymous budget, or a caller whose credentials the API kept rejecting its budget for rejected credentials. Wait for the number of seconds in `Retry-After`, then try again. A valid credential is never counted. The body's `bulk_artefacts` names where to fetch the whole catalogue instead. */
             429: {
                 headers: {
                     /** @description Whole seconds until the caller's request budget is available again. */
@@ -2769,7 +2769,7 @@ export interface operations {
                     "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
-            /** @description An anonymous caller exceeded the per-address request budget (FR-22). Wait for the number of seconds in `Retry-After`, then try again. Requests that carry an `Authorization` header are never refused for this reason. The body's `bulk_artefacts` names where to fetch the whole catalogue instead. */
+            /** @description An address exceeded its request budget (FR-22): an anonymous caller its anonymous budget, or a caller whose credentials the API kept rejecting its budget for rejected credentials. Wait for the number of seconds in `Retry-After`, then try again. A valid credential is never counted. The body's `bulk_artefacts` names where to fetch the whole catalogue instead. */
             429: {
                 headers: {
                     /** @description Whole seconds until the caller's request budget is available again. */
@@ -2840,7 +2840,7 @@ export interface operations {
                     "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
-            /** @description An anonymous caller exceeded the per-address request budget (FR-22). Wait for the number of seconds in `Retry-After`, then try again. Requests that carry an `Authorization` header are never refused for this reason. The body's `bulk_artefacts` names where to fetch the whole catalogue instead. */
+            /** @description An address exceeded its request budget (FR-22): an anonymous caller its anonymous budget, or a caller whose credentials the API kept rejecting its budget for rejected credentials. Wait for the number of seconds in `Retry-After`, then try again. A valid credential is never counted. The body's `bulk_artefacts` names where to fetch the whole catalogue instead. */
             429: {
                 headers: {
                     /** @description Whole seconds until the caller's request budget is available again. */
@@ -2896,7 +2896,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description An anonymous caller exceeded the per-address request budget (FR-22). Wait for the number of seconds in `Retry-After`, then try again. Requests that carry an `Authorization` header are never refused for this reason. The body's `bulk_artefacts` names where to fetch the whole catalogue instead. */
+            /** @description An address exceeded its request budget (FR-22): an anonymous caller its anonymous budget, or a caller whose credentials the API kept rejecting its budget for rejected credentials. Wait for the number of seconds in `Retry-After`, then try again. A valid credential is never counted. The body's `bulk_artefacts` names where to fetch the whole catalogue instead. */
             429: {
                 headers: {
                     /** @description Whole seconds until the caller's request budget is available again. */
@@ -2954,7 +2954,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description An anonymous caller exceeded the per-address request budget (FR-22). Wait for the number of seconds in `Retry-After`, then try again. Requests that carry an `Authorization` header are never refused for this reason. The body's `bulk_artefacts` names where to fetch the whole catalogue instead. */
+            /** @description An address exceeded its request budget (FR-22): an anonymous caller its anonymous budget, or a caller whose credentials the API kept rejecting its budget for rejected credentials. Wait for the number of seconds in `Retry-After`, then try again. A valid credential is never counted. The body's `bulk_artefacts` names where to fetch the whole catalogue instead. */
             429: {
                 headers: {
                     /** @description Whole seconds until the caller's request budget is available again. */
@@ -3015,7 +3015,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description An anonymous caller exceeded the per-address request budget (FR-22). Wait for the number of seconds in `Retry-After`, then try again. Requests that carry an `Authorization` header are never refused for this reason. The body's `bulk_artefacts` names where to fetch the whole catalogue instead. */
+            /** @description An address exceeded its request budget (FR-22): an anonymous caller its anonymous budget, or a caller whose credentials the API kept rejecting its budget for rejected credentials. Wait for the number of seconds in `Retry-After`, then try again. A valid credential is never counted. The body's `bulk_artefacts` names where to fetch the whole catalogue instead. */
             429: {
                 headers: {
                     /** @description Whole seconds until the caller's request budget is available again. */
@@ -3098,7 +3098,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description An anonymous caller exceeded the per-address request budget (FR-22). Wait for the number of seconds in `Retry-After`, then try again. Requests that carry an `Authorization` header are never refused for this reason. The body's `bulk_artefacts` names where to fetch the whole catalogue instead. */
+            /** @description An address exceeded its request budget (FR-22): an anonymous caller its anonymous budget, or a caller whose credentials the API kept rejecting its budget for rejected credentials. Wait for the number of seconds in `Retry-After`, then try again. A valid credential is never counted. The body's `bulk_artefacts` names where to fetch the whole catalogue instead. */
             429: {
                 headers: {
                     /** @description Whole seconds until the caller's request budget is available again. */
@@ -3161,7 +3161,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description An anonymous caller exceeded the per-address request budget (FR-22). Wait for the number of seconds in `Retry-After`, then try again. Requests that carry an `Authorization` header are never refused for this reason. The body's `bulk_artefacts` names where to fetch the whole catalogue instead. */
+            /** @description An address exceeded its request budget (FR-22): an anonymous caller its anonymous budget, or a caller whose credentials the API kept rejecting its budget for rejected credentials. Wait for the number of seconds in `Retry-After`, then try again. A valid credential is never counted. The body's `bulk_artefacts` names where to fetch the whole catalogue instead. */
             429: {
                 headers: {
                     /** @description Whole seconds until the caller's request budget is available again. */
@@ -3224,7 +3224,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description An anonymous caller exceeded the per-address request budget (FR-22). Wait for the number of seconds in `Retry-After`, then try again. Requests that carry an `Authorization` header are never refused for this reason. The body's `bulk_artefacts` names where to fetch the whole catalogue instead. */
+            /** @description An address exceeded its request budget (FR-22): an anonymous caller its anonymous budget, or a caller whose credentials the API kept rejecting its budget for rejected credentials. Wait for the number of seconds in `Retry-After`, then try again. A valid credential is never counted. The body's `bulk_artefacts` names where to fetch the whole catalogue instead. */
             429: {
                 headers: {
                     /** @description Whole seconds until the caller's request budget is available again. */
@@ -3285,7 +3285,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description An anonymous caller exceeded the per-address request budget (FR-22). Wait for the number of seconds in `Retry-After`, then try again. Requests that carry an `Authorization` header are never refused for this reason. The body's `bulk_artefacts` names where to fetch the whole catalogue instead. */
+            /** @description An address exceeded its request budget (FR-22): an anonymous caller its anonymous budget, or a caller whose credentials the API kept rejecting its budget for rejected credentials. Wait for the number of seconds in `Retry-After`, then try again. A valid credential is never counted. The body's `bulk_artefacts` names where to fetch the whole catalogue instead. */
             429: {
                 headers: {
                     /** @description Whole seconds until the caller's request budget is available again. */
@@ -3368,7 +3368,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"] | components["schemas"]["HTTPValidationError"];
                 };
             };
-            /** @description An anonymous caller exceeded the per-address request budget (FR-22). Wait for the number of seconds in `Retry-After`, then try again. Requests that carry an `Authorization` header are never refused for this reason. The body's `bulk_artefacts` names where to fetch the whole catalogue instead. */
+            /** @description An address exceeded its request budget (FR-22): an anonymous caller its anonymous budget, or a caller whose credentials the API kept rejecting its budget for rejected credentials. Wait for the number of seconds in `Retry-After`, then try again. A valid credential is never counted. The body's `bulk_artefacts` names where to fetch the whole catalogue instead. */
             429: {
                 headers: {
                     /** @description Whole seconds until the caller's request budget is available again. */
@@ -3429,7 +3429,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description An anonymous caller exceeded the per-address request budget (FR-22). Wait for the number of seconds in `Retry-After`, then try again. Requests that carry an `Authorization` header are never refused for this reason. The body's `bulk_artefacts` names where to fetch the whole catalogue instead. */
+            /** @description An address exceeded its request budget (FR-22): an anonymous caller its anonymous budget, or a caller whose credentials the API kept rejecting its budget for rejected credentials. Wait for the number of seconds in `Retry-After`, then try again. A valid credential is never counted. The body's `bulk_artefacts` names where to fetch the whole catalogue instead. */
             429: {
                 headers: {
                     /** @description Whole seconds until the caller's request budget is available again. */
@@ -3514,7 +3514,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description An anonymous caller exceeded the per-address request budget (FR-22). Wait for the number of seconds in `Retry-After`, then try again. Requests that carry an `Authorization` header are never refused for this reason. The body's `bulk_artefacts` names where to fetch the whole catalogue instead. */
+            /** @description An address exceeded its request budget (FR-22): an anonymous caller its anonymous budget, or a caller whose credentials the API kept rejecting its budget for rejected credentials. Wait for the number of seconds in `Retry-After`, then try again. A valid credential is never counted. The body's `bulk_artefacts` names where to fetch the whole catalogue instead. */
             429: {
                 headers: {
                     /** @description Whole seconds until the caller's request budget is available again. */
@@ -3584,7 +3584,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description An anonymous caller exceeded the per-address request budget (FR-22). Wait for the number of seconds in `Retry-After`, then try again. Requests that carry an `Authorization` header are never refused for this reason. The body's `bulk_artefacts` names where to fetch the whole catalogue instead. */
+            /** @description An address exceeded its request budget (FR-22): an anonymous caller its anonymous budget, or a caller whose credentials the API kept rejecting its budget for rejected credentials. Wait for the number of seconds in `Retry-After`, then try again. A valid credential is never counted. The body's `bulk_artefacts` names where to fetch the whole catalogue instead. */
             429: {
                 headers: {
                     /** @description Whole seconds until the caller's request budget is available again. */
@@ -3650,7 +3650,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description An anonymous caller exceeded the per-address request budget (FR-22). Wait for the number of seconds in `Retry-After`, then try again. Requests that carry an `Authorization` header are never refused for this reason. The body's `bulk_artefacts` names where to fetch the whole catalogue instead. */
+            /** @description An address exceeded its request budget (FR-22): an anonymous caller its anonymous budget, or a caller whose credentials the API kept rejecting its budget for rejected credentials. Wait for the number of seconds in `Retry-After`, then try again. A valid credential is never counted. The body's `bulk_artefacts` names where to fetch the whole catalogue instead. */
             429: {
                 headers: {
                     /** @description Whole seconds until the caller's request budget is available again. */
@@ -3734,7 +3734,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description An anonymous caller exceeded the per-address request budget (FR-22). Wait for the number of seconds in `Retry-After`, then try again. Requests that carry an `Authorization` header are never refused for this reason. The body's `bulk_artefacts` names where to fetch the whole catalogue instead. */
+            /** @description An address exceeded its request budget (FR-22): an anonymous caller its anonymous budget, or a caller whose credentials the API kept rejecting its budget for rejected credentials. Wait for the number of seconds in `Retry-After`, then try again. A valid credential is never counted. The body's `bulk_artefacts` names where to fetch the whole catalogue instead. */
             429: {
                 headers: {
                     /** @description Whole seconds until the caller's request budget is available again. */
@@ -3827,7 +3827,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description An anonymous caller exceeded the per-address request budget (FR-22). Wait for the number of seconds in `Retry-After`, then try again. Requests that carry an `Authorization` header are never refused for this reason. The body's `bulk_artefacts` names where to fetch the whole catalogue instead. */
+            /** @description An address exceeded its request budget (FR-22): an anonymous caller its anonymous budget, or a caller whose credentials the API kept rejecting its budget for rejected credentials. Wait for the number of seconds in `Retry-After`, then try again. A valid credential is never counted. The body's `bulk_artefacts` names where to fetch the whole catalogue instead. */
             429: {
                 headers: {
                     /** @description Whole seconds until the caller's request budget is available again. */
@@ -3919,7 +3919,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"] | components["schemas"]["HTTPValidationError"];
                 };
             };
-            /** @description An anonymous caller exceeded the per-address request budget (FR-22). Wait for the number of seconds in `Retry-After`, then try again. Requests that carry an `Authorization` header are never refused for this reason. The body's `bulk_artefacts` names where to fetch the whole catalogue instead. */
+            /** @description An address exceeded its request budget (FR-22): an anonymous caller its anonymous budget, or a caller whose credentials the API kept rejecting its budget for rejected credentials. Wait for the number of seconds in `Retry-After`, then try again. A valid credential is never counted. The body's `bulk_artefacts` names where to fetch the whole catalogue instead. */
             429: {
                 headers: {
                     /** @description Whole seconds until the caller's request budget is available again. */
@@ -4002,7 +4002,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"] | components["schemas"]["HTTPValidationError"];
                 };
             };
-            /** @description An anonymous caller exceeded the per-address request budget (FR-22). Wait for the number of seconds in `Retry-After`, then try again. Requests that carry an `Authorization` header are never refused for this reason. The body's `bulk_artefacts` names where to fetch the whole catalogue instead. */
+            /** @description An address exceeded its request budget (FR-22): an anonymous caller its anonymous budget, or a caller whose credentials the API kept rejecting its budget for rejected credentials. Wait for the number of seconds in `Retry-After`, then try again. A valid credential is never counted. The body's `bulk_artefacts` names where to fetch the whole catalogue instead. */
             429: {
                 headers: {
                     /** @description Whole seconds until the caller's request budget is available again. */
@@ -4085,7 +4085,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"] | components["schemas"]["HTTPValidationError"];
                 };
             };
-            /** @description An anonymous caller exceeded the per-address request budget (FR-22). Wait for the number of seconds in `Retry-After`, then try again. Requests that carry an `Authorization` header are never refused for this reason. The body's `bulk_artefacts` names where to fetch the whole catalogue instead. */
+            /** @description An address exceeded its request budget (FR-22): an anonymous caller its anonymous budget, or a caller whose credentials the API kept rejecting its budget for rejected credentials. Wait for the number of seconds in `Retry-After`, then try again. A valid credential is never counted. The body's `bulk_artefacts` names where to fetch the whole catalogue instead. */
             429: {
                 headers: {
                     /** @description Whole seconds until the caller's request budget is available again. */
@@ -4168,7 +4168,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"] | components["schemas"]["HTTPValidationError"];
                 };
             };
-            /** @description An anonymous caller exceeded the per-address request budget (FR-22). Wait for the number of seconds in `Retry-After`, then try again. Requests that carry an `Authorization` header are never refused for this reason. The body's `bulk_artefacts` names where to fetch the whole catalogue instead. */
+            /** @description An address exceeded its request budget (FR-22): an anonymous caller its anonymous budget, or a caller whose credentials the API kept rejecting its budget for rejected credentials. Wait for the number of seconds in `Retry-After`, then try again. A valid credential is never counted. The body's `bulk_artefacts` names where to fetch the whole catalogue instead. */
             429: {
                 headers: {
                     /** @description Whole seconds until the caller's request budget is available again. */
@@ -4252,7 +4252,7 @@ export interface operations {
                     "application/json": components["schemas"]["HTTPValidationError"] | components["schemas"]["ErrorResponse"] | components["schemas"]["PropertyValidationResponse"];
                 };
             };
-            /** @description An anonymous caller exceeded the per-address request budget (FR-22). Wait for the number of seconds in `Retry-After`, then try again. Requests that carry an `Authorization` header are never refused for this reason. The body's `bulk_artefacts` names where to fetch the whole catalogue instead. */
+            /** @description An address exceeded its request budget (FR-22): an anonymous caller its anonymous budget, or a caller whose credentials the API kept rejecting its budget for rejected credentials. Wait for the number of seconds in `Retry-After`, then try again. A valid credential is never counted. The body's `bulk_artefacts` names where to fetch the whole catalogue instead. */
             429: {
                 headers: {
                     /** @description Whole seconds until the caller's request budget is available again. */
@@ -4334,7 +4334,7 @@ export interface operations {
                     "application/json": components["schemas"]["HTTPValidationError"] | components["schemas"]["ErrorResponse"] | components["schemas"]["PropertyValidationResponse"];
                 };
             };
-            /** @description An anonymous caller exceeded the per-address request budget (FR-22). Wait for the number of seconds in `Retry-After`, then try again. Requests that carry an `Authorization` header are never refused for this reason. The body's `bulk_artefacts` names where to fetch the whole catalogue instead. */
+            /** @description An address exceeded its request budget (FR-22): an anonymous caller its anonymous budget, or a caller whose credentials the API kept rejecting its budget for rejected credentials. Wait for the number of seconds in `Retry-After`, then try again. A valid credential is never counted. The body's `bulk_artefacts` names where to fetch the whole catalogue instead. */
             429: {
                 headers: {
                     /** @description Whole seconds until the caller's request budget is available again. */
@@ -4410,7 +4410,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description An anonymous caller exceeded the per-address request budget (FR-22). Wait for the number of seconds in `Retry-After`, then try again. Requests that carry an `Authorization` header are never refused for this reason. The body's `bulk_artefacts` names where to fetch the whole catalogue instead. */
+            /** @description An address exceeded its request budget (FR-22): an anonymous caller its anonymous budget, or a caller whose credentials the API kept rejecting its budget for rejected credentials. Wait for the number of seconds in `Retry-After`, then try again. A valid credential is never counted. The body's `bulk_artefacts` names where to fetch the whole catalogue instead. */
             429: {
                 headers: {
                     /** @description Whole seconds until the caller's request budget is available again. */
@@ -4477,7 +4477,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description An anonymous caller exceeded the per-address request budget (FR-22). Wait for the number of seconds in `Retry-After`, then try again. Requests that carry an `Authorization` header are never refused for this reason. The body's `bulk_artefacts` names where to fetch the whole catalogue instead. */
+            /** @description An address exceeded its request budget (FR-22): an anonymous caller its anonymous budget, or a caller whose credentials the API kept rejecting its budget for rejected credentials. Wait for the number of seconds in `Retry-After`, then try again. A valid credential is never counted. The body's `bulk_artefacts` names where to fetch the whole catalogue instead. */
             429: {
                 headers: {
                     /** @description Whole seconds until the caller's request budget is available again. */
@@ -4547,7 +4547,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description An anonymous caller exceeded the per-address request budget (FR-22). Wait for the number of seconds in `Retry-After`, then try again. Requests that carry an `Authorization` header are never refused for this reason. The body's `bulk_artefacts` names where to fetch the whole catalogue instead. */
+            /** @description An address exceeded its request budget (FR-22): an anonymous caller its anonymous budget, or a caller whose credentials the API kept rejecting its budget for rejected credentials. Wait for the number of seconds in `Retry-After`, then try again. A valid credential is never counted. The body's `bulk_artefacts` names where to fetch the whole catalogue instead. */
             429: {
                 headers: {
                     /** @description Whole seconds until the caller's request budget is available again. */
@@ -4596,7 +4596,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description An anonymous caller exceeded the per-address request budget (FR-22). Wait for the number of seconds in `Retry-After`, then try again. Requests that carry an `Authorization` header are never refused for this reason. The body's `bulk_artefacts` names where to fetch the whole catalogue instead. */
+            /** @description An address exceeded its request budget (FR-22): an anonymous caller its anonymous budget, or a caller whose credentials the API kept rejecting its budget for rejected credentials. Wait for the number of seconds in `Retry-After`, then try again. A valid credential is never counted. The body's `bulk_artefacts` names where to fetch the whole catalogue instead. */
             429: {
                 headers: {
                     /** @description Whole seconds until the caller's request budget is available again. */
@@ -4645,7 +4645,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description An anonymous caller exceeded the per-address request budget (FR-22). Wait for the number of seconds in `Retry-After`, then try again. Requests that carry an `Authorization` header are never refused for this reason. The body's `bulk_artefacts` names where to fetch the whole catalogue instead. */
+            /** @description An address exceeded its request budget (FR-22): an anonymous caller its anonymous budget, or a caller whose credentials the API kept rejecting its budget for rejected credentials. Wait for the number of seconds in `Retry-After`, then try again. A valid credential is never counted. The body's `bulk_artefacts` names where to fetch the whole catalogue instead. */
             429: {
                 headers: {
                     /** @description Whole seconds until the caller's request budget is available again. */
@@ -4706,7 +4706,7 @@ export interface operations {
                     "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
-            /** @description An anonymous caller exceeded the per-address request budget (FR-22). Wait for the number of seconds in `Retry-After`, then try again. Requests that carry an `Authorization` header are never refused for this reason. The body's `bulk_artefacts` names where to fetch the whole catalogue instead. */
+            /** @description An address exceeded its request budget (FR-22): an anonymous caller its anonymous budget, or a caller whose credentials the API kept rejecting its budget for rejected credentials. Wait for the number of seconds in `Retry-After`, then try again. A valid credential is never counted. The body's `bulk_artefacts` names where to fetch the whole catalogue instead. */
             429: {
                 headers: {
                     /** @description Whole seconds until the caller's request budget is available again. */
@@ -4786,7 +4786,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"] | components["schemas"]["HTTPValidationError"];
                 };
             };
-            /** @description An anonymous caller exceeded the per-address request budget (FR-22). Wait for the number of seconds in `Retry-After`, then try again. Requests that carry an `Authorization` header are never refused for this reason. The body's `bulk_artefacts` names where to fetch the whole catalogue instead. */
+            /** @description An address exceeded its request budget (FR-22): an anonymous caller its anonymous budget, or a caller whose credentials the API kept rejecting its budget for rejected credentials. Wait for the number of seconds in `Retry-After`, then try again. A valid credential is never counted. The body's `bulk_artefacts` names where to fetch the whole catalogue instead. */
             429: {
                 headers: {
                     /** @description Whole seconds until the caller's request budget is available again. */
@@ -4864,7 +4864,7 @@ export interface operations {
                     "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
-            /** @description An anonymous caller exceeded the per-address request budget (FR-22). Wait for the number of seconds in `Retry-After`, then try again. Requests that carry an `Authorization` header are never refused for this reason. The body's `bulk_artefacts` names where to fetch the whole catalogue instead. */
+            /** @description An address exceeded its request budget (FR-22): an anonymous caller its anonymous budget, or a caller whose credentials the API kept rejecting its budget for rejected credentials. Wait for the number of seconds in `Retry-After`, then try again. A valid credential is never counted. The body's `bulk_artefacts` names where to fetch the whole catalogue instead. */
             429: {
                 headers: {
                     /** @description Whole seconds until the caller's request budget is available again. */
@@ -4933,7 +4933,7 @@ export interface operations {
                     "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
-            /** @description An anonymous caller exceeded the per-address request budget (FR-22). Wait for the number of seconds in `Retry-After`, then try again. Requests that carry an `Authorization` header are never refused for this reason. The body's `bulk_artefacts` names where to fetch the whole catalogue instead. */
+            /** @description An address exceeded its request budget (FR-22): an anonymous caller its anonymous budget, or a caller whose credentials the API kept rejecting its budget for rejected credentials. Wait for the number of seconds in `Retry-After`, then try again. A valid credential is never counted. The body's `bulk_artefacts` names where to fetch the whole catalogue instead. */
             429: {
                 headers: {
                     /** @description Whole seconds until the caller's request budget is available again. */
@@ -5015,7 +5015,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"] | components["schemas"]["HTTPValidationError"];
                 };
             };
-            /** @description An anonymous caller exceeded the per-address request budget (FR-22). Wait for the number of seconds in `Retry-After`, then try again. Requests that carry an `Authorization` header are never refused for this reason. The body's `bulk_artefacts` names where to fetch the whole catalogue instead. */
+            /** @description An address exceeded its request budget (FR-22): an anonymous caller its anonymous budget, or a caller whose credentials the API kept rejecting its budget for rejected credentials. Wait for the number of seconds in `Retry-After`, then try again. A valid credential is never counted. The body's `bulk_artefacts` names where to fetch the whole catalogue instead. */
             429: {
                 headers: {
                     /** @description Whole seconds until the caller's request budget is available again. */
@@ -5106,7 +5106,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"] | components["schemas"]["HTTPValidationError"];
                 };
             };
-            /** @description An anonymous caller exceeded the per-address request budget (FR-22). Wait for the number of seconds in `Retry-After`, then try again. Requests that carry an `Authorization` header are never refused for this reason. The body's `bulk_artefacts` names where to fetch the whole catalogue instead. */
+            /** @description An address exceeded its request budget (FR-22): an anonymous caller its anonymous budget, or a caller whose credentials the API kept rejecting its budget for rejected credentials. Wait for the number of seconds in `Retry-After`, then try again. A valid credential is never counted. The body's `bulk_artefacts` names where to fetch the whole catalogue instead. */
             429: {
                 headers: {
                     /** @description Whole seconds until the caller's request budget is available again. */
@@ -5189,7 +5189,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"] | components["schemas"]["HTTPValidationError"];
                 };
             };
-            /** @description An anonymous caller exceeded the per-address request budget (FR-22). Wait for the number of seconds in `Retry-After`, then try again. Requests that carry an `Authorization` header are never refused for this reason. The body's `bulk_artefacts` names where to fetch the whole catalogue instead. */
+            /** @description An address exceeded its request budget (FR-22): an anonymous caller its anonymous budget, or a caller whose credentials the API kept rejecting its budget for rejected credentials. Wait for the number of seconds in `Retry-After`, then try again. A valid credential is never counted. The body's `bulk_artefacts` names where to fetch the whole catalogue instead. */
             429: {
                 headers: {
                     /** @description Whole seconds until the caller's request budget is available again. */
@@ -5285,7 +5285,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description An anonymous caller exceeded the per-address request budget (FR-22). Wait for the number of seconds in `Retry-After`, then try again. Requests that carry an `Authorization` header are never refused for this reason. The body's `bulk_artefacts` names where to fetch the whole catalogue instead. */
+            /** @description An address exceeded its request budget (FR-22): an anonymous caller its anonymous budget, or a caller whose credentials the API kept rejecting its budget for rejected credentials. Wait for the number of seconds in `Retry-After`, then try again. A valid credential is never counted. The body's `bulk_artefacts` names where to fetch the whole catalogue instead. */
             429: {
                 headers: {
                     /** @description Whole seconds until the caller's request budget is available again. */
@@ -5387,7 +5387,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description An anonymous caller exceeded the per-address request budget (FR-22). Wait for the number of seconds in `Retry-After`, then try again. Requests that carry an `Authorization` header are never refused for this reason. The body's `bulk_artefacts` names where to fetch the whole catalogue instead. */
+            /** @description An address exceeded its request budget (FR-22): an anonymous caller its anonymous budget, or a caller whose credentials the API kept rejecting its budget for rejected credentials. Wait for the number of seconds in `Retry-After`, then try again. A valid credential is never counted. The body's `bulk_artefacts` names where to fetch the whole catalogue instead. */
             429: {
                 headers: {
                     /** @description Whole seconds until the caller's request budget is available again. */
@@ -5458,7 +5458,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description An anonymous caller exceeded the per-address request budget (FR-22). Wait for the number of seconds in `Retry-After`, then try again. Requests that carry an `Authorization` header are never refused for this reason. The body's `bulk_artefacts` names where to fetch the whole catalogue instead. */
+            /** @description An address exceeded its request budget (FR-22): an anonymous caller its anonymous budget, or a caller whose credentials the API kept rejecting its budget for rejected credentials. Wait for the number of seconds in `Retry-After`, then try again. A valid credential is never counted. The body's `bulk_artefacts` names where to fetch the whole catalogue instead. */
             429: {
                 headers: {
                     /** @description Whole seconds until the caller's request budget is available again. */

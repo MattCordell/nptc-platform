@@ -214,10 +214,17 @@ whole catalogue in pages. They are a judgement, not a measurement. Lower them on
 abuse, and raise them if a legitimate consumer is refused. The policy and the reasons behind it
 are in [`public-api.md`](../architecture/public-api.md#rate-limiting-and-caching).
 
-**What counts.** A request with no `Authorization` header. A request that carries one is never
-counted, even if its token is later refused. Requests from a loopback address (`127.0.0.1`,
-`::1`) are never limited: the compose healthcheck calls from there, and so does anything you run
-on the same machine.
+**What counts.** A request with no `Authorization` header spends the anonymous budget. A request
+that carries one spends nothing unless the API answers 401, and then it spends a second budget,
+with the same limit and window, for rejected credentials. A valid credential is never counted.
+Both budgets are kept per client address, so an office network shares them.
+
+**Loopback.** Only the compose healthcheck is exempt: it probes `/api/v1/openapi.json` from
+`127.0.0.1`, and a refused probe would mark a healthy container unhealthy. Every other request
+from a loopback address is limited like any other. If you run a proxy on the same host as the
+API and leave `NPTC_TRUSTED_PROXIES` empty, every caller looks like `127.0.0.1` and shares one
+budget, so set `NPTC_TRUSTED_PROXIES=127.0.0.1` there (and make sure the proxy sets
+`X-Forwarded-For`).
 
 **Counters live in one process.** The API keeps them in memory. The compose stack runs one API
 process, so the limit is exact. If you run more than one worker or replica, each keeps its own
@@ -235,7 +242,13 @@ safe because the `backend` service publishes no port, so only the `web` containe
 - **Another front end.** Behind a load balancer or CDN, list its addresses, and make sure it
   appends the connecting address to `X-Forwarded-For` rather than passing a caller's header on
   unchanged. The API reads the header from the right and stops at the first address it does not
-  trust.
+  trust. It accepts a hop written with a port (`203.0.113.7:51234`, `[2001:db8::1]:443`) and a
+  header split over several lines.
+- **Docker Desktop and rootless Docker.** Where Docker's userland proxy handles the connection,
+  Caddy sees the Docker gateway address (for example `172.18.0.1`) as every visitor's address.
+  That address is inside the trusted ranges, so every visitor shares one budget and the audit log
+  records the gateway. `NPTC_TRUSTED_PROXIES` is already correct in this case. For local use,
+  raise `NPTC_ANON_RATE_LIMIT_REQUESTS`.
 - **Audit log.** The same address is what the audit log records as the actor's address. Before
   this setting existed, events written behind Caddy recorded Caddy's address.
 

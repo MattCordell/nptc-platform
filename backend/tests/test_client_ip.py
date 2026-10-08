@@ -85,3 +85,33 @@ def test_every_address_in_one_ipv6_subnet_shares_a_bucket() -> None:
 @pytest.mark.req("NFR-24")
 def test_ipv4_addresses_each_have_their_own_bucket() -> None:
     assert bucket_key(ipaddress.ip_address("203.0.113.7")) == "203.0.113.7"
+
+
+@pytest.mark.req("NFR-24")
+@pytest.mark.parametrize(
+    ("hop", "expected"),
+    [
+        ("203.0.113.7:51234", "203.0.113.7"),
+        ("[2001:db8::1]:443", "2001:db8::1"),
+        ("[2001:db8::1]", "2001:db8::1"),
+        ("2001:db8::1", "2001:db8::1"),
+        (" 203.0.113.7 ", "203.0.113.7"),
+    ],
+)
+def test_a_forwarded_hop_may_carry_a_port(hop: str, expected: str) -> None:
+    """Some load balancers write the client's port into `X-Forwarded-For`. Refusing such a hop
+    would resolve every caller to the proxy and give them all one budget."""
+    assert parse_address(hop) == ipaddress.ip_address(expected)
+
+
+@pytest.mark.req("NFR-24")
+@pytest.mark.parametrize(
+    "hop", ["203.0.113.7:abc", "garbage:80", "[203.0.113.7]:80", "1.2.3.4:", "[::1"]
+)
+def test_a_hop_with_a_malformed_port_is_not_an_address(hop: str) -> None:
+    assert parse_address(hop) is None
+
+
+@pytest.mark.req("NFR-24")
+def test_a_trusted_proxy_that_writes_ports_still_identifies_the_caller() -> None:
+    assert _resolve("10.0.0.5", "203.0.113.7:51234", "10.0.0.0/8") == "203.0.113.7"

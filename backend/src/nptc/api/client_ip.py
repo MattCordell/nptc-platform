@@ -23,11 +23,16 @@ _IPV6_BUCKET_PREFIX: Final = 64
 
 def parse_address(value: str | None) -> IPAddress | None:
     """`None` for anything that is not an IP: Starlette's `TestClient` reports the host
-    `"testclient"`, and a server on a unix socket reports the socket path."""
+    `"testclient"`, and a server on a unix socket reports the socket path. A trailing port is
+    dropped (`203.0.113.7:51234`, `[2001:db8::1]:443`) because some load balancers write one
+    into `X-Forwarded-For`."""
     if value is None:
         return None
+    host = _without_port(value.strip())
+    if host is None:
+        return None
     try:
-        address = ipaddress.ip_address(value.strip())
+        address = ipaddress.ip_address(host)
     except ValueError:
         return None
     if isinstance(address, ipaddress.IPv6Address) and address.ipv4_mapped is not None:
@@ -56,6 +61,29 @@ def resolve_client_address(
         if not _is_trusted(address, trusted_proxies):
             return address
     return caller
+
+
+def _without_port(text: str) -> str | None:
+    """The host part of `text`, or `None` when a port or bracket is malformed. A bare IPv6
+    address has several colons and no port, so only one colon, or brackets, mark a port."""
+    if text.startswith("["):
+        host, closed, rest = text[1:].partition("]")
+        if not closed or (rest and not _is_port_suffix(rest)):
+            return None
+        # Brackets are IPv6 syntax; `[203.0.113.7]` is not an address.
+        return host if ":" in host else None
+    if text.count(":") == 1:
+        host, _, port = text.partition(":")
+        return host if _is_port(port) else None
+    return text
+
+
+def _is_port(text: str) -> bool:
+    return text.isascii() and text.isdigit()
+
+
+def _is_port_suffix(text: str) -> bool:
+    return text.startswith(":") and _is_port(text[1:])
 
 
 def bucket_key(address: IPAddress) -> str:
