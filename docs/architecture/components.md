@@ -129,9 +129,12 @@ records why there is no form library behind these and what was rejected.
   render inside `Field` or beside a label of your own, so the screen needs no style of its
   own and a bare input never falls back to browser defaults. It sets the 4px control
   radius (`--radius-control`), the 1px border, the surface fill, 16px text (`text-base`)
-  and a 40px minimum height, and `Select` shares the same radius and text size, so the
-  two sit together without a visible seam. Checkboxes and radios are not text-like: use
-  `Checkbox` and `RadioGroup`. The string includes `w-full`, so to narrow an input,
+  and a 40px minimum height. `Select` shares the same radius and text size, but not the
+  rest: it has no minimum height (it renders about 40px, an input about 42px) and it shows
+  a danger border on error, which `INPUT_CLASSES` does not. Checkboxes and radios are not
+  text-like: use `Checkbox` and `RadioGroup`.
+  `frontend/tests/catalogue-inputs-use-shared-style.test.ts` fails if a text-like
+  `<input>` under `src/catalogue` omits the class. The string includes `w-full`, so to narrow an input,
   constrain the element that wraps it instead of adding a competing width class (the
   order of classes in a string does not decide which wins). The values behind it are in
   [design-system.md](design-system.md#layout-patterns).
