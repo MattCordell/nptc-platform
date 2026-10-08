@@ -207,6 +207,40 @@ GRANT_PROPERTY_VALUE_SQL = (
 )
 REVOKE_PROPERTY_VALUE_TRUNCATE_SQL = "REVOKE TRUNCATE ON TABLE property_value FROM nptc_app;"
 
+#: FR-13, ADR-0012: the index reconciler's login (`nptc_indexer`, see `nptc.db.provision_login`)
+#: is a member of this NOLOGIN role, which owns `property_value` and nothing else. Postgres has no
+#: grantable "create index" privilege: `CREATE INDEX` needs table ownership, and ownership is the
+#: narrowest grant that works. The owner role also needs `SELECT` on `property_definition`, the
+#: table the reconciler reads to learn which indexes should exist.
+PROPERTY_INDEX_OWNER_ROLE = "nptc_property_index_owner"
+CREATE_PROPERTY_INDEX_OWNER_ROLE_SQL = """
+DO $$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'nptc_property_index_owner') THEN
+    CREATE ROLE nptc_property_index_owner NOLOGIN;
+  END IF;
+END $$;
+"""
+TRANSFER_PROPERTY_VALUE_OWNERSHIP_SQL = (
+    "ALTER TABLE property_value OWNER TO nptc_property_index_owner;"
+)
+#: Run by the migration role, so `CURRENT_USER` is the role that created the table.
+RESTORE_PROPERTY_VALUE_OWNERSHIP_SQL = "ALTER TABLE property_value OWNER TO CURRENT_USER;"
+GRANT_PROPERTY_INDEX_OWNER_PROPERTY_DEFINITION_SQL = (
+    "GRANT SELECT ON TABLE property_definition TO nptc_property_index_owner;"
+)
+REVOKE_PROPERTY_INDEX_OWNER_PROPERTY_DEFINITION_SQL = (
+    "REVOKE SELECT ON TABLE property_definition FROM nptc_property_index_owner;"
+)
+#: Postgres checks `CREATE` on the schema for every new index, and PG15+ withholds it from PUBLIC.
+#: It also lets the role create other objects in `public`; that is the cost of the check, not a
+#: separate choice.
+GRANT_PROPERTY_INDEX_OWNER_SCHEMA_CREATE_SQL = (
+    "GRANT CREATE ON SCHEMA public TO nptc_property_index_owner;"
+)
+REVOKE_PROPERTY_INDEX_OWNER_SCHEMA_CREATE_SQL = (
+    "REVOKE CREATE ON SCHEMA public FROM nptc_property_index_owner;"
+)
+
 #: FR-90.
 GRANT_LOCAL_CODE_SYSTEM_SQL = "GRANT SELECT, INSERT ON TABLE local_code_system TO nptc_app;"
 #: Excludes `id`, `key` and `created_at`. `key` is immutable for the same reason

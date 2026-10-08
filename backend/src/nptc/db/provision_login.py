@@ -22,6 +22,7 @@ from sqlalchemy import Engine, create_engine, text
 from nptc.settings import AppLoginSettings, MigrationSettings
 
 APP_LOGIN_ROLE = "nptc_app_login"
+INDEXER_LOGIN_ROLE = "nptc_indexer"
 
 #: ``is_local = true`` scopes the value to the current transaction, so it
 #: never outlives the ``begin()`` block that runs all three statements.
@@ -46,6 +47,28 @@ END $$;
 _GRANT_MEMBERSHIP_SQL = "GRANT nptc_app TO nptc_app_login;"
 
 
+_STASH_INDEXER_PASSWORD_SQL = "SELECT set_config('nptc.indexer_login_password', :password, true)"
+
+_UPSERT_INDEXER_LOGIN_SQL = """
+DO $$ BEGIN
+  IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'nptc_indexer') THEN
+    EXECUTE format(
+      'ALTER ROLE nptc_indexer LOGIN PASSWORD %L',
+      current_setting('nptc.indexer_login_password')
+    );
+  ELSE
+    EXECUTE format(
+      'CREATE ROLE nptc_indexer LOGIN PASSWORD %L',
+      current_setting('nptc.indexer_login_password')
+    );
+  END IF;
+END $$;
+"""
+
+
+_GRANT_INDEXER_MEMBERSHIP_SQL = "GRANT nptc_property_index_owner TO nptc_indexer;"
+
+
 def provision_app_login(engine: Engine, password: str) -> None:
     """Runs on the owning role's engine. ``nptc_app`` must already exist,
     which the migrations guarantee."""
@@ -53,6 +76,15 @@ def provision_app_login(engine: Engine, password: str) -> None:
         connection.execute(text(_STASH_PASSWORD_SQL), {"password": password})
         connection.execute(text(_UPSERT_LOGIN_SQL))
         connection.execute(text(_GRANT_MEMBERSHIP_SQL))
+
+
+def provision_indexer_login(engine: Engine, password: str) -> None:
+    """Runs on the owning role's engine, like `provision_app_login`.
+    `nptc_property_index_owner` must already exist, which migration 0025 guarantees."""
+    with engine.begin() as connection:
+        connection.execute(text(_STASH_INDEXER_PASSWORD_SQL), {"password": password})
+        connection.execute(text(_UPSERT_INDEXER_LOGIN_SQL))
+        connection.execute(text(_GRANT_INDEXER_MEMBERSHIP_SQL))
 
 
 def main() -> int:
