@@ -22,9 +22,11 @@ datatype in monospace. The create and amend screens put `Form`, `Field`, `Select
 The public entry page (issue #440) builds the detail layout
 described under "Layout patterns" below: a breadcrumb, a title with a code chip and status
 pill, and a two-column body. Its sidebar is a fixed 20rem wide, not one third of the page,
-and it has no action buttons because a reader cannot edit. The audit trail pattern is not
-yet implemented on any screen: the entry page's "Recent changes" is a plain dated list.
-Read this as the destination, not a description of what exists today.
+and it has no action buttons because a reader cannot edit. The entry history page (issue #441)
+is the first screen to use the audit trail pattern: a rule down the left, a monospace time
+with the author beside it, then what changed and why. The entry page's "Recent changes" is
+still a plain dated list. Read the rest of this guide as the destination, not a description
+of what exists today.
 
 ## Palette
 

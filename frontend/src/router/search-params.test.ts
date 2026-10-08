@@ -9,6 +9,7 @@ import {
   validateAdminCatalogueSearch,
   validateAuditSearch,
   validateCatalogueSearch,
+  validateEntryHistorySearch,
   validateLookupSearch,
   validatePropertyListSearch,
   validateReleaseCompareSearch,
@@ -51,6 +52,21 @@ describe("validateAuditSearch", () => {
 
   it("does not drop an invalid actor, so the page can say what is wrong", () => {
     expect(validateAuditSearch({ actor: "alice" })).toEqual({ actor: "alice" });
+  });
+});
+
+describe("validateEntryHistorySearch", () => {
+  it("defaults to the first page", () => {
+    expect(validateEntryHistorySearch({})).toEqual({});
+  });
+
+  it("keeps the cursor as a trimmed string, never as a number", () => {
+    expect(validateEntryHistorySearch({ before: " 1042 " })).toEqual({ before: "1042" });
+    expect(validateEntryHistorySearch({ before: 1042 })).toEqual({});
+  });
+
+  it("drops a blank cursor and keys it does not know", () => {
+    expect(validateEntryHistorySearch({ before: "  ", limit: "5" })).toEqual({});
   });
 });
 

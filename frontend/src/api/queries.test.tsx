@@ -1379,6 +1379,112 @@ describe("useEntryHistory", () => {
 
     await waitFor(() => expect(calls).toHaveLength(2));
   });
+
+  describe("keepPreviousPage", () => {
+    const FIRST = { items: [{ note: "page one" }], next_cursor: "c2" };
+    const OTHER_KEY = "NPTC-000999";
+
+    /**
+     * Page one of `ENTRY_KEY` answers at once. Every other request waits, so a
+     * test sees what the hook shows while the next page is still loading.
+     */
+    function renderPaged(initial: { signedIn: boolean }) {
+      stubApi([], {
+        vary: ({ path, searchParams }) => {
+          if (!path.endsWith("/history")) {
+            return null;
+          }
+          const first = path.includes(ENTRY_KEY) && !searchParams.has("before");
+          return first
+            ? { method: "GET", path, status: 200, body: FIRST }
+            : { method: "GET", path, status: 200, body: null, neverSettles: true };
+        },
+      });
+      const queryClient = createQueryClient();
+      let status: AuthContextValue["status"] = initial.signedIn
+        ? "signed-in"
+        : "signed-out";
+      function Wrapper({ children }: { children: ReactNode }) {
+        return (
+          <QueryClientProvider client={queryClient}>
+            <AuthContext.Provider value={{ ...AUTH, status }}>
+              {children}
+            </AuthContext.Provider>
+          </QueryClientProvider>
+        );
+      }
+      const view = renderHook(
+        (props: { key: string; before?: string; keep: boolean }) =>
+          useEntryHistory(props.key, {
+            before: props.before,
+            keepPreviousPage: props.keep,
+          }),
+        {
+          wrapper: Wrapper,
+          initialProps: { key: ENTRY_KEY, keep: true } as {
+            key: string;
+            before?: string;
+            keep: boolean;
+          },
+        },
+      );
+      return {
+        ...view,
+        signInAs: (signedIn: boolean) => {
+          status = signedIn ? "signed-in" : "signed-out";
+        },
+      };
+    }
+
+    it("shows the earlier page while the next page of the same entry loads", async () => {
+      const view = renderPaged({ signedIn: false });
+      await waitFor(() => expect(view.result.current.data).toEqual(FIRST));
+
+      view.rerender({ key: ENTRY_KEY, before: "c2", keep: true });
+
+      await waitFor(() => expect(view.result.current.isPlaceholderData).toBe(true));
+      expect(view.result.current.data).toEqual(FIRST);
+    });
+
+    it("shows nothing while the next page loads unless asked to keep the earlier one", async () => {
+      const view = renderPaged({ signedIn: false });
+      await waitFor(() => expect(view.result.current.data).toEqual(FIRST));
+
+      view.rerender({ key: ENTRY_KEY, before: "c2", keep: false });
+
+      await waitFor(() => expect(view.result.current.isPending).toBe(true));
+      expect(view.result.current.data).toBeUndefined();
+    });
+
+    // Principal failure mode (NFR-26): a signed-in page carries author names,
+    // and must not stand in for the page of a reader who is no longer signed in.
+    it.each([
+      { from: true, to: false },
+      { from: false, to: true },
+    ])(
+      "shows no earlier page when the reader changes from signed in $from to $to",
+      async ({ from, to }) => {
+        const view = renderPaged({ signedIn: from });
+        await waitFor(() => expect(view.result.current.data).toEqual(FIRST));
+
+        view.signInAs(to);
+        view.rerender({ key: ENTRY_KEY, before: "c2", keep: true });
+
+        await waitFor(() => expect(view.result.current.isPending).toBe(true));
+        expect(view.result.current.data).toBeUndefined();
+      },
+    );
+
+    it("shows no earlier page under another entry", async () => {
+      const view = renderPaged({ signedIn: false });
+      await waitFor(() => expect(view.result.current.data).toEqual(FIRST));
+
+      view.rerender({ key: OTHER_KEY, keep: true });
+
+      await waitFor(() => expect(view.result.current.isPending).toBe(true));
+      expect(view.result.current.data).toBeUndefined();
+    });
+  });
 });
 
 describe("useEntryByCode", () => {

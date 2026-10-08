@@ -13,6 +13,7 @@ import { AdminPropertyListPage } from "../pages/admin-property-list.tsx";
 import { AuthCallbackPage } from "../pages/auth-callback.tsx";
 import { CatalogueEntryPage } from "../pages/catalogue-entry.tsx";
 import { CatalogueSearchPage } from "../pages/catalogue-search.tsx";
+import { EntryHistoryPage } from "../pages/entry-history.tsx";
 import { createPlaceholderPage } from "../pages/placeholder.tsx";
 import { RegisterPage } from "../pages/register.tsx";
 import { SignInPage } from "../pages/sign-in.tsx";
@@ -25,6 +26,7 @@ import {
   validateAdminCatalogueSearch,
   validateAuditSearch,
   validateCatalogueSearch,
+  validateEntryHistorySearch,
   validateLookupSearch,
   validatePropertyListSearch,
   validateReleaseCompareSearch,
@@ -35,6 +37,8 @@ import {
   type AuditSearchInput,
   type CatalogueSearch,
   type CatalogueSearchInput,
+  type EntryHistorySearch,
+  type EntryHistorySearchInput,
   type LookupSearch,
   type LookupSearchInput,
   type PropertyListSearch,
@@ -142,7 +146,10 @@ const catalogueEntryDetailRoute = createRoute({
 const catalogueEntryHistoryRoute = createRoute({
   getParentRoute: () => catalogueEntryRoute,
   path: "history",
-  component: createPlaceholderPage({ title: "Entry change history", issue: 141 }),
+  component: EntryHistoryPage,
+  validateSearch: validateEntryHistorySearch as (
+    search: EntryHistorySearchInput,
+  ) => EntryHistorySearch,
   head: titled("Change history"),
 });
 

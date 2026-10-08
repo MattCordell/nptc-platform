@@ -298,6 +298,26 @@ export function validateAuditSearch(search: Record<string, unknown>): AuditSearc
   return validated;
 }
 
+// --- entry history -----------------------------------------------------------
+
+/**
+ * Search state for `/catalogue/{business_key}/history` (FR-19): `before` is the
+ * keyset cursor of the page being read, so a pasted link opens the same page.
+ * It is kept exactly as received and never parsed: the API owns its meaning.
+ */
+export type EntryHistorySearch = {
+  before?: string;
+};
+
+export type EntryHistorySearchInput = Partial<EntryHistorySearch> & SearchSchemaInput;
+
+export function validateEntryHistorySearch(
+  search: Record<string, unknown>,
+): EntryHistorySearch {
+  const before = asString(search.before).trim();
+  return before.length > 0 ? { before } : {};
+}
+
 /**
  * The `filter.*` entries of a validated catalogue list search, keyed by
  * facet alone (the `filter.` prefix stripped) - the shape the filter panel

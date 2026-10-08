@@ -606,6 +606,55 @@ describe("recent changes", () => {
     expect(await screen.findByText("No changes are recorded.")).toBeInTheDocument();
   });
 
+  it("links to the full history, as a target big enough to hit (FR-19, NFR-31)", async () => {
+    await renderEntry();
+
+    const link = await screen.findByRole("link", { name: "View full history" });
+    expect(link).toHaveAttribute("href", `/catalogue/${KEY}/history`);
+    expect(link.className).toContain("min-h-6");
+    expect(
+      within(
+        screen.getByRole("heading", { name: "Recent changes" })
+          .parentElement as HTMLElement,
+      ).getByRole("link", { name: "View full history" }),
+    ).toBe(link);
+  });
+
+  it("opens the full history page from that link", async () => {
+    stubApi([ENTRY_OK, HISTORY_OK]);
+    const { router } = await renderRoute(`/catalogue/${KEY}`);
+
+    await userEvent.click(await screen.findByRole("link", { name: "View full history" }));
+
+    expect(
+      await screen.findByRole("heading", {
+        level: 1,
+        name: `Change history for ${KEY}`,
+      }),
+    ).toBeInTheDocument();
+    expect(router.state.location.pathname).toBe(`/catalogue/${KEY}/history`);
+  });
+
+  it("offers no link when there is no history to open", async () => {
+    await renderEntry([
+      ENTRY_OK,
+      { ...HISTORY_OK, body: { items: [], next_cursor: null } },
+    ]);
+    await screen.findByText("No changes are recorded.");
+
+    expect(screen.queryByRole("link", { name: "View full history" })).toBeNull();
+  });
+
+  it("offers no link when the recent changes fail to load", async () => {
+    await renderEntry([
+      ENTRY_OK,
+      { ...HISTORY_OK, status: 500, body: { detail: "boom" } },
+    ]);
+    await visibleNote(/The recent changes could not be loaded/);
+
+    expect(screen.queryByRole("link", { name: "View full history" })).toBeNull();
+  });
+
   it("leaves the rest of the page usable while history loads", async () => {
     stubApi([ENTRY_OK, HISTORY_OK]);
     const hold = holdHistory();
