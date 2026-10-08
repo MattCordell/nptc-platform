@@ -392,7 +392,8 @@ describe("editing a property's values", () => {
 
     await user.click(panel().getByRole("button", { name: "Edit Usage guidance" }));
     const dialog = within(screen.getByRole("dialog"));
-    await user.type(dialog.getByLabelText("Usage guidance"), "x".repeat(500));
+    await user.click(dialog.getByLabelText("Usage guidance"));
+    await user.paste("x".repeat(500));
     await user.type(dialog.getByLabelText("Changelog note"), "Try an overlong value");
     await user.click(dialog.getByRole("button", { name: "Save" }));
 

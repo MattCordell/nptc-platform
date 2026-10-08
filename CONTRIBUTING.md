@@ -65,6 +65,13 @@ uv run pytest            # from the repo root (testpaths and ruff config resolve
 pnpm test                # from frontend/
 ```
 
+**Slow or loaded machines.** `pnpm exec vitest run --coverage` can fail on a busy
+machine with `[vitest-pool-runner]: Timeout waiting for worker to respond`. No test ran,
+so this is not a test defect. Close other heavy processes and rerun with
+`--maxWorkers=4`. In a frontend test, enter a long value with `user.paste`, not
+`user.type`: `user.type` sends one keystroke per timer tick, and under load a test that
+times out leaves its keystrokes running into the next test.
+
 ## Definition of done
 
 From PRD §17.2, applying to every requirement:
