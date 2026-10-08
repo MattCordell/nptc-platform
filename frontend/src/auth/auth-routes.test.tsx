@@ -157,6 +157,28 @@ describe("/auth/callback", () => {
     // Errors say what to do next, never what the server said (§17.2).
     expect(document.body.textContent).not.toMatch(/invalid_grant|HTTP \d{3}/);
   });
+
+  it("offers a way back to sign-in and home from the failed screen, with no axe violations", async () => {
+    const completeCallback = vi.fn(() => Promise.resolve(null));
+
+    const { container } = await renderRoute("/auth/callback?code=abc&state=wrong", {
+      auth: { status: "signed-out", completeCallback },
+    });
+
+    expect(
+      await screen.findByRole("heading", {
+        level: 1,
+        name: "Sign-in could not be completed",
+      }),
+    ).toHaveAttribute("id", "callback-heading");
+    const main = within(screen.getByRole("main"));
+    expect(main.getByRole("link", { name: "Go to the sign-in page" })).toHaveAttribute(
+      "href",
+      "/sign-in",
+    );
+    expect(main.getByRole("link", LANDING_LINK)).toHaveAttribute("href", "/");
+    await expectNoA11yViolations(container);
+  });
 });
 
 describe("/sign-out", () => {
@@ -179,6 +201,23 @@ describe("/sign-out", () => {
       await screen.findByRole("heading", { name: /you are signed out/i }),
     ).toBeInTheDocument();
     expect(signOut).not.toHaveBeenCalled();
+  });
+
+  it("offers a way home and on to the catalogue once signed out, with no axe violations", async () => {
+    const { container } = await renderRoute("/sign-out", {
+      auth: { status: "signed-out" },
+    });
+
+    expect(
+      await screen.findByRole("heading", { level: 1, name: "You are signed out" }),
+    ).toHaveAttribute("id", "sign-out-heading");
+    const main = within(screen.getByRole("main"));
+    expect(main.getByRole("link", LANDING_LINK)).toHaveAttribute("href", "/");
+    expect(main.getByRole("link", { name: "Search the catalogue" })).toHaveAttribute(
+      "href",
+      "/catalogue",
+    );
+    await expectNoA11yViolations(container);
   });
 });
 
@@ -210,5 +249,45 @@ describe("/register", () => {
       await screen.findByRole("heading", { name: /already have an account/i }),
     ).toBeInTheDocument();
     expect(register).not.toHaveBeenCalled();
+  });
+
+  it("shows the redirect screen with a way home, and no axe violations", async () => {
+    const { container } = await renderRoute("/register", {
+      auth: { status: "signed-out" },
+    });
+
+    expect(
+      await screen.findByRole("heading", {
+        level: 1,
+        name: "Taking you to registration",
+      }),
+    ).toHaveAttribute("id", "register-heading");
+    expect(
+      within(screen.getByRole("main")).getByRole("link", LANDING_LINK),
+    ).toHaveAttribute("href", "/");
+    await expectNoA11yViolations(container);
+  });
+
+  it("says so, with a way home and without looping, when the provider is unreachable", async () => {
+    const register = vi.fn(() => Promise.resolve());
+
+    await renderRoute("/register", { auth: { status: "unavailable", register } });
+
+    expect(
+      await screen.findByRole("heading", { name: /registration is unavailable/i }),
+    ).toHaveAttribute("id", "register-heading");
+    expect(
+      within(screen.getByRole("main")).getByRole("link", LANDING_LINK),
+    ).toBeInTheDocument();
+    expect(register).not.toHaveBeenCalled();
+  });
+
+  it("gives an already-signed-in user a way home", async () => {
+    await renderRoute("/register", { auth: { status: "signed-in" } });
+
+    await screen.findByRole("heading", { name: /already have an account/i });
+    expect(
+      within(screen.getByRole("main")).getByRole("link", LANDING_LINK),
+    ).toBeInTheDocument();
   });
 });
