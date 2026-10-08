@@ -20,7 +20,7 @@ export function EntryMetadata({ entry }: { entry: EntryDetail }) {
         <dd className="m-0 mb-3 min-w-0 font-mono">{entry.business_key}</dd>
 
         <dt className="font-medium">Status</dt>
-        <dd className="m-0 mb-3 min-w-0 last:mb-0">
+        <dd className="m-0 mb-3 min-w-0">
           <StatusBadge
             tone={statusToneFor(entry.status)}
             label={statusLabelFor(entry.status)}
@@ -28,7 +28,7 @@ export function EntryMetadata({ entry }: { entry: EntryDetail }) {
         </dd>
 
         <dt className="font-medium">Disciplines</dt>
-        <dd className="m-0 mb-3 min-w-0 last:mb-0">
+        <dd className="m-0 mb-3 min-w-0">
           {entry.disciplines.length > 0 ? (
             entry.disciplines.join(", ")
           ) : (

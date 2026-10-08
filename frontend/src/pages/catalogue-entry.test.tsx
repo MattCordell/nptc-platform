@@ -595,6 +595,40 @@ describe("the details sidebar", () => {
     expect(items.map((item) => item.textContent)).toEqual(["Serum", "Plasma"]);
   });
 
+  it("keeps a repeated specimen that carries a different justification", async () => {
+    const facts = await details({
+      properties: [
+        property({
+          key: "specimen",
+          label: "Specimen",
+          ordinal: 0,
+          value: coded("1", "Serum", "http://snomed.info/sct"),
+          justification: "Preferred sample",
+        }),
+        property({
+          key: "specimen",
+          label: "Specimen",
+          ordinal: 1,
+          value: coded("2", "Serum specimen", "http://snomed.info/sct"),
+          justification: "Also accepted when haemolysed",
+        }),
+        property({
+          key: "specimen",
+          label: "Specimen",
+          ordinal: 2,
+          value: coded("3", "Serum specimen", "http://snomed.info/sct"),
+          justification: "Also accepted when haemolysed",
+        }),
+      ],
+    });
+
+    const items = within(valueOf(facts, "Specimen")).getAllByRole("listitem");
+    expect(items.map((item) => item.textContent)).toEqual([
+      "SerumJustification: Preferred sample",
+      "SerumJustification: Also accepted when haemolysed",
+    ]);
+  });
+
   it("shows a specimen with no recorded term as its code, in plain text (FR-06)", async () => {
     const facts = await details({
       properties: [

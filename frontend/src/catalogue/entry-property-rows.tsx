@@ -48,16 +48,20 @@ function plainView(property: PropertyValue): ValueView {
   };
 }
 
-/** The first of any values that read the same once trimmed. */
+/** The first of any values that read the same once trimmed. A repeat that
+ * carries a different justification stays, so no recorded reason is lost. */
 function withoutRepeats(values: ValueView[]): ValueView[] {
-  const seen = new Set<string>();
-  return values.filter(({ text }) => {
-    if (seen.has(text)) {
-      return false;
+  const kept: ValueView[] = [];
+  for (const view of values) {
+    const same = kept.filter(({ text }) => text === view.text);
+    const addsReason =
+      view.justification !== null &&
+      !same.some(({ justification }) => justification === view.justification);
+    if (same.length === 0 || addsReason) {
+      kept.push(view);
     }
-    seen.add(text);
-    return true;
-  });
+  }
+  return kept;
 }
 
 /** One group per property key, in the order the API served them, with each
