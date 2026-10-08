@@ -9,7 +9,7 @@ from collections.abc import Iterator
 import pytest
 from sqlalchemy import create_engine, text
 from sqlalchemy.engine import Connection, Engine, make_url
-from sqlalchemy.exc import ProgrammingError
+from sqlalchemy.exc import DBAPIError, ProgrammingError
 from sqlalchemy.orm import Session
 from testcontainers.community.postgres import PostgresContainer
 
@@ -239,3 +239,22 @@ def test_the_migration_guard_refuses_code_the_indexer_login_planted(
         refuse_foreign_code_on_property_value(connection)
 
     assert named in str(e.value)
+
+
+@pytest.mark.req("FR-13")
+@pytest.mark.integration
+def test_the_migration_guard_blocks_planting_a_trigger_until_the_migration_ends(
+    owner_engine: Engine, indexer_autocommit: Connection
+) -> None:
+    """The guard reads the catalogue and the migration writes afterwards, so without a lock the
+    login could commit a trigger between the two. `lock_timeout` turns the wait into an error."""
+    indexer_autocommit.execute(text("SET lock_timeout = '500ms'"))
+
+    with owner_engine.connect() as migration:
+        refuse_foreign_code_on_property_value(migration)
+        indexer_autocommit.execute(text(_PLANT_FUNCTION))  # touches no table, so not blocked
+        with pytest.raises(DBAPIError) as blocked:
+            indexer_autocommit.execute(text(_PLANT_TRIGGER))
+        assert getattr(blocked.value.orig, "sqlstate", None) == "55P03"
+
+    indexer_autocommit.execute(text(_PLANT_TRIGGER))

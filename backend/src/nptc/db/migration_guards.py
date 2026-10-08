@@ -4,7 +4,9 @@
 can create a trigger, a rule, or a function (for a trigger, or inside an index expression) that
 runs as whoever next writes the table. A migration writes it as the migration role, which is a
 superuser in the compose stack. A migration that writes `property_value` therefore calls
-`refuse_foreign_code_on_property_value` first. `docs/operations/upgrade.md` states the accepted risk.
+`refuse_foreign_code_on_property_value` first, which locks the table so nothing is planted after
+the check, and `test_migration_guard_coverage.py` fails when one does not.
+`docs/operations/upgrade.md` states the accepted risk.
 
 Every statement is a plain string literal (NFR-22).
 """
@@ -14,6 +16,10 @@ from __future__ import annotations
 import sqlalchemy as sa
 from sqlalchemy.engine import Connection
 
+#: Held until the migration's transaction ends. It conflicts with `CREATE TRIGGER`, `CREATE RULE`,
+#: `CREATE INDEX` and `ALTER TABLE`, so nothing can be planted between the check and the write, and
+#: it blocks ordinary writes too, which is why the backend is stopped for a migration.
+_LOCK_SQL = sa.text("LOCK TABLE public.property_value IN SHARE ROW EXCLUSIVE MODE")
 _TRIGGERS_SQL = sa.text(
     "SELECT tgname FROM pg_trigger "
     "WHERE tgrelid = 'public.property_value'::regclass AND NOT tgisinternal"
@@ -38,6 +44,7 @@ class ForeignCodeOnPropertyValueError(RuntimeError):
 
 
 def refuse_foreign_code_on_property_value(connection: Connection) -> None:
+    connection.execute(_LOCK_SQL)
     triggers = list(connection.execute(_TRIGGERS_SQL).scalars())
     rules = list(connection.execute(_RULES_SQL).scalars())
     functions = list(connection.execute(_FUNCTIONS_SQL).scalars())

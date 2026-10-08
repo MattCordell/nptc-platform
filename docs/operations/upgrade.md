@@ -140,8 +140,11 @@ Three things limit this, and none removes it:
 - A migration that writes `property_value` calls
   `nptc.db.migration_guards.refuse_foreign_code_on_property_value` first. It stops with the names
   if a trigger, a rule or a function owned by the index owner role or its members is present.
-  Migration 0024 does this in both directions. A new migration that writes the table must do the
-  same.
+  It also locks `property_value` (`SHARE ROW EXCLUSIVE`) until the migration's transaction ends,
+  so the login cannot plant a trigger between the check and the write. The lock blocks ordinary
+  writes too, so keep the backend stopped during a migration. Migration 0024 calls the guard in
+  both directions, and `backend/tests/test_migration_guard_coverage.py` fails when any migration
+  that writes the table does not.
 - `test_indexer_role.py` creates a function and a trigger as the login. That test records the
   risk, so changing it means changing this page.
 
