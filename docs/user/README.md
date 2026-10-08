@@ -4,6 +4,8 @@
 - [Using the landing page](using-the-landing-page.md) — issue #428.
 - [Searching the catalogue](searching-the-catalogue.md) — issue #439.
 - [Reading an entry](reading-an-entry.md) — issue #440. The public page for one test.
+- [Looking up a code](looking-up-a-code.md) — issue #442. Find the entry that binds a SNOMED CT
+  code, from the form at `/catalogue/lookup` or the direct address.
 - [Viewing an entry's change history](viewing-entry-history.md) — issue #441. The full list
   of changes to one test, opened from **Recent changes** on its page.
 - [Roles](roles.md) — issue #60. What the Administrator and Reviewer roles can each do on
