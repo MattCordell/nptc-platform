@@ -81,10 +81,6 @@ class TerminologyClient(Protocol):
         Pass ``display_language=AU_LANGUAGE_TAG`` to get ``display`` as the AU
         preferred term (FR-82). The FSN is ``result.fully_specified_name``
         whatever ``display_language`` is.
-
-        ``properties`` names the concept properties to return in addition to the
-        designations: an implementation must still return the designations when
-        ``properties`` is non-empty and does not list ``designation``.
         """
         ...
 
