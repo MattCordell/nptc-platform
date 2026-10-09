@@ -1118,8 +1118,7 @@ export function usePropertyValueOptions(key: string, filter: string) {
  * label resolver's data source, since the set of coded facets with an active
  * selection varies with the URL and can't be known ahead of a fixed number of
  * `usePropertyValueOptions` calls. Shares `propertyValueOptionsQuery`'s query
- * key, so a pair already fetched by `PropertyFacetGroup` for the filter panel
- * is read from cache rather than fetched a second time.
+ * key, so the comboboxes and the chips read one request per property.
  */
 export function usePropertyValueOptionsQueries(
   entries: { key: string; filter: string; count?: number }[],
@@ -1139,12 +1138,7 @@ export function usePropertyValueOptionsQueries(
  * the same number (review round 2, PR #307). Past this, the request 422s
  * and every value in the batch falls back to its raw code, including the
  * ones a smaller batch would have resolved - a graceful `.slice(0,
- * MAX_RESOLVE_CODES)` avoids that. One shared constant, not a `200`
- * repeated at each call site: `admin-catalogue-list.tsx`'s chip resolver
- * and `admin-catalogue-filter-panel.tsx`'s carried-checkbox resolver both
- * need to cap at *the same* number to keep sharing one cache entry
- * (`propertyValueResolveQuery`'s sorted key) for a facet at or under the
- * ceiling.
+ * MAX_RESOLVE_CODES)` avoids that.
  */
 export const MAX_RESOLVE_CODES = 200;
 
@@ -1181,22 +1175,11 @@ function propertyValueResolveQuery(client: ApiClient, key: string, codes: string
 }
 
 /**
- * Resolve a coded property's already-selected values to their display
- * labels, unbounded by `usePropertyValueOptions`'s own `DEFAULT_PAGE_SIZE`
- * page (issue #306) - `PropertyFacetGroup`'s second data source, for a
- * carried value its own unfiltered page did not answer.
- */
-export function usePropertyValueResolve(key: string, codes: string[]) {
-  const client = useApiClient();
-  return useQuery(propertyValueResolveQuery(client, key, codes));
-}
-
-/**
- * The same resolve-by-code fetch as `usePropertyValueResolve`, for a dynamic
- * list of `(key, codes)` pairs in one render (issue #306) - the
- * active-filter-chip label resolver's second data source, alongside
- * `usePropertyValueOptionsQueries`'s own unfiltered page, for a selected
- * value that page did not answer.
+ * Resolve already-selected values to their display labels by code, unbounded
+ * by the options page's size, for a dynamic list of `(key, codes)` pairs in
+ * one render (ADR-0038) - the list screen's second label source, alongside
+ * `usePropertyValueOptionsQueries`'s own page, for a selected value that page
+ * did not answer.
  */
 export function usePropertyValueResolveQueries(
   entries: { key: string; codes: string[] }[],
@@ -1313,55 +1296,5 @@ export function useExportAuditEvents() {
           parseAs: "blob",
         }),
       ),
-  });
-}
-
-type BulkSavePropertyValuesBody = components["schemas"]["BulkSavePropertyValuesRequest"];
-
-/**
- * Replace one property's recorded values across many entries in one audited
- * batch (issue #63, #265; FR-38, FR-39) - `save_property_values`'s plural
- * form, `POST /catalogue/entries/bulk/properties/{key}` (ADR-0035).
- *
- * `key` is fixed per hook instance, matching `useSavePropertyValues`'s own
- * split (one dialog targets one property); `entries` (each carrying the
- * `expected_row_version` selected at tick time) and `values` both vary per
- * call, so both live in the mutation body.
- *
- * **Never throws a version conflict.** Unlike every other write hook here,
- * this route always answers `200` - a stale `expected_row_version` is a
- * per-entry `conflict` outcome inside the result body, not a thrown
- * `ApiError` (ADR-0035). So there is no `onError` branch: the caller reads
- * `outcomes[]` from the resolved value instead.
- *
- * Invalidates by *prefix* - the admin list/search pages (whichever one is
- * mounted) and every admin entry-detail cache - rather than the single
- * `adminEntryDetailKey(businessKey)` every other hook here targets: a batch
- * can touch up to 100 entries, and `invalidateQueries` already matches every
- * query whose key starts with the one given, so one call per prefix covers
- * all of them without zipping `outcomes` into a per-entry key list.
- */
-export function useBulkSavePropertyValues(key: string) {
-  const client = useApiClient();
-  const queryClient = useQueryClient();
-  return useMutation({
-    mutationFn: async (body: BulkSavePropertyValuesBody) =>
-      unwrap(
-        await client.POST("/api/v1/catalogue/entries/bulk/properties/{key}", {
-          params: { path: { key } },
-          body,
-        }),
-      ),
-    onSuccess: () => {
-      void queryClient.invalidateQueries({
-        queryKey: ["api", "/api/v1/catalogue/admin/entries"],
-      });
-      void queryClient.invalidateQueries({
-        queryKey: ["api", "/api/v1/catalogue/admin/search"],
-      });
-      void queryClient.invalidateQueries({
-        queryKey: ["api", "/api/v1/catalogue/admin/entries/{business_key}"],
-      });
-    },
   });
 }

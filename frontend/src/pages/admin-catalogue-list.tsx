@@ -13,6 +13,12 @@ import {
 } from "../api/queries.ts";
 import type { components } from "../api/schema.ts";
 import {
+  MAX_VALUES_PER_FILTER,
+  emptyStateText,
+  resultAnnouncement,
+  useCurrentPage,
+} from "../catalogue/list-screen.ts";
+import {
   STATUS_OPTIONS,
   statusLabelFor,
   statusToneFor,
@@ -77,10 +83,6 @@ const COMBOBOX_PROPERTY_KEYS = ["discipline", "specimen"] as const;
  * larger page than its default so a multi-hundred-value set stays pickable. */
 const OPTIONS_PAGE_SIZE = 200;
 
-/** The API refuses a selection of more values than this in one filter
- * (`FILTER_VALUE_CAP`, ADR-0032), so the comboboxes stop at it too. */
-const MAX_VALUES_PER_FILTER = 50;
-
 const SORT_OPTIONS: { value: AdminListingSort; label: string }[] = [
   { value: "business_key", label: "Identifier" },
   { value: "preferred_term", label: "Requesting term" },
@@ -105,31 +107,6 @@ function sortLabel(sort: AdminListingSort): string {
   return SORT_OPTIONS.find((option) => option.value === sort)?.label ?? sort;
 }
 
-function resultAnnouncement(count: number, hasNext: boolean): string {
-  if (count === 0) {
-    return "No results.";
-  }
-  const shown = `${count} result${count === 1 ? "" : "s"} on this page.`;
-  return hasNext ? `${shown} More results are on the next page.` : shown;
-}
-
-function emptyStateText(
-  mode: "browse" | "search",
-  q: string,
-  hasFilters: boolean,
-  hasCursor: boolean,
-): string {
-  if (mode === "search") {
-    return hasFilters
-      ? `No catalogue entries match "${q}" with these filters.`
-      : `No catalogue entries match "${q}".`;
-  }
-  if (hasFilters) {
-    return "No catalogue entries match these filters.";
-  }
-  return hasCursor ? "No more catalogue entries." : "The catalogue has no entries yet.";
-}
-
 function isOfferedProperty(definition: PropertyDefinition | undefined): boolean {
   return (
     definition !== undefined &&
@@ -146,6 +123,7 @@ export function AdminCatalogueListPage() {
 
   const filters = useMemo(() => filterSelections(search), [search]);
   const mode: "browse" | "search" = search.q.trim().length > 0 ? "search" : "browse";
+  const { sort } = search;
 
   // Flattened from the URL rather than from `filters`, so a filter with no
   // control of its own (not offered here, or since dropped from the registry)
@@ -312,7 +290,7 @@ export function AdminCatalogueListPage() {
   const listQuery = useAdminEntriesList({
     limit: PAGE_SIZE,
     after: search.after,
-    sort: search.sort,
+    sort,
     filters,
     enabled: mode === "browse",
     keepPreviousPage: true,
@@ -327,17 +305,7 @@ export function AdminCatalogueListPage() {
   });
   const active = mode === "browse" ? listQuery : searchQuery;
 
-  // Placeholder data is the previous page, kept so a focused paging control
-  // stays mounted while the next page loads. It counts as this screen's data
-  // only when it answers the same mode and query; otherwise it is another
-  // search's results, and is neither shown nor announced.
-  const population = `${mode}:${search.q}`;
-  const [freshPopulation, setFreshPopulation] = useState<string | null>(null);
-  if (active.data && !active.isPlaceholderData && freshPopulation !== population) {
-    setFreshPopulation(population);
-  }
-  const data =
-    active.isPlaceholderData && freshPopulation !== population ? undefined : active.data;
+  const data = useCurrentPage(active, `${mode}:${search.q}`);
 
   const items: Row[] = data?.items ?? [];
   const nextCursor = data?.next_cursor ?? null;
@@ -369,13 +337,15 @@ export function AdminCatalogueListPage() {
   }
 
   // Held until the re-sorted page arrives and spoken with its result count: an
-  // announcement made now would be replaced by that one within moments.
-  const sortNoteRef = useRef<string | null>(null);
+  // announcement made now would be replaced by that one within moments. It is
+  // keyed to the sort it describes, so a result for anything else (a search
+  // submitted before the page arrived, a refused request) never carries it.
+  const sortNoteRef = useRef<{ sort: AdminListingSort; text: string } | null>(null);
 
   // Only reachable in browse mode: the control is disabled while searching.
   function handleSortChange(event: ChangeEvent<HTMLSelectElement>) {
     const sort = event.target.value as AdminListingSort;
-    sortNoteRef.current = `Sorted by ${sortLabel(sort)}.`;
+    sortNoteRef.current = { sort, text: `Sorted by ${sortLabel(sort)}.` };
     void navigate({ search: (prev) => changeSort(prev, sort) });
   }
 
@@ -409,17 +379,17 @@ export function AdminCatalogueListPage() {
       : null;
   useEffect(() => {
     if (resultMessage !== null) {
-      announce(
-        sortNoteRef.current === null
-          ? resultMessage
-          : `${sortNoteRef.current} ${resultMessage}`,
-      );
+      const note = sortNoteRef.current;
+      const describesThisPage =
+        note !== null && mode === "browse" && note.sort === (sort ?? "business_key");
+      announce(describesThisPage ? `${note.text} ${resultMessage}` : resultMessage);
       sortNoteRef.current = null;
     }
-  }, [data, resultMessage, announce]);
+  }, [data, resultMessage, announce, mode, sort]);
 
   useEffect(() => {
     if (staleData) {
+      sortNoteRef.current = null;
       announce(STALE_DATA_WARNING);
     }
   }, [staleData, announce]);
@@ -434,12 +404,13 @@ export function AdminCatalogueListPage() {
   const emptyState = (
     <div className="flex flex-col items-start gap-2">
       <p className="m-0">
-        {emptyStateText(
+        {emptyStateText({
           mode,
-          search.q,
-          activeFilters.length > 0,
-          search.after !== undefined,
-        )}
+          q: search.q,
+          hasFilters: activeFilters.length > 0,
+          hasCursor: search.after !== undefined,
+          nothingYet: "The catalogue has no entries yet.",
+        })}
       </p>
       {activeFilters.length > 0 ? (
         <Button type="button" variant="secondary" onClick={handleClearAllFilters}>
@@ -469,9 +440,7 @@ export function AdminCatalogueListPage() {
           <Select
             id="catalogue-list-sort"
             label="Sort by"
-            value={
-              mode === "search" ? SEARCH_MODE_SORT_VALUE : (search.sort ?? "business_key")
-            }
+            value={mode === "search" ? SEARCH_MODE_SORT_VALUE : (sort ?? "business_key")}
             onChange={handleSortChange}
             disabled={mode === "search"}
             options={[

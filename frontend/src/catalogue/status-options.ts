@@ -16,23 +16,19 @@ import type { StatusTone } from "../components/status-badge.tsx";
 export type CatalogueEntryStatus = "draft" | "active" | "deprecated" | "withdrawn";
 
 /**
- * The four `CatalogueEntryStatus` values. Hardcoded, unlike every other
- * facet (`AdminCatalogueFilterPanel`'s own docstring), because this set is a
- * stable part of the domain model, not administrator-editable registry
+ * The four `CatalogueEntryStatus` values. Hardcoded, unlike the registry
+ * properties, because this set is a stable part of the domain model, not administrator-editable registry
  * state - there is nowhere on the wire to discover it from in browse mode
  * (facets, with counts, exist only on the search surface).
  *
- * Its own module, not a constant inside `admin-catalogue-filter-panel.tsx`
- * (issue #289 review): a `.tsx` file that exports a non-component trips
- * `react-refresh/only-export-components` - `limits.ts`'s own precedent for
- * this exact fix. Shared by the filter panel and the active-filter-chip
- * label resolver on the list page, so both read the identical labels.
+ * Its own module, not a constant inside a component file: a `.tsx` file that
+ * exports a non-component trips `react-refresh/only-export-components` -
+ * `limits.ts`'s own precedent for this exact fix. Shared by the list page's
+ * Status combobox and its chips, so both read the identical labels.
  *
  * Typed against `CatalogueEntryStatus`, not `{ value: string; label: string
  * }[]`: a value here that isn't already in that union fails to compile,
- * rather than silently widening. Stays a plain mutable array (not `as
- * const`), so this remains assignable to `AdminCatalogueFilterPanel`'s
- * mutable `FacetOption[]`.
+ * rather than silently widening.
  */
 export const STATUS_OPTIONS: { value: CatalogueEntryStatus; label: string }[] = [
   { value: "draft", label: "Draft" },

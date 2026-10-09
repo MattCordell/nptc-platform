@@ -1,4 +1,4 @@
-import { act, screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
@@ -663,6 +663,27 @@ describe("AdminCatalogueListPage", () => {
           "Sorted by Status. 2 results on this page.",
         ),
       );
+    });
+
+    // The note describes a browsed, re-sorted page. A search submitted before
+    // that page arrives is relevance-ranked, so it must not carry the note.
+    it("does not attach the sort note to a search submitted before the re-sorted page arrives", async () => {
+      stubApi([ENTRIES_OK, SEARCH_OK, PROPERTIES_OK, DISCIPLINE_VALUES_OK]);
+
+      const { router } = await renderRoute(LIST_URL, SIGNED_IN);
+      await screen.findByRole("link", { name: DRAFT_TERM });
+
+      await act(async () => {
+        fireEvent.change(screen.getByRole("combobox", { name: "Sort by" }), {
+          target: { value: "status" },
+        });
+        await router.navigate({ to: "/admin/catalogue", search: { q: "glucose" } });
+      });
+
+      await waitFor(() =>
+        expect(screen.getByRole("status")).toHaveTextContent("1 result on this page."),
+      );
+      expect(screen.getByRole("status")).not.toHaveTextContent("Sorted by");
     });
 
     it("drops the after cursor once sort is changed from a later page", async () => {

@@ -29,8 +29,8 @@ filter, while picking a value in a different filter narrows the result further.
 Each filter lists the values the property registry offers, with no counts. The
 administration list does not count entries per value, because counting the whole
 catalogue on every change is not something a plain list needs to pay for. The Discipline
-and Specimen filters appear only while the property registry marks that property as
-filterable.
+and Specimen filters appear only while the property registry holds that property as
+active, filterable and coded, so a deprecated property loses its filter.
 
 Every active filter also shows as a chip under the filters. Choose a chip to remove its
 filter, or **Clear all filters** to remove them all. A filter in a link that has no control

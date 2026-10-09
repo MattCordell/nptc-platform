@@ -15,6 +15,12 @@ import type { ActiveFilter } from "../components/filter-bar.tsx";
 import { FindingIndicator } from "../components/finding-indicator.tsx";
 import { LiveRegion } from "../components/live-region.tsx";
 import { MultiSelectCombobox } from "../components/multi-select-combobox.tsx";
+import {
+  MAX_VALUES_PER_FILTER,
+  emptyStateText,
+  resultAnnouncement,
+  useCurrentPage,
+} from "../catalogue/list-screen.ts";
 import { PageContainer } from "../components/page-container.tsx";
 import { PageHeader } from "../components/page-header.tsx";
 import { Pagination } from "../components/pagination.tsx";
@@ -53,10 +59,6 @@ const PAGE_SIZE = 50;
 /** The facets with a combobox, in the order they appear. */
 const COMBOBOX_FACET_KEYS = ["discipline", "specimen"] as const;
 
-/** The API refuses a selection of more values than this in one filter
- * (`FILTER_VALUE_CAP`, ADR-0032), so the comboboxes stop at it too. */
-const MAX_VALUES_PER_FILTER = 50;
-
 const STALE_DATA_WARNING =
   "The catalogue could not be refreshed just now, so these results may be out of date.";
 
@@ -65,33 +67,6 @@ const FACETS_UNAVAILABLE =
 
 const LOAD_FAILURE =
   "The catalogue could not be loaded. Try again in a moment, or change the search.";
-
-function resultAnnouncement(count: number, hasNext: boolean): string {
-  if (count === 0) {
-    return "No results.";
-  }
-  const shown = `${count} result${count === 1 ? "" : "s"} on this page.`;
-  return hasNext ? `${shown} More results are on the next page.` : shown;
-}
-
-function emptyStateText(
-  mode: "browse" | "search",
-  q: string,
-  hasFilters: boolean,
-  hasCursor: boolean,
-): string {
-  if (mode === "search") {
-    return hasFilters
-      ? `No catalogue entries match "${q}" with these filters.`
-      : `No catalogue entries match "${q}".`;
-  }
-  if (hasFilters) {
-    return "No catalogue entries match these filters.";
-  }
-  return hasCursor
-    ? "No more catalogue entries."
-    : "The catalogue has no published entries yet.";
-}
 
 export function CatalogueSearchPage() {
   const search = useSearch({ from: ROUTE_ID });
@@ -119,17 +94,7 @@ export function CatalogueSearchPage() {
   });
   const active = mode === "browse" ? listQuery : searchQuery;
 
-  // Placeholder data is the previous page, kept so a focused paging control
-  // or facet pill stays mounted while the next page loads. It is only that
-  // when it answers the same mode and query; otherwise it is another
-  // search's results, and is neither shown nor announced.
-  const population = `${mode}:${search.q}`;
-  const [freshPopulation, setFreshPopulation] = useState<string | null>(null);
-  if (active.data && !active.isPlaceholderData && freshPopulation !== population) {
-    setFreshPopulation(population);
-  }
-  const data =
-    active.isPlaceholderData && freshPopulation !== population ? undefined : active.data;
+  const data = useCurrentPage(active, `${mode}:${search.q}`);
 
   const items: Row[] = data?.items ?? [];
   const nextCursor = data?.next_cursor ?? null;
@@ -269,12 +234,13 @@ export function CatalogueSearchPage() {
   const emptyState = (
     <div className="flex flex-col items-start gap-2">
       <p className="m-0">
-        {emptyStateText(
+        {emptyStateText({
           mode,
-          search.q,
-          activeFilters.length > 0,
-          search.after !== undefined,
-        )}
+          q: search.q,
+          hasFilters: activeFilters.length > 0,
+          hasCursor: search.after !== undefined,
+          nothingYet: "The catalogue has no published entries yet.",
+        })}
       </p>
       {activeFilters.length > 0 ? (
         <Button type="button" variant="secondary" onClick={handleClearAllFilters}>
