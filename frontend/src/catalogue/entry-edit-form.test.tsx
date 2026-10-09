@@ -8,7 +8,7 @@ import type { Route } from "../test/stub-api.ts";
 import { stubApi } from "../test/stub-api.ts";
 
 /**
- * The catalogue entry edit form (issue #526; FR-09, FR-11, FR-24, FR-36,
+ * The catalogue entry edit form (FR-09, FR-11, FR-24, FR-36,
  * FR-37, FR-38, FR-44, FR-85, FR-89).
  *
  * Driven through the real admin edit route, like the panels it replaced.
@@ -934,6 +934,138 @@ describe("a failure that stops the run", () => {
       summary().getByText(/Not sent, because an earlier field failed/),
     ).toBeInTheDocument();
     expect(writes(calls)).toHaveLength(1);
+  });
+});
+
+describe("a field someone else changed", () => {
+  const BIOC = { ...ENTRY.properties[0], value: "BIOC" };
+
+  /** The entry as another editor left it: a new term and a new discipline, at version 9. */
+  function changedByOthers(): Route {
+    return {
+      ...READ_OK,
+      body: {
+        ...ENTRY,
+        preferred_term: "Ferritin (S)",
+        row_version: 9,
+        properties: [BIOC, ENTRY.properties[1]],
+      },
+    };
+  }
+
+  function stubConflictOnUsage(extra: Route[] = []) {
+    let conflicted = false;
+    return stubApi(
+      [
+        ...BASE_ROUTES,
+        ...extra,
+        { method: "PUT", path: USAGE_PATH, status: 409, body: VERSION_CONFLICT },
+        propertyOk(USAGE_PATH, 10),
+      ],
+      {
+        vary: (call, priorSameCalls) => {
+          if (call.method === "PUT") {
+            if (priorSameCalls === 0) {
+              conflicted = true;
+              return null;
+            }
+            return propertyOk(USAGE_PATH, 10);
+          }
+          return conflicted && call.path.endsWith(ENTRY_PATH) ? changedByOthers() : null;
+        },
+      },
+    );
+  }
+
+  it("shows an untouched field's new value after a version conflict (FR-38)", async () => {
+    stubConflictOnUsage();
+    const user = userEvent.setup();
+    await renderLoaded();
+
+    await user.type(form().getByLabelText("Usage guidance"), "Fasting sample.");
+    await fillNote(user, "Record fasting guidance");
+    await save(user);
+    await screen.findByRole("heading", { name: "Some changes were not saved" });
+    await screen.findByRole("heading", { name: "Ferritin (S)", level: 1 });
+
+    // The term and the discipline were not touched here, so they now show the other editor's.
+    expect(form().getByLabelText("RCPA Preferred")).toHaveValue("Ferritin (S)");
+    await waitFor(() =>
+      expect(form().getByLabelText("Discipline 1")).toHaveValue("BIOC"),
+    );
+    // What this editor typed is kept.
+    expect(form().getByLabelText("Usage guidance")).toHaveValue("Fasting sample.");
+  });
+
+  it("does not send the other editor's values back as this editor's change", async () => {
+    const calls = stubConflictOnUsage();
+    const user = userEvent.setup();
+    await renderLoaded();
+
+    await user.type(form().getByLabelText("Usage guidance"), "Fasting sample.");
+    await fillNote(user, "Record fasting guidance");
+    await save(user);
+    await screen.findByRole("heading", { name: "Ferritin (S)", level: 1 });
+    await waitFor(() =>
+      expect(form().getByLabelText("Discipline 1")).toHaveValue("BIOC"),
+    );
+
+    await save(user);
+
+    await waitFor(() => expect(writes(calls)).toHaveLength(2));
+    expect(writes(calls)[1]?.path).toContain("/properties/usage_guidance");
+    expect(writes(calls)[1]?.body).toMatchObject({ expected_row_version: 9 });
+  });
+
+  it("keeps a field the editor changed, even when someone else changed it too", async () => {
+    // The term save is refused, so the editor's term stays unsaved while the
+    // usage guidance then conflicts and the entry reloads with another term.
+    stubConflictOnUsage([
+      {
+        method: "POST",
+        path: AMEND_PATH,
+        status: 409,
+        body: {
+          detail: "This term is already in use on another entry.",
+          collisions: [
+            {
+              severity: "error",
+              business_key: "NPTC-000900",
+              preferred_term: "Iron studies",
+              label_provenance: {},
+            },
+          ],
+        },
+      },
+    ]);
+    const user = userEvent.setup();
+    await renderLoaded();
+
+    const term = form().getByLabelText("RCPA Preferred");
+    await user.clear(term);
+    await user.paste("Serum ferritin");
+    await user.type(form().getByLabelText("Usage guidance"), "Fasting sample.");
+    await fillNote(user, "Reword and add guidance");
+    await save(user);
+    await screen.findByRole("heading", { name: "Some changes were not saved" });
+    await screen.findByRole("heading", { name: "Ferritin (S)", level: 1 });
+
+    expect(form().getByLabelText("RCPA Preferred")).toHaveValue("Serum ferritin");
+  });
+
+  it("does not rebuild a field the editor is still working in after their own save", async () => {
+    stubApi([...BASE_ROUTES, propertyOk(USAGE_PATH, 5)]);
+    const user = userEvent.setup();
+    await renderLoaded();
+
+    const usage = form().getByLabelText("Usage guidance");
+    await user.type(usage, "Fasting sample.");
+    await fillNote(user, "Record fasting guidance");
+    await save(user);
+    await form().findByRole("heading", { name: "Changes saved" });
+
+    // The same element is still on screen: nothing remounted it under the editor.
+    expect(form().getByLabelText("Usage guidance")).toBe(usage);
   });
 });
 

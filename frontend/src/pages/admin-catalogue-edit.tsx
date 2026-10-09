@@ -20,8 +20,8 @@ import { useAnnounce } from "../components/use-announce.ts";
  * identically to a key that was never minted (#142/#228).
  *
  * This page is the shell. `EntryEditForm` edits the preferred term and the
- * registry properties in one form (#526); the designations and code bindings
- * panels below it are folded into that form in a later phase of #526.
+ * registry properties in one form; the designations and code bindings panels
+ * below it still save on their own.
  */
 
 /**

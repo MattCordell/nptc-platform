@@ -195,7 +195,7 @@ function inBindingsPanel() {
   return within(screen.getByRole("region", { name: "Code bindings" }));
 }
 
-/** Queries scoped to the edit form (issue #526), for the same reason as `inTermsPanel()`. */
+/** Queries scoped to the edit form, for the same reason as `inTermsPanel()`. */
 function inForm() {
   return within(screen.getByRole("region", { name: "Edit entry" }));
 }
@@ -705,7 +705,7 @@ describe("the terms table", () => {
   it("edits the preferred term of a draft entry in the form", async () => {
     // An entry's own lifecycle (draft/active/deprecated/withdrawn) is not a
     // fact about any of its terms. The screen exists for unpublished entries
-    // above all (#228).
+    // above all.
     stubApi([READ_OK]);
 
     await renderLoaded();

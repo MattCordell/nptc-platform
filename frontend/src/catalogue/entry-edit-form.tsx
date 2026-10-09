@@ -33,7 +33,7 @@ import { termLength } from "./term-length.ts";
 import { useEntrySave } from "./use-entry-save.ts";
 
 /**
- * The catalogue entry edit form (issue #526; FR-09, FR-24, FR-36, FR-37,
+ * The catalogue entry edit form (FR-09, FR-24, FR-36, FR-37,
  * FR-38, FR-77, FR-85, FR-89).
  *
  * One form, one changelog note and one Save for the entry's RCPA Preferred
@@ -168,6 +168,37 @@ export function EntryEditForm({ entry }: { entry: EntryDetail }) {
   const [baseline, setBaseline] = useState<Baseline>(initial.baseline);
   const [term, setTerm] = useState(entry.preferred_term);
   const [slots, setSlots] = useState(initial.slots);
+  const [seenEntry, setSeenEntry] = useState(entry);
+  if (entry !== seenEntry) {
+    // The entry was refetched: after this form's own save, or after a version
+    // conflict. A field the editor has not touched must show what the entry now
+    // holds, or the editor would later change a value they were never shown and
+    // overwrite whoever last changed it (FR-38). A field they did change keeps
+    // their value.
+    setSeenEntry(entry);
+    const next = initialState(entry);
+    const keys = new Set([...Object.keys(slots), ...Object.keys(next.slots)]);
+    const nextSlots = { ...slots };
+    for (const key of keys) {
+      const current = nonEmptySlotIndexes(slots[key] ?? []).map((index) => ({
+        value: slots[key][index].value,
+        justification: justificationOf(slots[key][index]),
+      }));
+      const fresh = next.baseline.values[key] ?? [];
+      const untouched = sameValues(current, baseline.values[key] ?? []);
+      if (untouched && !sameValues(current, fresh)) {
+        nextSlots[key] = next.slots[key] ?? [];
+      }
+    }
+    setSlots(nextSlots);
+    if (
+      normaliseForComparison(term) === normaliseForComparison(baseline.term) &&
+      term !== entry.preferred_term
+    ) {
+      setTerm(entry.preferred_term);
+    }
+    setBaseline(next.baseline);
+  }
   const [serverLength, setServerLength] = useState<number | null>(null);
   const [refusals, setRefusals] = useState<Record<string, FormError[]>>({});
   const [ownErrors, setOwnErrors] = useState<FormError[]>([]);
@@ -248,16 +279,14 @@ export function EntryEditForm({ entry }: { entry: EntryDetail }) {
 
   function applyRun(result: SaveRun, sent: PendingChange[]) {
     const nextRefusals: Record<string, FormError[]> = {};
-    const nextBaseline: Baseline = {
-      term: baseline.term,
-      values: { ...baseline.values },
-    };
+    let savedTermBaseline: string | null = null;
+    const savedValues: Record<string, ValueItem[]> = {};
     let storedTerm: { sent: string; saved: string } | null = null;
     for (const outcome of result.outcomes) {
       const { change } = outcome;
       if (outcome.status === "saved") {
         if (change.kind === "preferred_term") {
-          nextBaseline.term = outcome.savedTerm ?? change.newTerm;
+          savedTermBaseline = outcome.savedTerm ?? change.newTerm;
           if (outcome.length !== null) {
             setServerLength(outcome.length);
           }
@@ -265,7 +294,7 @@ export function EntryEditForm({ entry }: { entry: EntryDetail }) {
             storedTerm = { sent: change.newTerm, saved: outcome.savedTerm };
           }
         } else {
-          nextBaseline.values[change.key] = change.values;
+          savedValues[change.key] = change.values;
         }
         continue;
       }
@@ -291,7 +320,10 @@ export function EntryEditForm({ entry }: { entry: EntryDetail }) {
             : [{ fieldId: groupFieldId(change.key), message: reason }];
       }
     }
-    setBaseline(nextBaseline);
+    setBaseline((current) => ({
+      term: savedTermBaseline ?? current.term,
+      values: { ...current.values, ...savedValues },
+    }));
     if (storedTerm !== null) {
       const { sent, saved } = storedTerm;
       setTerm((current) => (current === sent ? saved : current));
