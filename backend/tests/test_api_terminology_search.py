@@ -189,6 +189,27 @@ def test_search_by_code_refuses_what_lookup_would_accept(api: ApiTestApp, code: 
     assert response.json()["items"] == []
 
 
+@pytest.mark.req("FR-84")
+@pytest.mark.integration
+@pytest.mark.parametrize(
+    "q",
+    [f"{_MICROSCOPY} OR {_OUTSIDE_PROCEDURE}", f"<<{_PROCEDURE_ROOT}", f"* MINUS {_MICROSCOPY}"],
+    ids=["or", "descendant-operator", "minus"],
+)
+def test_search_text_that_looks_like_ecl_is_a_filter_and_never_widens_the_scope(
+    api: ApiTestApp, q: str
+) -> None:
+    """Only a bare 6 to 18 digit code is interpolated into the ECL. Anything else goes to the
+    server as `filter`, so a caller cannot smuggle an operator into the scope."""
+    _seed_procedures(api)
+
+    response = _search(api, _editor_token(api, "sub-search-ecl-text"), q)
+
+    assert response.status_code == 200, response.text
+    assert response.json()["items"] == []
+    assert [r.detail for r in api.terminology.requests] == [_SEARCH_ECL]
+
+
 @pytest.mark.req("FR-26")
 @pytest.mark.integration
 def test_search_by_a_code_with_a_bad_check_digit_is_empty_with_no_upstream_request(
