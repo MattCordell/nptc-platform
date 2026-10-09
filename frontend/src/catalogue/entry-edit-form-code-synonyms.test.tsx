@@ -1263,3 +1263,85 @@ describe("a field's error stays until that field changes", () => {
     ).toBeGreaterThan(0);
   });
 });
+
+describe("a code error that describes the lookup", () => {
+  /** Holds the concept lookup until `release` is called, so a code stays "checking". */
+  function holdConceptLookup() {
+    const send = fetch;
+    let release: () => void = () => {};
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    vi.stubGlobal("fetch", async (request: Request) => {
+      if (new URL(request.url).pathname.endsWith(`/terminology/concepts/${CODE}`)) {
+        await gate;
+      }
+      return send(request);
+    });
+    return release;
+  }
+
+  it("goes once the lookup finishes, with no second Save", async () => {
+    stubApi([entryRoute(), PROPERTIES_OK, PROCEDURES_OK, conceptRoute()]);
+    const release = holdConceptLookup();
+    const user = userEvent.setup();
+    await renderLoaded();
+
+    await user.type(form().getByLabelText("SNOMED CT code"), "micro");
+    await user.click(
+      await screen.findByRole("option", { name: new RegExp(CODE) }, { timeout: 2000 }),
+    );
+    await form().findByText(/Checking .* against the terminology server/);
+    await fillNote(user, "Bind while the code is still checking");
+    await save(user);
+    expect(
+      (await form().findAllByText("Wait for the code to finish checking before saving."))
+        .length,
+    ).toBeGreaterThan(0);
+
+    release();
+
+    expect(await form().findByText(FSN, {}, { timeout: 2000 })).toBeVisible();
+    await waitFor(() =>
+      expect(
+        form().queryByText("Wait for the code to finish checking before saving."),
+      ).not.toBeInTheDocument(),
+    );
+  });
+
+  it("goes when a retry of the same code succeeds", async () => {
+    stubApi([entryRoute(), PROPERTIES_OK, PROCEDURES_OK], {
+      vary: (call, prior) =>
+        call.path.endsWith(`/terminology/concepts/${CODE}`)
+          ? prior === 0
+            ? {
+                method: "GET",
+                path: call.path,
+                status: 503,
+                body: { detail: "The terminology server is not reachable right now." },
+              }
+            : conceptRoute()
+          : null,
+    });
+    const user = userEvent.setup();
+    await renderLoaded();
+
+    await user.type(form().getByLabelText("SNOMED CT code"), "micro");
+    await user.click(
+      await screen.findByRole("option", { name: new RegExp(CODE) }, { timeout: 2000 }),
+    );
+    await form().findByText(/not reachable right now/, {}, { timeout: 2000 });
+    await fillNote(user, "Bind a code the server could not check");
+    await save(user);
+    expect(
+      (await form().findAllByText(/not reachable right now/)).length,
+    ).toBeGreaterThan(1);
+
+    document.dispatchEvent(new Event("visibilitychange", { bubbles: true }));
+
+    expect(await form().findByText(FSN, {}, { timeout: 2000 })).toBeVisible();
+    await waitFor(() =>
+      expect(form().queryByText(/not reachable right now/)).not.toBeInTheDocument(),
+    );
+  });
+});

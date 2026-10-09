@@ -272,6 +272,19 @@ export function EntryEditForm({ entry }: { entry: EntryDetail }) {
   const entrySave = useEntrySave(entry.business_key);
   const selection = useCodeSelection(pickedCode);
   const activeCode = activeCodeOf(entry);
+  // "Wait for the code to finish checking" and a lookup failure describe the
+  // lookup, which settles with no edit from the editor. A stored copy would
+  // outlive the state it describes, so it goes when the lookup's state moves.
+  const selectionState = `${selection.status}:${pickedCode ?? ""}`;
+  const [seenSelectionState, setSeenSelectionState] = useState(selectionState);
+  if (selectionState !== seenSelectionState) {
+    setSeenSelectionState(selectionState);
+    setOwnErrors((current) =>
+      current.some((error) => error.fieldId === CODE_FIELD_ID)
+        ? current.filter((error) => error.fieldId !== CODE_FIELD_ID)
+        : current,
+    );
+  }
   // The entry is refetched after every run, but not before an editor can press
   // Save again, or open a row action. A run's own last version, and the term it
   // stored, are newer than the entry until that refetch lands, and sending the
