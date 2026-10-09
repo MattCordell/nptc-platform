@@ -292,6 +292,11 @@ Keycloak resolves every request to the flow's highest level and demands OTP enro
 every user — which is what the committed realm did before #41, contradicting NFR-02. See
 ADR-0021 for the evidence.
 
+The level reached only reaches the backend if the token says so. Keycloak writes the `acr`
+claim through the mapper in its built-in `acr` client scope, so `nptc-frontend` lists `acr`
+in its `defaultClientScopes`. Without it, every token lacks `acr`, `mfa_satisfied` is always
+false, and no Administrator can complete step-up.
+
 ## The login theme
 
 Keycloak's own pages are the only place a password is typed (NFR-01), so they carry the
