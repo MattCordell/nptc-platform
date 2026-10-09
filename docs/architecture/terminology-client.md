@@ -385,11 +385,15 @@ could change it:
 | Failure | Field | Cached |
 |---|---|---|
 | Retryable: a timeout, a transport failure, a 5xx or a 429 | `unavailable` | 60 s, for every code |
-| Concept absence (`is_concept_absence`): the code is not in the current AU edition | `available`, no terms | 24 h, for that code |
+| Concept absence (`is_concept_absence`): usually, the code is not in the current AU edition | `available`, no terms | 1 h, for that code |
 | Anything else, such as an unparseable body | `unavailable` | 60 s, for that code |
 
 An absent code shows no synonyms rather than "try again later", because waiting will not
-fix it. Reporting the code itself is the validation sweep's job (FR-45). A
+fix it. Reporting the code itself is the validation sweep's job (FR-45). The hour, not a
+day, is because Ontoserver returns the same 404 with a `not-found` issue when the server
+lacks the AU edition entirely ("A usable code system ... could not be resolved", checked
+2026-10-09). A misconfigured `NPTC_TX_BASE_URL` then hides synonyms for at most an hour
+after it is fixed. A
 `TerminologyConfigError` propagates to the 500 that `nptc.api.errors` gives it.
 
 **The lookup runs with no database connection held.** The detail builders read every stored

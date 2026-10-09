@@ -18,9 +18,11 @@ for as long as waiting could change it:
 - A retryable failure (timeout, transport, 5xx, 429) means the server is down. Every code is
   `unavailable`, with no request, for `FAILURE_TTL_SECONDS`, so an outage costs one timeout a
   minute rather than one per uncached code.
-- A concept absence means the code is not in the current AU edition. It has no synonyms to
-  show, so it is `available` with no terms for `SYNONYM_TTL_SECONDS`. Reporting the code itself
-  is the validation sweep's job (FR-45), not the page's.
+- A concept absence usually means the code is not in the current AU edition, so it is
+  `available` with no terms. Reporting the code itself is the validation sweep's job (FR-45).
+  It is kept only for `ABSENCE_TTL_SECONDS`, because Ontoserver gives the same 404 when the
+  server lacks the AU edition entirely: a misconfigured server must not hide every synonym
+  for a day after it is fixed.
 - Any other failure is `unavailable` for that code for `FAILURE_TTL_SECONDS`.
 
 A `TerminologyConfigError` is re-raised, because it is a deployment fault for `nptc.api.errors`
@@ -49,6 +51,7 @@ from nptc_shared.terminology import (
 from nptc_shared.terminology.models import Designation, LookupResult
 
 __all__ = [
+    "ABSENCE_TTL_SECONDS",
     "FAILURE_TTL_SECONDS",
     "INTERACTIVE_TIMEOUT_SECONDS",
     "SYNONYM_TTL_SECONDS",
@@ -62,6 +65,7 @@ __all__ = [
 #: AU releases are monthly, so a day-old synonym list is current for practical purposes.
 SYNONYM_TTL_SECONDS: Final = 24 * 60 * 60.0
 FAILURE_TTL_SECONDS: Final = 60.0
+ABSENCE_TTL_SECONDS: Final = 60 * 60.0
 #: A live `$lookup` took 0.3 to 0.9 s on 2026-10-09.
 INTERACTIVE_TIMEOUT_SECONDS: Final = 3.0
 #: The catalogue holds about 2,000 active bindings, with a ceiling near 5,000.
@@ -175,7 +179,7 @@ class SnomedSynonymSource:
         except TerminologyError as exc:
             if is_concept_absence(exc):
                 _logger.info("SNOMED CT code %s is not in the AU edition", code)
-                return self._store(code, _NONE, SYNONYM_TTL_SECONDS)
+                return self._store(code, _NONE, ABSENCE_TTL_SECONDS)
             _logger.warning(
                 "SNOMED CT synonyms unavailable for code %s: %s", code, type(exc).__name__
             )

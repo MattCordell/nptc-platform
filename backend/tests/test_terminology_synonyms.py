@@ -10,6 +10,7 @@ from __future__ import annotations
 import pytest
 
 from nptc.terminology.synonyms import (
+    ABSENCE_TTL_SECONDS,
     FAILURE_TTL_SECONDS,
     INTERACTIVE_TIMEOUT_SECONDS,
     SYNONYM_TTL_SECONDS,
@@ -301,7 +302,7 @@ def test_a_non_retryable_failure_is_cached_for_its_code_only() -> None:
     ],
     ids=["404", "400-not-found-outcome"],
 )
-def test_an_absent_code_has_no_synonyms_and_is_cached_like_a_result(
+def test_an_absent_code_has_no_synonyms_and_is_cached_for_an_hour_not_a_day(
     error: TerminologyError,
 ) -> None:
     client = _SwitchableClient(down=True, error=error)
@@ -311,11 +312,14 @@ def test_an_absent_code_has_no_synonyms_and_is_cached_like_a_result(
     assert source.synonyms_for("26604007", preferred_term=None) == SnomedSynonymResult(
         SynonymStatus.AVAILABLE, ()
     )
-    clock.now += SYNONYM_TTL_SECONDS - 1
+    clock.now += ABSENCE_TTL_SECONDS - 1
     source.synonyms_for("26604007", preferred_term=None)
-    source.synonyms_for("167217005", preferred_term=None)
+    assert client.lookups == 1
 
+    clock.now += 1
+    source.synonyms_for("26604007", preferred_term=None)
     assert client.lookups == 2
+    assert ABSENCE_TTL_SECONDS < SYNONYM_TTL_SECONDS
 
 
 @pytest.mark.req("FR-54")
