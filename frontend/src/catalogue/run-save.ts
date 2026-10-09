@@ -5,6 +5,7 @@ import {
   refusalDetail,
 } from "../api/conflicts.ts";
 import { ApiError } from "../api/unwrap.ts";
+import type { ChosenConcept } from "./code-binding.ts";
 import type { DesignationWarning } from "./collision-notice.tsx";
 
 /**
@@ -38,7 +39,48 @@ export interface PropertyChange {
   values: ValueItem[];
 }
 
-export type FieldChange = PreferredTermChange | PropertyChange;
+/** Binds `concept`, or, when the entry has an active code, replaces that code with it. */
+export interface BindingChange {
+  kind: "binding";
+  id: string;
+  label: string;
+  /** The active code the new one replaces, or `null` when the entry has none. */
+  currentCode: string | null;
+  concept: ChosenConcept;
+}
+
+export interface SynonymAmendChange {
+  kind: "synonym_amend";
+  id: string;
+  label: string;
+  /** The stored term, which the amendment route addresses the synonym by. */
+  currentTerm: string;
+  newTerm: string;
+}
+
+/** Retires a synonym. The row stays, marked retired. */
+export interface SynonymRetireChange {
+  kind: "synonym_retire";
+  id: string;
+  label: string;
+  term: string;
+}
+
+/** Adds every term as a new synonym, in one request. */
+export interface SynonymsAddChange {
+  kind: "synonyms_add";
+  id: string;
+  label: string;
+  terms: string[];
+}
+
+export type FieldChange =
+  | PreferredTermChange
+  | PropertyChange
+  | BindingChange
+  | SynonymAmendChange
+  | SynonymRetireChange
+  | SynonymsAddChange;
 
 export interface SendResult {
   rowVersion: number;

@@ -14,7 +14,8 @@ export interface EntrySaveRequest {
 }
 
 /**
- * Sends the edit form's changes through `runSave`.
+ * Sends the edit form's changes through `runSave`: the preferred term, the
+ * SNOMED CT code, the synonyms and the registry properties.
  *
  * It calls the client directly and not the per-field mutation hooks, because
  * those invalidate the entry after every call. A refetch in the middle of a
@@ -38,43 +39,138 @@ export function useEntrySave(businessKey: string) {
       const run = await runSave(
         changes,
         async (change, version): Promise<SendResult> => {
-          if (change.kind === "preferred_term") {
-            const result = unwrap(
-              await client.POST(
-                "/api/v1/catalogue/entries/{business_key}/designations/amendment",
-                {
-                  params: { path: { business_key: businessKey } },
-                  body: {
-                    term: change.currentTerm,
-                    new_term: change.newTerm,
-                    target: "preferred_term",
-                    expected_row_version: version,
-                    reason: note,
+          const path = { business_key: businessKey };
+          switch (change.kind) {
+            case "preferred_term": {
+              const result = unwrap(
+                await client.POST(
+                  "/api/v1/catalogue/entries/{business_key}/designations/amendment",
+                  {
+                    params: { path },
+                    body: {
+                      term: change.currentTerm,
+                      new_term: change.newTerm,
+                      target: "preferred_term",
+                      expected_row_version: version,
+                      reason: note,
+                    },
                   },
-                },
-              ),
-            );
-            return {
-              rowVersion: result.row_version,
-              warnings: result.warnings,
-              length: result.designation.length,
-              savedTerm: result.designation.term,
-            };
+                ),
+              );
+              return {
+                rowVersion: result.row_version,
+                warnings: result.warnings,
+                length: result.designation.length,
+                savedTerm: result.designation.term,
+              };
+            }
+            case "property": {
+              const result = unwrap(
+                await client.PUT(
+                  "/api/v1/catalogue/entries/{business_key}/properties/{key}",
+                  {
+                    params: { path: { ...path, key: change.key } },
+                    body: {
+                      values: change.values,
+                      reason: note,
+                      expected_row_version: version,
+                    },
+                  },
+                ),
+              );
+              return { rowVersion: result.row_version };
+            }
+            case "binding": {
+              const { concept } = change;
+              const labels = {
+                code: concept.code,
+                fsn: concept.fsn,
+                au_preferred_term: concept.auPreferredTerm,
+                edition_hint: concept.edition,
+              };
+              if (change.currentCode === null) {
+                const result = unwrap(
+                  await client.POST("/api/v1/catalogue/entries/{business_key}/bindings", {
+                    params: { path },
+                    body: { ...labels, reason: note, expected_row_version: version },
+                  }),
+                );
+                return { rowVersion: result.row_version };
+              }
+              const result = unwrap(
+                await client.POST(
+                  "/api/v1/catalogue/entries/{business_key}/bindings/{code}/replacement",
+                  {
+                    params: { path: { ...path, code: change.currentCode } },
+                    body: {
+                      successor: labels,
+                      reason: note,
+                      expected_row_version: version,
+                    },
+                  },
+                ),
+              );
+              return { rowVersion: result.row_version };
+            }
+            case "synonym_amend": {
+              const result = unwrap(
+                await client.POST(
+                  "/api/v1/catalogue/entries/{business_key}/designations/amendment",
+                  {
+                    params: { path },
+                    body: {
+                      term: change.currentTerm,
+                      new_term: change.newTerm,
+                      target: "synonym",
+                      expected_row_version: version,
+                      reason: note,
+                    },
+                  },
+                ),
+              );
+              return {
+                rowVersion: result.row_version,
+                warnings: result.warnings,
+                savedTerm: result.designation.term,
+              };
+            }
+            case "synonym_retire": {
+              const result = unwrap(
+                await client.POST(
+                  "/api/v1/catalogue/entries/{business_key}/designations/retirement",
+                  {
+                    params: { path },
+                    body: {
+                      term: change.term,
+                      reason: note,
+                      expected_row_version: version,
+                    },
+                  },
+                ),
+              );
+              return { rowVersion: result.row_version };
+            }
+            case "synonyms_add": {
+              const result = unwrap(
+                await client.POST(
+                  "/api/v1/catalogue/entries/{business_key}/designations",
+                  {
+                    params: { path },
+                    body: {
+                      terms: change.terms,
+                      reason: note,
+                      expected_row_version: version,
+                    },
+                  },
+                ),
+              );
+              return { rowVersion: result.row_version, warnings: result.warnings };
+            }
+            default: {
+              const unhandled: never = change;
+              return unhandled;
+            }
           }
-          const result = unwrap(
-            await client.PUT(
-              "/api/v1/catalogue/entries/{business_key}/properties/{key}",
-              {
-                params: { path: { business_key: businessKey, key: change.key } },
-                body: {
-                  values: change.values,
-                  reason: note,
-                  expected_row_version: version,
-                },
-              },
-            ),
-          );
-          return { rowVersion: result.row_version };
         },
         rowVersion,
       );

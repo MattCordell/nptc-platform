@@ -1,7 +1,8 @@
 import type { Ref } from "react";
 
 import { asVersionConflict } from "../api/conflicts.ts";
-import type { DesignationWarning } from "./collision-notice.tsx";
+import { Button } from "../components/button.tsx";
+import type { CollisionWarning, DesignationWarning } from "./collision-notice.tsx";
 import { ConflictAttribution } from "./collision-notice.tsx";
 import type { FieldOutcome, SaveRun } from "./run-save.ts";
 
@@ -17,13 +18,34 @@ function warningsOf(run: SaveRun): DesignationWarning[] {
   );
 }
 
-function WarningItem({ warning }: { warning: DesignationWarning }) {
+function WarningItem({
+  warning,
+  onAcknowledge,
+}: {
+  warning: DesignationWarning;
+  onAcknowledge?: (warning: CollisionWarning) => void;
+}) {
   switch (warning.kind) {
     case "collision":
+      // The same term on another live entry is allowed, so the action is to
+      // confirm it is intended (FR-05).
       return (
         <li>
           &ldquo;{warning.term}&rdquo; is also on {warning.business_key} &mdash;{" "}
           {warning.preferred_term}
+          {onAcknowledge !== undefined && (
+            <>
+              {" "}
+              <Button
+                type="button"
+                variant="secondary"
+                aria-label={`Acknowledge ${warning.term}`}
+                onClick={() => onAcknowledge(warning)}
+              >
+                Acknowledge
+              </Button>
+            </>
+          )}
         </li>
       );
     case "length":
@@ -38,6 +60,56 @@ function WarningItem({ warning }: { warning: DesignationWarning }) {
       return unhandled;
     }
   }
+}
+
+function warningKey(warning: DesignationWarning): string {
+  return warning.kind === "collision"
+    ? `${warning.term}-${warning.business_key}`
+    : "length";
+}
+
+/**
+ * Warnings that rode back on a write that succeeded, so each is worth a look
+ * and none blocked the save. A duplicate the editor already acknowledged is
+ * left out.
+ */
+export function WarningList({
+  warnings,
+  acknowledged,
+  onAcknowledge,
+}: {
+  warnings: DesignationWarning[];
+  acknowledged: ReadonlySet<string>;
+  onAcknowledge?: (warning: CollisionWarning) => void;
+}) {
+  const shown = warnings.filter(
+    (warning) => warning.kind !== "collision" || !acknowledged.has(warning.term),
+  );
+  if (shown.length === 0) {
+    return null;
+  }
+  return (
+    <>
+      <h3>Check these</h3>
+      <p>These changes were saved. None of the warnings blocked the save.</p>
+      {onAcknowledge !== undefined && shown.some((w) => w.kind === "collision") && (
+        <p>
+          A term can be on two entries, because two entries can legitimately share a
+          synonym. Acknowledge a duplicate to confirm it is intended and stop it being
+          reported on every save.
+        </p>
+      )}
+      <ul>
+        {shown.map((warning) => (
+          <WarningItem
+            key={warningKey(warning)}
+            warning={warning}
+            onAcknowledge={onAcknowledge}
+          />
+        ))}
+      </ul>
+    </>
+  );
 }
 
 function NotSavedItem({
@@ -69,9 +141,13 @@ function NotSavedItem({
 export function SaveSummary({
   run,
   headingRef,
+  acknowledged,
+  onAcknowledge,
 }: {
   run: SaveRun;
   headingRef: Ref<HTMLHeadingElement>;
+  acknowledged: ReadonlySet<string>;
+  onAcknowledge: (warning: CollisionWarning) => void;
 }) {
   const saved = run.outcomes.filter((outcome) => outcome.status === "saved");
   const notSaved = run.outcomes.filter(
@@ -114,24 +190,11 @@ export function SaveSummary({
         </>
       )}
 
-      {warnings.length > 0 && (
-        <>
-          <h3>Check these</h3>
-          <p>These changes were saved. None of the warnings blocked the save.</p>
-          <ul>
-            {warnings.map((warning) => (
-              <WarningItem
-                key={
-                  warning.kind === "collision"
-                    ? `${warning.term}-${warning.business_key}`
-                    : "length"
-                }
-                warning={warning}
-              />
-            ))}
-          </ul>
-        </>
-      )}
+      <WarningList
+        warnings={warnings}
+        acknowledged={acknowledged}
+        onAcknowledge={onAcknowledge}
+      />
     </section>
   );
 }

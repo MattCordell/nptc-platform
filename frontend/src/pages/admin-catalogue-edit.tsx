@@ -4,8 +4,6 @@ import { useEffect } from "react";
 import { refusalDetail } from "../api/conflicts.ts";
 import { useAdminEntryDetail } from "../api/queries.ts";
 import { ApiError } from "../api/unwrap.ts";
-import { BindingsPanel } from "../catalogue/bindings-panel.tsx";
-import { DesignationsPanel } from "../catalogue/designations-panel.tsx";
 import { EntryEditForm } from "../catalogue/entry-edit-form.tsx";
 import { LiveRegion } from "../components/live-region.tsx";
 import { PageContainer } from "../components/page-container.tsx";
@@ -19,9 +17,9 @@ import { useAnnounce } from "../components/use-announce.ts";
  * edited is very often `draft`, and the public route 404s a draft entry
  * identically to a key that was never minted (#142/#228).
  *
- * This page is the shell. `EntryEditForm` edits the preferred term and the
- * registry properties in one form; the designations and code bindings panels
- * below it still save on their own.
+ * This page is the shell. `EntryEditForm` edits the preferred term, the SNOMED
+ * CT code, the RCPA Synonyms and the registry properties in one form, with one
+ * Save and one changelog note.
  */
 
 /**
@@ -125,18 +123,7 @@ export function AdminCatalogueEditPage() {
 
         {staleData && <p>{staleWarning(businessKey)}</p>}
 
-        {entry.data && (
-          <>
-            <EntryEditForm key={entry.data.business_key} entry={entry.data} />
-
-            {/* Keyed on the entry so its panel state - the warnings from the
-                last write, and any open dialog - cannot survive navigation from
-                one entry's edit screen to another's, which re-renders this same
-                route component rather than remounting it (review finding 4). */}
-            <DesignationsPanel key={entry.data.business_key} entry={entry.data} />
-            <BindingsPanel key={entry.data.business_key} entry={entry.data} />
-          </>
-        )}
+        {entry.data && <EntryEditForm key={entry.data.business_key} entry={entry.data} />}
       </PageContainer>
     </section>
   );

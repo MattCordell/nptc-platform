@@ -1,7 +1,7 @@
 /**
  * Server limits this screen has to know before it sends a request.
  *
- * Its own module, not a constant inside `designations-panel.tsx`, for two
+ * Its own module, not a constant inside a component file, for two
  * reasons: a `.tsx` file that exports a non-component trips
  * `react-refresh/only-export-components`, and a copied server constant needs a
  * test that reads the server's own document - which needs somewhere to import
