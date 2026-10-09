@@ -20,6 +20,7 @@ import { PageHeader } from "../components/page-header.tsx";
 import { Pagination } from "../components/pagination.tsx";
 import { SearchInput } from "../components/search-input.tsx";
 import { useAnnounce } from "../components/use-announce.ts";
+import { useKeysetPaging } from "../components/use-keyset-paging.ts";
 import {
   activeFilterEntries,
   clearAllFilters,
@@ -163,24 +164,7 @@ export function CatalogueSearchPage() {
     setQueryDraft(search.q);
   }
 
-  // The cursors of pages already visited, so "Previous page" can return to
-  // one. The stack survives a change of `after` only when that change is the
-  // Next or Previous click that set `target`; anything else empties it.
-  const [paging, setPaging] = useState<{
-    stack: (string | undefined)[];
-    seen: string | undefined;
-    target: { after: string | undefined } | null;
-  }>({ stack: [], seen: search.after, target: null });
-  if (search.after !== paging.seen) {
-    setPaging({
-      stack:
-        paging.target !== null && paging.target.after === search.after
-          ? paging.stack
-          : [],
-      seen: search.after,
-      target: null,
-    });
-  }
+  const paging = useKeysetPaging(search.after);
 
   const labelsByFacet = useMemo(() => {
     const map = new Map<string, { label: string; values: Map<string, string> }>();
@@ -233,22 +217,13 @@ export function CatalogueSearchPage() {
     // A placeholder's `next_cursor` points at the page already loading, so
     // acting on it would push a duplicate onto the Previous stack.
     if (nextCursor !== null && !active.isPlaceholderData) {
-      setPaging({
-        ...paging,
-        stack: [...paging.stack, search.after],
-        target: { after: nextCursor },
-      });
+      paging.next(nextCursor);
       void navigate({ search: (prev) => ({ ...prev, after: nextCursor }) });
     }
   }
 
   function handlePreviousPage() {
-    const previousAfter = paging.stack[paging.stack.length - 1];
-    setPaging({
-      ...paging,
-      stack: paging.stack.slice(0, -1),
-      target: { after: previousAfter },
-    });
+    const previousAfter = paging.previous();
     void navigate({ search: (prev) => ({ ...prev, after: previousAfter }) });
   }
 
@@ -438,11 +413,11 @@ export function CatalogueSearchPage() {
               />
             </div>
 
-            {(items.length > 0 || paging.stack.length > 0) && (
+            {(items.length > 0 || paging.hasPrevious) && (
               <Pagination
                 hasNext={nextCursor !== null}
                 onNext={handleNextPage}
-                onPrevious={paging.stack.length > 0 ? handlePreviousPage : undefined}
+                onPrevious={paging.hasPrevious ? handlePreviousPage : undefined}
                 className="self-start"
               />
             )}

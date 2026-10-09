@@ -20,7 +20,7 @@
 - [Browsing the property registry](browsing-the-property-registry.md) — issue #445.
 - [Managing registry properties](managing-registry-properties.md) — issue #446. Add, change
   and deprecate a property.
-- [Bulk reclassify](bulk-reclassify.md) — issue #63.
+- [Bulk reclassify](bulk-reclassify.md) — issue #63. Removed from the screen by issue #526; the page says what remains.
 - [What the finding indicator means](viewing-the-finding-indicator.md) — issue #141, shown on
   the catalogue search page and on the public entry page.
 - [Searching the audit log](searching-the-audit-log.md) — issue #447. The Administrator

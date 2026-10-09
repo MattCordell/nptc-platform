@@ -464,6 +464,8 @@ export interface AdminEntriesListParams {
    * parameters by `filterQueryParams` (`api/filter-params.ts`). */
   filters?: Record<string, string[]>;
   enabled?: boolean;
+  /** As `EntriesListParams.keepPreviousPage`. */
+  keepPreviousPage?: boolean;
 }
 
 /**
@@ -478,10 +480,18 @@ export interface AdminEntriesListParams {
  */
 export function useAdminEntriesList(params: AdminEntriesListParams = {}) {
   const client = useApiClient();
-  const { limit, after, sort, filters = {}, enabled = true } = params;
+  const {
+    limit,
+    after,
+    sort,
+    filters = {},
+    enabled = true,
+    keepPreviousPage = false,
+  } = params;
   const query = { limit, after, sort, ...filterQueryParams(filters) };
   return useQuery({
     queryKey: ["api", "/api/v1/catalogue/admin/entries", query],
+    placeholderData: keepPreviousPage ? keepPreviousData : undefined,
     queryFn: async ({ signal }) =>
       unwrap(
         await client.GET("/api/v1/catalogue/admin/entries", {
@@ -499,6 +509,8 @@ export interface AdminSearchParams {
   after?: string;
   filters?: Record<string, string[]>;
   enabled?: boolean;
+  /** As `EntriesListParams.keepPreviousPage`. */
+  keepPreviousPage?: boolean;
 }
 
 /**
@@ -514,10 +526,18 @@ export interface AdminSearchParams {
  */
 export function useAdminSearch(params: AdminSearchParams) {
   const client = useApiClient();
-  const { q, limit, after, filters = {}, enabled = true } = params;
+  const {
+    q,
+    limit,
+    after,
+    filters = {},
+    enabled = true,
+    keepPreviousPage = false,
+  } = params;
   const query = { q, limit, after, ...filterQueryParams(filters) };
   return useQuery({
     queryKey: ["api", "/api/v1/catalogue/admin/search", query],
+    placeholderData: keepPreviousPage ? keepPreviousData : undefined,
     queryFn: async ({ signal }) =>
       unwrap(
         await client.GET("/api/v1/catalogue/admin/search", {
@@ -1050,13 +1070,24 @@ export function useDeprecateProperty(key: string) {
  * the same property's values renders from cache rather than a second, subtly
  * different request.
  */
-function propertyValueOptionsQuery(client: ApiClient, key: string, filter: string) {
+function propertyValueOptionsQuery(
+  client: ApiClient,
+  key: string,
+  filter: string,
+  count?: number,
+) {
   return {
-    queryKey: ["api", "/api/v1/registry/properties/{key}/values", key, filter],
+    queryKey:
+      count === undefined
+        ? ["api", "/api/v1/registry/properties/{key}/values", key, filter]
+        : ["api", "/api/v1/registry/properties/{key}/values", key, filter, count],
     queryFn: async ({ signal }: { signal: AbortSignal }) =>
       unwrap(
         await client.GET("/api/v1/registry/properties/{key}/values", {
-          params: { path: { key }, query: filter.length > 0 ? { filter } : {} },
+          params: {
+            path: { key },
+            query: { ...(filter.length > 0 ? { filter } : {}), count },
+          },
           signal,
         }),
       ),
@@ -1091,12 +1122,12 @@ export function usePropertyValueOptions(key: string, filter: string) {
  * is read from cache rather than fetched a second time.
  */
 export function usePropertyValueOptionsQueries(
-  entries: { key: string; filter: string }[],
+  entries: { key: string; filter: string; count?: number }[],
 ) {
   const client = useApiClient();
   return useQueries({
     queries: entries.map((entry) =>
-      propertyValueOptionsQuery(client, entry.key, entry.filter),
+      propertyValueOptionsQuery(client, entry.key, entry.filter, entry.count),
     ),
   });
 }

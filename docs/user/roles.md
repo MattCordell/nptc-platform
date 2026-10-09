@@ -17,8 +17,8 @@ shipped:
   bindings, and registry properties, each with its own guide
   ([terms](editing-designations.md), [code bindings](binding-a-code.md),
   [registry properties](editing-registry-properties.md)).
-- **[Bulk reclassify](bulk-reclassify.md)** — setting one registry property to one value
-  across a selection of entries in a single audited batch.
+- **[Bulk reclassify](bulk-reclassify.md)** — not available on the screen. The server route
+  remains for API callers.
 - **[Searching the audit log](searching-the-audit-log.md)** — finding who changed what and
   when, and exporting a filtered view. No other role can read the audit log.
 
@@ -74,8 +74,8 @@ the screens that have, a Reviewer's one capability is:
   not affect.
 
 A Reviewer can open the same entry-editing screen an Administrator uses, but every other
-action on it — saving a term, a code binding, or a registry property, and bulk
-reclassify — is refused. This is not a screen-level lock: every save is checked
+action on it — saving a term, a code binding, or a registry property — is
+refused. This is not a screen-level lock: every save is checked
 server-side against the `catalogue.edit_published` permission specifically, which the
 Reviewer role does not hold (PRD §4.5's own boundary between Reviewer and Administrator).
 Unlike the multi-factor step-up in [Signing in](signing-in.md#multi-factor-authentication),
