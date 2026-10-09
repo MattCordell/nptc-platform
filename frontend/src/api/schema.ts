@@ -113,10 +113,11 @@ export interface paths {
          *     mid-scan.
          *
          *     `filter.*` parameters are accepted here and behave exactly as they do on
-         *     `/catalogue/search`. Facets are **not** returned: computing counts on
-         *     every page of a browse costs something no caller has asked for, and
-         *     `GET /catalogue/search` is where the facet list with counts lives
-         *     (ADR-0032).
+         *     `/catalogue/search`. Facets are returned only when asked for with
+         *     `facets=true`: counting costs something a client paging through a browse
+         *     has no use for on every page, so a client asks once and reads the counts
+         *     for the whole filtered set, not the page (ADR-0032). `limit=1` makes that
+         *     one request cheap.
          */
         get: operations["list_entries_api_v1_catalogue_entries_get"];
         put?: never;
@@ -1707,21 +1708,24 @@ export interface components {
         };
         /**
          * EntryPage
-         * @description One page of `EntrySummary` rows, keyset-paginated on `business_key`.
+         * @description One page of `EntrySummary` rows, keyset-paginated on `business_key`,
+         *     served by the public `GET /catalogue/entries` (`PUBLIC_STATUSES` only).
+         *     `catalogue_admin.py` has its own `AdminEntryPage`.
          *
-         *     Served by both `catalogue.py`'s public `GET /catalogue/entries`
-         *     (`PUBLIC_STATUSES` only) and `catalogue_admin.py`'s
-         *     `GET /catalogue/admin/entries` (any status) - one shape, the same
-         *     reason `EntryDetail` is shared rather than duplicated. `next_cursor` is
-         *     `null` on the last page - which is the *only* reliable signal that
-         *     paging is finished. A client must not infer the end from a short page: a
-         *     page can be short and still have a successor.
+         *     `next_cursor` is `null` on the last page - which is the *only* reliable
+         *     signal that paging is finished. A client must not infer the end from a
+         *     short page: a page can be short and still have a successor.
          */
         EntryPage: {
             /** Items */
             items: components["schemas"]["EntrySummary"][];
             /** Next Cursor */
             next_cursor: string | null;
+            /**
+             * Facets
+             * @description `null` unless the request sent `facets=true`. Then the same facet list `GET /catalogue/search` returns, with counts over every published entry the `filter.*` parameters leave rather than over this page. A facet's own selection is excluded from its own counts.
+             */
+            facets?: components["schemas"]["Facet"][] | null;
         };
         /**
          * EntrySummary
@@ -1805,7 +1809,7 @@ export interface components {
             facetable: boolean;
             /**
              * Truncated
-             * @description `true` when this facet has more than 20 distinct values and only the most common were returned. There is no way to page through the remainder; narrow the search instead.
+             * @description `true` when this facet has more than 20 distinct values and only the most common were returned. There is no way to page through the remainder; narrow the search instead. Always `false` for `discipline` and `specimen`, which return every value.
              */
             truncated: boolean;
             /** Buckets */
@@ -2848,6 +2852,8 @@ export interface operations {
                 limit?: number;
                 /** @description The `next_cursor` from the previous page. Pass it back unmodified, and do not construct one. */
                 after?: string | null;
+                /** @description Send `true` to have the response carry `facets`: the facet list with counts, over every published entry the `filter.*` parameters leave. Omitted, no counts are computed. */
+                facets?: boolean;
                 /** @description Filter by a facet. The parameter name is the facet's `key` prefixed with `filter.` - `?filter.discipline=chemistry`. Repeat the parameter to select several values of one facet; they are OR-ed. Filters on different facets are AND-ed, so adding one always narrows the result. The facets available are not fixed: they are every property an administrator has marked filterable, plus the entry status, and `GET /catalogue/search` returns the current list with counts. An operator other than the default `equals` is named after the key, separated by `:` - `?filter.assay_name:prefix=glu`, or `?filter.volume_ml:range=1..5`. Which operators a facet accepts follows from the property's datatype; one it does not accept is a 422, never a silently ignored parameter. At most 50 distinct values are accepted in one facet's selection (repeated parameter or `:in` list alike); more than that is also a 422. NOTE for generated clients: `{property_key}` above is a placeholder, not a literal parameter name - OpenAPI has no syntax for a templated parameter name, so a generated client typically renders one field named literally `filter.{property_key}`. Sending that literal string is a 422 (`{property_key}` is not a filter this endpoint offers); a real filter parameter's name is built by hand, substituting an actual facet key (see ADR-0032). */
                 "filter.{property_key}"?: string[];
             };

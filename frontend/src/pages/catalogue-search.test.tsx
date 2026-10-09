@@ -81,20 +81,39 @@ const DISCIPLINE_FACET = {
   ],
 };
 
+const SPECIMEN_FACET = {
+  key: "specimen",
+  label: "Specimen",
+  facetable: true,
+  truncated: false,
+  buckets: [
+    { value: "serum", label: "Serum", count: 2 },
+    { value: "urine", label: "Urine", count: 1 },
+  ],
+};
+
+const STATUS_FACET = {
+  key: "status",
+  label: "Status",
+  facetable: true,
+  truncated: false,
+  buckets: [{ value: "active", label: "active", count: 2 }],
+};
+
+const ALL_FACETS = [STATUS_FACET, DISCIPLINE_FACET, SPECIMEN_FACET];
+
+/** The browse route answering both the results request and the `facets=true`
+ * request the filter controls make. */
+const ENTRIES_WITH_FACETS: Route = {
+  ...ENTRIES_OK,
+  body: { items: [BOUND_ROW, UNBOUND_ROW], next_cursor: null, facets: ALL_FACETS },
+};
+
 function searchPage(overrides: Record<string, unknown> = {}) {
   return {
     items: [{ ...BOUND_ROW, score: 0.9 }],
     next_cursor: null,
-    facets: [
-      {
-        key: "status",
-        label: "Status",
-        facetable: true,
-        truncated: false,
-        buckets: [{ value: "active", label: "active", count: 1 }],
-      },
-      DISCIPLINE_FACET,
-    ],
+    facets: ALL_FACETS,
     ...overrides,
   };
 }
@@ -150,21 +169,76 @@ function calledPath(
   return calls.filter((call) => call.path.endsWith(suffix));
 }
 
+function facetCalls(calls: ReturnType<typeof stubApi>): ReturnType<typeof stubApi> {
+  return calledPath(calls, "/catalogue/entries").filter(
+    (call) => call.searchParams.get("facets") === "true",
+  );
+}
+
 describe("CatalogueSearchPage", () => {
-  it("browses published entries with no query, and offers no facet controls", async () => {
-    const calls = stubApi([ENTRIES_OK, SEARCH_OK]);
+  it("browses published entries with no query, and offers Discipline and Specimen from the first load", async () => {
+    const calls = stubApi([ENTRIES_WITH_FACETS, SEARCH_OK]);
 
     await renderRoute("/catalogue");
 
     expect(await screen.findByRole("link", { name: "Ferritin" })).toBeInTheDocument();
-    expect(calledPath(calls, "/catalogue/entries").length).toBeGreaterThan(0);
+    expect(await screen.findByRole("combobox", { name: "Discipline" })).toBeVisible();
+    expect(screen.getByRole("combobox", { name: "Specimen" })).toBeVisible();
+    // Status is one bucket on the public surface, so it gets no control.
+    expect(screen.queryByRole("combobox", { name: "Status" })).not.toBeInTheDocument();
     expect(calledPath(calls, "/catalogue/search")).toHaveLength(0);
-    expect(screen.queryByRole("group", { name: "Discipline" })).not.toBeInTheDocument();
     expect(
-      screen.getByText(
-        "Search to filter the results by discipline and other properties.",
+      screen.queryByText(/Search to filter the results by discipline/),
+    ).not.toBeInTheDocument();
+    // The counts come from a request of their own, so a page turn leaves them be.
+    const asked = facetCalls(calls);
+    expect(asked.length).toBeGreaterThan(0);
+    expect(asked[0]?.searchParams.get("limit")).toBe("1");
+    expect(
+      calledPath(calls, "/catalogue/entries").some(
+        (call) =>
+          call.searchParams.get("limit") === "50" && !call.searchParams.has("facets"),
       ),
-    ).toBeInTheDocument();
+    ).toBe(true);
+  });
+
+  it("lists each option with its count, most common first, and narrows as the user types", async () => {
+    stubApi([ENTRIES_WITH_FACETS]);
+    const user = userEvent.setup();
+
+    await renderRoute("/catalogue");
+    const input = await screen.findByRole("combobox", { name: "Discipline" });
+    await user.click(input);
+
+    expect(
+      (await screen.findAllByRole("option")).map((option) => option.textContent),
+    ).toEqual(["Chemical pathology (2)", "Haematology (1)"]);
+
+    await user.type(input, "haem");
+    expect(await screen.findAllByRole("option")).toHaveLength(1);
+  });
+
+  it("keeps the search box and the results working when the options cannot be loaded", async () => {
+    stubApi([ENTRIES_OK], {
+      vary: (call) =>
+        call.path.endsWith("/catalogue/entries") &&
+        call.searchParams.get("facets") === "true"
+          ? { method: "GET", path: call.path, status: 500, body: {} }
+          : null,
+    });
+
+    await renderRoute("/catalogue");
+
+    expect(await screen.findByRole("link", { name: "Ferritin" })).toBeInTheDocument();
+    // Shown, and announced through the live region.
+    const note =
+      "Filters are unavailable just now. You can still search, and the results are not affected.";
+    expect(await screen.findByText(note, { selector: "p" })).toBeVisible();
+    await waitFor(() => expect(screen.getByRole("status")).toHaveTextContent(note));
+    expect(
+      screen.queryByRole("combobox", { name: "Discipline" }),
+    ).not.toBeInTheDocument();
+    expect(screen.getByLabelText("Search term or SNOMED CT code")).toBeEnabled();
   });
 
   it("has one h1 and links each row to its entry by business key", async () => {
@@ -268,16 +342,22 @@ describe("CatalogueSearchPage", () => {
     );
   });
 
-  it("shows facets with counts while searching, leaving out the single-bucket status facet", async () => {
-    stubApi([ENTRIES_OK, SEARCH_OK]);
+  it("offers the same comboboxes while searching, with counts over the search", async () => {
+    const calls = stubApi([ENTRIES_OK, SEARCH_OK]);
+    const user = userEvent.setup();
 
     await renderRoute("/catalogue?q=ferritin");
 
-    const group = await screen.findByRole("group", { name: "Discipline" });
+    await user.click(await screen.findByRole("combobox", { name: "Discipline" }));
     expect(
-      within(group).getByRole("button", { name: "Chemical pathology (2)" }),
+      await screen.findByRole("option", { name: "Chemical pathology (2)" }),
     ).toBeInTheDocument();
-    expect(screen.queryByRole("group", { name: "Status" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("combobox", { name: "Status" })).not.toBeInTheDocument();
+    expect(
+      calledPath(calls, "/catalogue/search").some(
+        (call) => call.searchParams.get("limit") === "1",
+      ),
+    ).toBe(true);
   });
 
   it("restores filters from a pasted URL and sends them to the API", async () => {
@@ -287,15 +367,24 @@ describe("CatalogueSearchPage", () => {
       "/catalogue?q=ferritin&filter.discipline=chem&filter.discipline=haem",
     );
 
-    const group = await screen.findByRole("group", { name: "Discipline" });
+    expect(await screen.findByRole("combobox", { name: "Discipline" })).toHaveAttribute(
+      "placeholder",
+      "2 selected",
+    );
+    // Labelled from the options, not the raw codes.
     expect(
-      within(group).getByRole("button", { name: /Chemical pathology/ }),
-    ).toHaveAttribute("aria-pressed", "true");
-    expect(
-      screen.getByRole("button", { name: "Remove filter Discipline: Haematology" }),
+      await screen.findByRole("button", {
+        name: "Remove filter Discipline: Haematology",
+      }),
     ).toBeInTheDocument();
-    const sent = calledPath(calls, "/catalogue/search").at(-1);
-    expect(sent?.searchParams.getAll("filter.discipline")).toEqual(["chem", "haem"]);
+    expect(
+      screen.getByRole("button", {
+        name: "Remove filter Discipline: Chemical pathology",
+      }),
+    ).toBeInTheDocument();
+    for (const call of calledPath(calls, "/catalogue/search")) {
+      expect(call.searchParams.getAll("filter.discipline")).toEqual(["chem", "haem"]);
+    }
   });
 
   it("drops the cursor when a filter is toggled", async () => {
@@ -305,9 +394,9 @@ describe("CatalogueSearchPage", () => {
     const { router } = await renderRoute(
       "/catalogue?q=ferritin&after=0.5%3Aabc%3ANPTC-000100",
     );
-    const group = await screen.findByRole("group", { name: "Discipline" });
+    await user.click(await screen.findByRole("combobox", { name: "Discipline" }));
 
-    await user.click(within(group).getByRole("button", { name: "Haematology (1)" }));
+    await user.click(await screen.findByRole("option", { name: "Haematology (1)" }));
 
     await waitFor(() =>
       expect(validatedSearch(router)).toEqual({
@@ -344,38 +433,103 @@ describe("CatalogueSearchPage", () => {
     await waitFor(() => expect(validatedSearch(router)).toEqual({ q: "" }));
   });
 
-  it("offers a many-valued facet as a dropdown that adds a filter", async () => {
-    const buckets = Array.from({ length: 10 }, (_, index) => ({
+  it("lists every value of a long facet, with no truncation note, and adds the one picked", async () => {
+    const buckets = Array.from({ length: 60 }, (_, index) => ({
       value: `v${index}`,
       label: `Value ${index}`,
-      count: 1,
+      count: 60 - index,
     }));
     stubApi([
       {
         ...SEARCH_OK,
-        body: searchPage({
-          facets: [{ ...DISCIPLINE_FACET, truncated: true, buckets }],
-        }),
+        body: searchPage({ facets: [{ ...SPECIMEN_FACET, buckets }] }),
       },
     ]);
     const user = userEvent.setup();
 
     const { router } = await renderRoute("/catalogue?q=ferritin");
-    const select = await screen.findByLabelText("Discipline");
+    await user.click(await screen.findByRole("combobox", { name: "Specimen" }));
 
-    expect(
-      screen.getByText(
-        "Discipline shows only its most common values. Narrow the search to see others.",
-      ),
-    ).toBeInTheDocument();
-    await user.selectOptions(select, "v3");
+    expect(await screen.findAllByRole("option")).toHaveLength(60);
+    expect(screen.queryByText(/most common values/)).not.toBeInTheDocument();
+    await user.click(screen.getByRole("option", { name: "Value 3 (57)" }));
 
     await waitFor(() =>
       expect(validatedSearch(router)).toEqual({
         q: "ferritin",
-        "filter.discipline": ["v3"],
+        "filter.specimen": ["v3"],
       }),
     );
+  });
+
+  it("shows a selected value the options no longer offer as a chip that can be removed", async () => {
+    stubApi([ENTRIES_WITH_FACETS]);
+    const user = userEvent.setup();
+
+    const { router } = await renderRoute("/catalogue?filter.specimen=retired_code");
+    await screen.findByRole("combobox", { name: "Specimen" });
+
+    await user.click(
+      screen.getByRole("button", { name: "Remove filter Specimen: retired_code" }),
+    );
+
+    await waitFor(() => expect(validatedSearch(router)).toEqual({ q: "" }));
+  });
+
+  it("stops at the limit of values the API accepts in one filter, and says why", async () => {
+    const buckets = Array.from({ length: 60 }, (_, index) => ({
+      value: `v${index}`,
+      label: `Value ${index}`,
+      count: 60 - index,
+    }));
+    stubApi([
+      {
+        ...ENTRIES_OK,
+        body: {
+          items: [BOUND_ROW],
+          next_cursor: null,
+          facets: [{ ...SPECIMEN_FACET, buckets }],
+        },
+      },
+    ]);
+    const user = userEvent.setup();
+    const chosen = Array.from({ length: 50 }, (_, index) => `v${index}`);
+    const query = chosen.map((value) => `filter.specimen=${value}`).join("&");
+
+    const { router } = await renderRoute(`/catalogue?${query}`);
+    await user.click(await screen.findByRole("combobox", { name: "Specimen" }));
+    await user.click(await screen.findByRole("option", { name: "Value 50 (10)" }));
+
+    expect(
+      await screen.findByText(
+        "You can choose at most 50 Specimen values. Remove one to choose another.",
+      ),
+    ).toBeVisible();
+    expect(validatedSearch(router)).toEqual({ q: "", "filter.specimen": chosen });
+  });
+
+  it("is operable by keyboard alone: type, arrow, Enter, Escape, then remove the chip", async () => {
+    stubApi([ENTRIES_WITH_FACETS]);
+    const user = userEvent.setup();
+
+    const { router } = await renderRoute("/catalogue");
+    const input = await screen.findByRole("combobox", { name: "Discipline" });
+    input.focus();
+    await user.keyboard("haem");
+    await user.keyboard("{ArrowDown}{Enter}");
+
+    await waitFor(() =>
+      expect(validatedSearch(router)).toEqual({ q: "", "filter.discipline": ["haem"] }),
+    );
+    await user.keyboard("{Escape}");
+    expect(input).toHaveAttribute("aria-expanded", "false");
+
+    const chip = await screen.findByRole("button", {
+      name: "Remove filter Discipline: Haematology",
+    });
+    chip.focus();
+    await user.keyboard("{Enter}");
+    await waitFor(() => expect(validatedSearch(router)).toEqual({ q: "" }));
   });
 
   it("shows an empty state with a way to clear the filters, and announces no results", async () => {
@@ -519,7 +673,6 @@ describe("CatalogueSearchPage", () => {
       expect(
         screen.queryByRole("link", { name: "Acid phosphatase" }),
       ).not.toBeInTheDocument();
-      expect(screen.queryByRole("group", { name: "Discipline" })).not.toBeInTheDocument();
       expect(screen.getByText("Loading catalogue entries…")).toBeInTheDocument();
     }
 
@@ -566,22 +719,23 @@ describe("CatalogueSearchPage", () => {
     });
 
     // The same query with a new filter is the one case worth keeping the
-    // previous page for: its facets are still the right ones, and the pill
-    // the user just pressed must stay mounted to keep focus.
-    it("but keeps the facets of the same query while a filter change loads", async () => {
+    // previous options for: the combobox the user just used must stay mounted
+    // to keep focus.
+    it("but keeps the combobox mounted and focused while a filter change loads", async () => {
       stubSearches();
       const held = holdableFetch();
       const user = userEvent.setup();
 
       await renderRoute("/catalogue?q=acid");
-      const group = await screen.findByRole("group", { name: "Discipline" });
+      const input = await screen.findByRole("combobox", { name: "Discipline" });
 
       held.hold((url) => url.searchParams.has("filter.discipline"));
-      const pill = within(group).getByRole("button", { name: "Haematology (1)" });
-      await user.click(pill);
+      await user.click(input);
+      await user.click(await screen.findByRole("option", { name: "Haematology (1)" }));
 
-      await waitFor(() => expect(pill).toHaveAttribute("aria-pressed", "true"));
-      expect(pill).toHaveFocus();
+      await waitFor(() => expect(input).toHaveAttribute("placeholder", "1 selected"));
+      expect(input).toBeInTheDocument();
+      expect(input).toHaveFocus();
       held.release();
     });
   });
@@ -631,6 +785,37 @@ describe("CatalogueSearchPage", () => {
         },
       });
     }
+
+    it("leaves the filter counts alone when the page turns", async () => {
+      const calls = stubApi([], {
+        vary: (call) => {
+          if (!call.path.endsWith("/catalogue/entries")) {
+            return null;
+          }
+          if (call.searchParams.get("facets") === "true") {
+            return {
+              method: "GET",
+              path: call.path,
+              status: 200,
+              body: { items: [], next_cursor: null, facets: ALL_FACETS },
+            };
+          }
+          const body = call.searchParams.get("after") === null ? PAGE_1 : PAGE_2;
+          return { method: "GET", path: call.path, status: 200, body };
+        },
+      });
+      const user = userEvent.setup();
+
+      await renderRoute("/catalogue");
+      await screen.findByRole("link", { name: "Ferritin" });
+      await screen.findByRole("combobox", { name: "Discipline" });
+      const before = facetCalls(calls).length;
+
+      await user.click(screen.getByRole("button", { name: "Next page" }));
+      await screen.findByRole("link", { name: "Full blood count" });
+
+      expect(facetCalls(calls)).toHaveLength(before);
+    });
 
     it("pages forward and back with the cursor, and says when the end is reached", async () => {
       stubTwoPages();
@@ -715,10 +900,11 @@ describe("CatalogueSearchPage", () => {
   });
 
   it("has no automated accessibility violations while browsing", async () => {
-    stubApi([ENTRIES_OK]);
+    stubApi([ENTRIES_WITH_FACETS]);
 
     const { container } = await renderRoute("/catalogue?filter.discipline=chem");
     await screen.findByRole("link", { name: "Ferritin" });
+    await screen.findByRole("combobox", { name: "Discipline" });
 
     await expectNoA11yViolations(container);
   });
@@ -729,7 +915,7 @@ describe("CatalogueSearchPage", () => {
     const { container } = await renderRoute(
       "/catalogue?q=ferritin&filter.discipline=chem",
     );
-    await screen.findByRole("group", { name: "Discipline" });
+    await screen.findByRole("combobox", { name: "Discipline" });
 
     await expectNoA11yViolations(container);
   });

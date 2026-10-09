@@ -2,18 +2,19 @@ import { Link, useNavigate, useSearch } from "@tanstack/react-router";
 import { useEffect, useMemo, useState } from "react";
 
 import { refusalDetail } from "../api/conflicts.ts";
-import { useCatalogueSearch, useEntriesList } from "../api/queries.ts";
+import {
+  useCatalogueFacets,
+  useCatalogueSearch,
+  useEntriesList,
+} from "../api/queries.ts";
 import type { components } from "../api/schema.ts";
 import { Button } from "../components/button.tsx";
 import { DataTable } from "../components/data-table.tsx";
 import { FilterBar } from "../components/filter-bar.tsx";
-import type {
-  ActiveFilter,
-  FilterDropdown,
-  FilterToggleGroup,
-} from "../components/filter-bar.tsx";
+import type { ActiveFilter } from "../components/filter-bar.tsx";
 import { FindingIndicator } from "../components/finding-indicator.tsx";
 import { LiveRegion } from "../components/live-region.tsx";
+import { MultiSelectCombobox } from "../components/multi-select-combobox.tsx";
 import { PageContainer } from "../components/page-container.tsx";
 import { PageHeader } from "../components/page-header.tsx";
 import { Pagination } from "../components/pagination.tsx";
@@ -30,10 +31,12 @@ import {
  * The public catalogue browse and search screen (FR-14..18, NFR-31).
  *
  * An empty `q` browses `GET /catalogue/entries`; a non-empty one searches
- * `GET /catalogue/search`. Only the search response carries facets, and an
- * anonymous caller cannot read the property registry, so the facet controls
- * appear only while searching. Filters already in the URL still apply while
- * browsing, and show as removable chips under their raw key and value.
+ * `GET /catalogue/search`. Discipline and Specimen are offered as comboboxes
+ * from the first load, browsing or searching. An anonymous caller cannot read
+ * the property registry, so their options come from a facets request
+ * (`useCatalogueFacets`) that is separate from the results request: paging
+ * changes the results and leaves the counts alone. Any other filter in the URL
+ * still applies and shows as a removable chip, with no control of its own.
  *
  * Paging is keyset (ADR-0024): no page number and no total exist, so the
  * screen never states one.
@@ -46,12 +49,18 @@ type Facet = components["schemas"]["Facet"];
 
 const PAGE_SIZE = 50;
 
-/** Facets with at most this many buckets render as toggle pills; more as a
- * dropdown, which would otherwise be a wall of buttons. */
-const MAX_TOGGLE_BUCKETS = 8;
+/** The facets with a combobox, in the order they appear. */
+const COMBOBOX_FACET_KEYS = ["discipline", "specimen"] as const;
+
+/** The API refuses a selection of more values than this in one filter
+ * (`FILTER_VALUE_CAP`, ADR-0032), so the comboboxes stop at it too. */
+const MAX_VALUES_PER_FILTER = 50;
 
 const STALE_DATA_WARNING =
   "The catalogue could not be refreshed just now, so these results may be out of date.";
+
+const FACETS_UNAVAILABLE =
+  "Filters are unavailable just now. You can still search, and the results are not affected.";
 
 const LOAD_FAILURE =
   "The catalogue could not be loaded. Try again in a moment, or change the search.";
@@ -62,58 +71,6 @@ function resultAnnouncement(count: number, hasNext: boolean): string {
   }
   const shown = `${count} result${count === 1 ? "" : "s"} on this page.`;
   return hasNext ? `${shown} More results are on the next page.` : shown;
-}
-
-/**
- * The facets worth a control. `status` is left out: the public surface serves
- * `active` entries only, so it is always one bucket. A facet that cannot be
- * grouped has no buckets to offer.
- */
-function offeredFacets(facets: readonly Facet[]): Facet[] {
-  return facets.filter(
-    (facet) => facet.key !== "status" && facet.facetable && facet.buckets.length > 0,
-  );
-}
-
-function facetControls(
-  facets: readonly Facet[],
-  selections: Record<string, string[]>,
-  onToggle: (facetKey: string, value: string) => void,
-): { toggleGroups: FilterToggleGroup[]; dropdowns: FilterDropdown[] } {
-  const toggleGroups: FilterToggleGroup[] = [];
-  const dropdowns: FilterDropdown[] = [];
-  for (const facet of facets) {
-    const selected = selections[facet.key] ?? [];
-    const options = facet.buckets.map((bucket) => ({
-      value: bucket.value,
-      label: bucket.label,
-      count: bucket.count,
-    }));
-    if (options.length <= MAX_TOGGLE_BUCKETS) {
-      toggleGroups.push({
-        label: facet.label,
-        options,
-        selected,
-        onToggle: (value) => onToggle(facet.key, value),
-      });
-    } else {
-      // Always reset to the placeholder: a pick adds a chip, and the chip row
-      // is where a selected value is shown and removed.
-      dropdowns.push({
-        id: `catalogue-facet-${facet.key}`,
-        label: facet.label,
-        options: options.filter((option) => !selected.includes(option.value)),
-        value: "",
-        placeholder: "Add a value",
-        onChange: (value) => {
-          if (value !== "") {
-            onToggle(facet.key, value);
-          }
-        },
-      });
-    }
-  }
-  return { toggleGroups, dropdowns };
 }
 
 function emptyStateText(
@@ -172,13 +129,25 @@ export function CatalogueSearchPage() {
   }
   const data =
     active.isPlaceholderData && freshPopulation !== population ? undefined : active.data;
-  const searchData =
-    mode === "search" && data !== undefined ? searchQuery.data : undefined;
 
   const items: Row[] = data?.items ?? [];
   const nextCursor = data?.next_cursor ?? null;
-  const facets = useMemo(() => offeredFacets(searchData?.facets ?? []), [searchData]);
-  const truncatedFacets = facets.filter((facet) => facet.truncated);
+
+  const facetsQuery = useCatalogueFacets({ q: search.q, filters });
+  const facets: readonly Facet[] = useMemo(
+    () => facetsQuery.data ?? [],
+    [facetsQuery.data],
+  );
+  const comboboxFacets = useMemo(
+    () =>
+      COMBOBOX_FACET_KEYS.flatMap((key) => {
+        const facet = facets.find((candidate) => candidate.key === key);
+        return facet !== undefined && facet.facetable && facet.buckets.length > 0
+          ? [facet]
+          : [];
+      }),
+    [facets],
+  );
 
   // The draft mirrors `search.q`, so Back, Forward or a pasted link shows its
   // query in the box, yet stays editable between keystrokes.
@@ -210,14 +179,14 @@ export function CatalogueSearchPage() {
 
   const labelsByFacet = useMemo(() => {
     const map = new Map<string, { label: string; values: Map<string, string> }>();
-    for (const facet of searchData?.facets ?? []) {
+    for (const facet of facets) {
       map.set(facet.key, {
         label: facet.label,
         values: new Map(facet.buckets.map((bucket) => [bucket.value, bucket.label])),
       });
     }
     return map;
-  }, [searchData]);
+  }, [facets]);
 
   // The chip key only has to be unique; removal maps it back through
   // `filterByChipKey`, not by parsing it.
@@ -307,7 +276,15 @@ export function CatalogueSearchPage() {
     }
   }, [hardFailure, hardFailureMessage, announce]);
 
-  const { toggleGroups, dropdowns } = facetControls(facets, filters, handleFilterToggle);
+  // A refused filter fails both requests, and the results failure is the one
+  // to say, so the filters note is only for a failure of its own.
+  const facetsFailed =
+    facetsQuery.isError && facetsQuery.data === undefined && !hardFailure;
+  useEffect(() => {
+    if (facetsFailed) {
+      announce(FACETS_UNAVAILABLE);
+    }
+  }, [facetsFailed, announce]);
 
   const emptyState = (
     <div className="flex flex-col items-start gap-2">
@@ -342,29 +319,44 @@ export function CatalogueSearchPage() {
           onSubmit={handleSearchSubmit}
         />
 
-        {mode === "browse" ? (
+        {comboboxFacets.length > 0 ? (
+          <div className="flex flex-wrap items-start gap-4">
+            {comboboxFacets.map((facet) => (
+              <MultiSelectCombobox
+                key={facet.key}
+                id={`catalogue-facet-${facet.key}`}
+                label={facet.label}
+                options={facet.buckets.map((bucket) => ({
+                  value: bucket.value,
+                  label: bucket.label,
+                  count: bucket.count,
+                }))}
+                selected={filters[facet.key] ?? []}
+                onToggle={(value) => handleFilterToggle(facet.key, value)}
+                maxSelected={MAX_VALUES_PER_FILTER}
+              />
+            ))}
+          </div>
+        ) : null}
+
+        {facetsFailed ? (
           <p className="m-0 text-sm text-[var(--color-text-muted)]">
-            Search to filter the results by discipline and other properties.
+            {FACETS_UNAVAILABLE}
           </p>
+        ) : null}
+
+        {facetsQuery.isPending ? (
+          <p className="m-0 text-sm text-[var(--color-text-muted)]">Loading filters…</p>
         ) : null}
 
         {/* Outside the `data` gate: removing a filter is the way out
             of a refused request, so it stays reachable on failure. */}
         <FilterBar
           aria-label="Filters"
-          toggleGroups={toggleGroups}
-          dropdowns={dropdowns}
           activeFilters={chips}
           onRemove={handleChipRemove}
           onClearAll={handleClearAllFilters}
         />
-
-        {truncatedFacets.map((facet) => (
-          <p key={facet.key} className="m-0 text-sm text-[var(--color-text-muted)]">
-            {facet.label} shows only its most common values. Narrow the search to see
-            others.
-          </p>
-        ))}
 
         {(active.isPending || active.isPlaceholderData) && (
           <p className="m-0">Loading catalogue entries…</p>

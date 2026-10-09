@@ -224,6 +224,57 @@ export function useCatalogueSearch(params: CatalogueSearchParams) {
   });
 }
 
+export interface CatalogueFacetsParams {
+  /** Blank browses `GET /catalogue/entries?facets=true`; anything else
+   * searches `GET /catalogue/search`, as the results request does. */
+  q: string;
+  filters?: Record<string, string[]>;
+}
+
+/**
+ * The facet list with counts for the catalogue screen's filter controls, over
+ * the whole filtered result set (FR-16).
+ *
+ * A request of its own, with `limit=1`, instead of reading `facets` off the
+ * results request: the results request changes with every page (`after`),
+ * and refetching counts for each page turn is work and a flicker the controls
+ * do not need. The key holds `q` and the filters only, so paging reuses the
+ * counts. The previous counts stay on screen while new ones load, so a combobox
+ * a keyboard user is typing in is not unmounted mid-keystroke.
+ */
+export function useCatalogueFacets({ q, filters = {} }: CatalogueFacetsParams) {
+  const client = useApiClient();
+  const searching = q.trim().length > 0;
+  const filterParams = filterQueryParams(filters);
+  const entriesQuery = { limit: 1, facets: true, ...filterParams };
+  const searchQuery = { q, limit: 1, ...filterParams };
+  return useQuery({
+    // The trailing "facets" keeps this entry apart from a results request that
+    // happens to send the same query, since this one caches the facet list and
+    // that one a page.
+    queryKey: searching
+      ? ["api", "/api/v1/catalogue/search", searchQuery, "facets"]
+      : ["api", "/api/v1/catalogue/entries", entriesQuery, "facets"],
+    placeholderData: keepPreviousData,
+    queryFn: async ({ signal }) => {
+      const page = searching
+        ? unwrap(
+            await client.GET("/api/v1/catalogue/search", {
+              params: { query: searchQuery as unknown as PublicSearchQuery },
+              signal,
+            }),
+          )
+        : unwrap(
+            await client.GET("/api/v1/catalogue/entries", {
+              params: { query: entriesQuery as unknown as PublicEntriesQuery },
+              signal,
+            }),
+          );
+      return page.facets ?? [];
+    },
+  });
+}
+
 export function useEntryDetail(businessKey: string) {
   const client = useApiClient();
   return useQuery({
