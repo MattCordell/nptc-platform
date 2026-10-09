@@ -763,6 +763,28 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/terminology/procedures": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Search active SNOMED CT procedures by term or code
+         * @description The SNOMED CT code picker's term search (FR-26), scoped to active descendants of
+         *     `71388002 |Procedure|` (the root itself is excluded). One `$expand`, in the AU edition
+         *     with AU preferred terms. The scope is not a parameter.
+         */
+        get: operations["search_procedure_concepts_api_v1_terminology_procedures_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/audit/events": {
         parameters: {
             query?: never;
@@ -866,9 +888,9 @@ export interface components {
         };
         /**
          * AdminEntrySummary
-         * @description `EntryCore` plus FR-38's optimistic-locking token. It carries neither `fsn` nor
-         *     `specimens`, which are the public list's: a stored FSN FR-83 cannot strip fails the
-         *     public list, and must not also hide an entry from the screen that repairs it.
+         * @description `EntrySummary` plus FR-38's optimistic-locking token. Its `fsn` is tolerant: a stored
+         *     FSN FR-83 cannot strip fails the public list, but must not also hide an entry from the
+         *     screen that repairs it (`tolerant_entry_summary_fields`).
          *
          *     Defined here, not in `catalogue_shared.py`: that module is imported by
          *     the public router, and a field the public surface must never carry
@@ -878,8 +900,8 @@ export interface components {
          *     hygiene.py` asserts the public listing/search routes still omit it.
          *
          *     The bulk reclassify route (FR-39) locks on `(business_key,
-         *     expected_row_version)`; this is what lets its selection surface read a
-         *     `row_version` per row instead of re-reading the entry once selected.
+         *     expected_row_version)`; this is what lets a row carry a `row_version`
+         *     instead of re-reading the entry once opened.
          */
         AdminEntrySummary: {
             /** Business Key */
@@ -911,6 +933,16 @@ export interface components {
             label_provenance: {
                 [key: string]: components["schemas"]["LabelProvenance"];
             };
+            /**
+             * Fsn
+             * @description The fully specified name of the entry's active SNOMED CT code with its trailing semantic tag removed (FR-83). `null` in two cases: the entry has no active code (`code` is then `null` too), or its stored FSN cannot be stripped (`code` is set). `bindings[].fsn` on the detail keeps the tag.
+             */
+            fsn: string | null;
+            /**
+             * Specimens
+             * @description The display text of each of the entry's specimen values, in recorded order, with a trailing specimen word removed and repeats dropped. Falls back to the code where a value carries no display. Empty when none is recorded.
+             */
+            specimens: string[];
             /** Row Version */
             row_version: number;
         };
@@ -949,6 +981,16 @@ export interface components {
             label_provenance: {
                 [key: string]: components["schemas"]["LabelProvenance"];
             };
+            /**
+             * Fsn
+             * @description The fully specified name of the entry's active SNOMED CT code with its trailing semantic tag removed (FR-83). `null` in two cases: the entry has no active code (`code` is then `null` too), or its stored FSN cannot be stripped (`code` is set). `bindings[].fsn` on the detail keeps the tag.
+             */
+            fsn: string | null;
+            /**
+             * Specimens
+             * @description The display text of each of the entry's specimen values, in recorded order, with a trailing specimen word removed and repeats dropped. Falls back to the code where a value carries no display. Empty when none is recorded.
+             */
+            specimens: string[];
             /** Row Version */
             row_version: number;
             /**
@@ -2013,6 +2055,30 @@ export interface components {
             reason: string;
             /** Expected Row Version */
             expected_row_version: number;
+        };
+        /** ProcedureMatch */
+        ProcedureMatch: {
+            /** Code */
+            code: string;
+            /** Au Preferred Term */
+            au_preferred_term: string | null;
+        };
+        /**
+         * ProcedureSearchPage
+         * @description The concepts under `71388002 |Procedure|` that match `q`, most relevant first as the
+         *     terminology server orders them. `items` is empty when nothing matches: that is an answer,
+         *     not a failure. A server that cannot answer is a 503, never an empty page (FR-54).
+         *     `total` counts every match, so it can exceed `len(items)`.
+         */
+        ProcedureSearchPage: {
+            /** Items */
+            items: components["schemas"]["ProcedureMatch"][];
+            /** Total */
+            total: number;
+            /** Label Provenance */
+            label_provenance: {
+                [key: string]: components["schemas"]["LabelProvenance"];
+            };
         };
         /**
          * PropertyCardinality
@@ -5272,6 +5338,95 @@ export interface operations {
                 };
             };
             /** @description The code is not a well-formed SNOMED CT identifier - a format or Verhoeff check-digit failure. No request reaches the terminology server for this case. */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description An address exceeded its request budget (FR-22): an anonymous caller its anonymous budget, or a caller whose credentials the API kept rejecting its budget for rejected credentials. Wait for the number of seconds in `Retry-After`, then try again. A valid credential is never counted. The body's `bulk_artefacts` names where to fetch the whole catalogue instead. */
+            429: {
+                headers: {
+                    /** @description Whole seconds until the caller's request budget is available again. */
+                    "Retry-After"?: number;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RateLimitedResponse"];
+                };
+            };
+            /** @description The service is misconfigured, not a caller mistake - a malformed `NPTC_TX_*` value. Not produced by anything a well-formed request can trigger on its own; retrying will not clear it. */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The terminology server's response could not be used - an unparseable body, the wrong resource type, or a 4xx that was not itself an answer to "does this code exist". Names no URL, variable or upstream host. */
+            502: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The terminology server could not be reached, or a rate limit persisted through retries - the code field's live assist degrades; nothing else about the entry is affected (FR-54). May carry a `Retry-After` header. */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    search_procedure_concepts_api_v1_terminology_procedures_get: {
+        parameters: {
+            query: {
+                /** @description A term, or a SNOMED CT code of 6 to 18 digits. The terminology server decides how a term matches: Ontoserver matches word prefixes. A code returns that concept only if it is a procedure, and nothing if it is not or fails its check digit. */
+                q: string;
+                count?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProcedureSearchPage"];
+                };
+            };
+            /** @description No credential, or one that could not be verified. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The caller is authenticated but does not hold `registry.read`. */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description `q` is missing or blank, or `count` is outside its range. */
             422: {
                 headers: {
                     [name: string]: unknown;
