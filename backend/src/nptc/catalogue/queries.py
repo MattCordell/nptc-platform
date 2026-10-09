@@ -41,7 +41,7 @@ of words, not a filter, and FR-16 asks for counts by name. It is bounded, to
 it reads one property's rows through that property's index rather than the whole
 table; `test_db_property_index_plan.py` `EXPLAIN`s the plan, and ADR-0032 records
 which parts of the query the index serves. `list_entries` below runs no count of
-any kind: it accepts filters and returns no facets. A browse that wants them asks
+any kind: it accepts filters and returns no facets. A browse that wants them calls
 `browse_facets`, a separate statement.
 """
 

@@ -1,4 +1,4 @@
-# ADR-0032: The faceted-filter query surface — dotted repeated parameters, a fixed bucket cap, and facets on search only
+# ADR-0032: The faceted-filter query surface — dotted repeated parameters, a bucket cap, and facets on search, or on browse when asked
 
 **Status:** Accepted
 **Date:** 2026-09-07
@@ -97,16 +97,43 @@ page through the remainder: facet-value paging is a second pagination scheme on 
 that already has one, and the useful answer to "there are more than twenty values" is to
 narrow the search, not to scroll.
 
-### `/catalogue/search` returns facets; `/catalogue/entries` accepts filters and returns none
+**Amended (issue #524): `discipline` and `specimen` are exempt.** The catalogue page offers
+these two as type-to-narrow comboboxes before the visitor has searched, and a bucket cut
+from a combobox is a filter the visitor cannot reach and cannot find by typing. Both are
+bounded by the vocabulary the property admits (a few dozen disciplines, a few hundred
+specimens), not by how much data the catalogue holds, so the unbounded-response concern above
+does not apply to them. `nptc.catalogue.facets.UNCAPPED_FACET_KEYS` names them, and
+`build_facet_count_statement` and `compute_facets` skip the `LIMIT` and the slice for those
+keys, reporting `truncated: false`. The exemption holds wherever `compute_facets` runs:
+`/catalogue/search`, the browse route, and the admin routes, because the page asks search for
+its options once a term is typed and one rule is easier to reason about than two. It is by
+key and not a registry flag because it describes how one screen uses a facet, and no
+requirement asks for an administrator to edit it. If another facet is ever offered as a
+combobox, it is added to that set, with the vocabulary-size argument made for it.
+
+A visitor who selects many values meets a different limit: `FILTER_VALUE_CAP` (50) refuses a
+larger selection with a 422. The comboboxes stop at that number and say why, so the 422 is
+unreachable from the screen.
+
+### `/catalogue/search` returns facets; `/catalogue/entries` accepts filters and returns facets only when asked
 
 Both endpoints take the identical `filter.*` parameters, composed by the identical
-builder. Only the search response carries a `facets` array.
+builder. The search response always carries a `facets` array. The browse response carries
+one only for `facets=true`, and `null` otherwise.
 
-Returning facets from both would be more consistent, and computing counts on every page of
-a browse is a cost nobody has asked for: a browse is a caller walking the catalogue in
-`business_key` order, and the facet panel belongs to the search screen. Adding facets to
-`/catalogue/entries` later is an additive change to that response; removing them would not
-be, which is the asymmetry that makes starting narrow the cheaper mistake.
+Returning facets from both always would be more consistent, and computing counts on every
+page of a browse is a cost nobody has asked for: a browse is a caller walking the catalogue
+in `business_key` order. This decision started narrow for that reason: adding facets to
+`/catalogue/entries` later is additive, and removing them would not be.
+
+**Amended (issue #524): browse returns facets when asked.** The catalogue page now offers
+Discipline and Specimen before any search, and an anonymous caller cannot read the property
+registry (ADR-0028), so the facet list is the only source of the options. The opt-in
+parameter keeps every existing caller's response and cost unchanged. The page sends it once,
+with `limit=1`, in a request of its own, so turning a page does not recompute counts that
+paging cannot change. In search mode the results request already carries facets and the page
+asks again with `limit=1`, which computes them twice. That doubling is accepted for a simple
+paging model, and is the thing to revisit if a measurement shows it matters.
 
 The two cursors also differ, and deliberately. A search cursor carries a relevance score,
 so it is bound to the filter set as well as to `q` — narrowing the filters changes which
@@ -344,7 +371,8 @@ by hand.
 | Generating the parameter from a typed FastAPI signature | Impossible by construction: the parameter name depends on registry state, so a typed signature could only ever name the facets that existed when the file was written — the hard-coded list FR-16 exists to prevent. |
 | No bucket cap | One unauthenticated request over a `string` property with thousands of distinct values returns thousands of buckets. |
 | Paging through facet values | A second pagination scheme on an endpoint that already has one, for a case whose real answer is "narrow the search". |
-| Facets on `/catalogue/entries` too | Counts on every page of a browse, for a screen with no facet panel. Additive to add later; not additive to remove. |
+| Facets on every `/catalogue/entries` response | Counts on every page of a browse, for callers that page and never read them. Replaced by an opt-in `facets=true` (issue #524), which was additive to add, as predicted here. |
+| Reading the options from the results request instead of a facets request | The results request changes with every page, so each page turn would recompute counts and could remount a combobox a keyboard user is in. |
 | Grouping coded facets on `(system, code)` | One value set per property makes the code unambiguous, and a compound bucket value would need escaping and parsing to be sent back as a filter. |
 | Resolving facet labels through the terminology server | A `$lookup` per bucket on the search path — slow on the happy path, broken when the server is unreachable, and precisely the coupling FR-54 forbids. |
 | A join instead of `EXISTS`/`COUNT(DISTINCT ...)` | Counts a multi-valued entry once per stored value. Passes every functional test that does not specifically look for it. |

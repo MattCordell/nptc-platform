@@ -108,23 +108,18 @@ __all__ = [
     "parse_filters",
 ]
 
-#: The system properties `nptc.db.bootstrap` seeds, which the catalogue page offers
-#: as filters and which a row shows (`nptc.catalogue.queries.row_facts`).
+#: The system properties `nptc.db.bootstrap` seeds.
 DISCIPLINE_PROPERTY_KEY: Final = "discipline"
 SPECIMEN_PROPERTY_KEY: Final = "specimen"
 
 #: At most this many buckets per facet, by count descending. An invented number,
 #: argued in ADR-0032. `Facet.truncated` says when it bit, so a client is never
-#: shown a partial list it cannot tell from a whole one. `UNCAPPED_FACET_KEYS`
-#: are exempt.
+#: shown a partial list it cannot tell from a whole one.
 FACET_BUCKET_CAP: Final[int] = 20
 
-#: The facets that list every bucket, with no cap and `truncated` always `False`.
-#: The catalogue page offers these two as type-to-narrow comboboxes, where a bucket
-#: left off the list is a filter a visitor cannot reach (FR-16). Named by key, not
-#: a registry flag, because it describes how the catalogue page uses a facet and
-#: no new requirement asks for it to be editable. The set is bounded by the
-#: vocabulary the property admits, not by data volume (ADR-0032).
+#: Facets that list every bucket and never report `truncated`: a value cut from a
+#: type-to-narrow combobox is a filter nobody can reach (FR-16). By key, not a
+#: registry flag, because it describes one screen's use of a facet (ADR-0032).
 UNCAPPED_FACET_KEYS: Final[frozenset[str]] = frozenset(
     {DISCIPLINE_PROPERTY_KEY, SPECIMEN_PROPERTY_KEY}
 )
@@ -741,8 +736,7 @@ def build_facet_count_statement(
     )
     if descriptor.key in UNCAPPED_FACET_KEYS:
         return statement
-    # One more than the cap, as every keyset page asks for one more row than
-    # it serves: its existence answers "was this truncated".
+    # One more than the cap: its existence answers "was this truncated".
     return statement.limit(FACET_BUCKET_CAP + 1)
 
 

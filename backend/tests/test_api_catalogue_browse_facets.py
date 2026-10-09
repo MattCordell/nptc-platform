@@ -6,7 +6,7 @@ whole filtered catalogue, and those two facets are never cut at `FACET_BUCKET_CA
 
 Every value here carries a per-test token, and every assertion is about the buckets this test
 created: the Postgres container is shared, so the response also holds whatever else the
-database contains (CLAUDE.md, issue #190).
+database contains.
 """
 
 from __future__ import annotations

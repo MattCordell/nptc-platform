@@ -319,7 +319,20 @@ the value, the selection and the cursor, usually in the URL.
   filters" button. Each option takes an optional result count (FR-16), shown in the name
   as "Label (n)". A pressed toggle adds a check mark and a heavier weight, so the state
   never rests on colour alone. Each part renders only when given something, so a screen
-  with its own facet panel can use the chip row alone, as the admin list does.
+  with its own facet panel can use the chip row alone, as the admin list does and as the
+  public catalogue page does beside its two comboboxes.
+- **`multi-select-combobox.tsx` — `MultiSelectCombobox`.** A labelled, type-to-narrow
+  combobox that picks several values, built on Base UI's `Combobox` (the trial passed under
+  jsdom and axe; Headless UI and React Aria Components were not tried). It lists every option
+  as "Label (n)", narrows the list in the browser as the user types, and stays open after a
+  pick so several values come from one query. A selected option carries a check mark as well
+  as its fill (NFR-31). It holds no selection and draws no chips: the caller owns `selected`
+  and is told each change through `onToggle`, and shows the selection with `FilterBar`'s chip
+  row. A selected value missing from `options` stays selected. At `maxSelected` it refuses a
+  further pick with a message inside the popup, because Base UI marks everything outside the
+  popup inert while it is open, so a live region outside would not be read. For the same
+  reason it names the input with `aria-label`, since the visible label is hidden from
+  assistive technology while the popup is open.
 - **`pagination.tsx` — `Pagination`.** Previous and Next for keyset paging: no page
   numbers and no total, because the API returns neither (ADR-0024). It takes `hasNext`,
   `onNext` and an optional `onPrevious`, and names no URL parameter, so a screen paging by

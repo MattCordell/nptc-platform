@@ -227,9 +227,11 @@ property's own handler, not from a list in the router.
 [ADR-0032](../adr/0032-faceted-filter-query-surface.md) records why the dotted prefix, why
 the repeated form, and what was rejected.
 
-**Both collection endpoints accept filters; only `/catalogue/search` returns facets.**
-Computing counts on every page of a browse is a cost nobody has asked for, and adding them
-later is additive while removing them would not be (ADR-0032).
+**Both collection endpoints accept filters; `/catalogue/search` always returns facets, and
+`/catalogue/entries` returns them only for `facets=true`.**
+Computing counts on every page of a browse is a cost a paging client has no use for, so it
+is opt-in. The catalogue page asks once, with `limit=1`, in a request of its own, because it
+cannot read the property registry to learn its filter options (ADR-0032).
 
 **Counts.** A bucket's count is the number of entries in the whole result set carrying
 that value — not the number on this page. Two properties of it are worth stating because
@@ -248,6 +250,10 @@ neither is obvious and both are asserted as tests:
 says `truncated: true` when the cap bit. There is no way to page through the remainder;
 narrow the search instead. The number is invented, in the same category as the similarity
 threshold above, and is named once in code (`FACET_BUCKET_CAP`) and argued in ADR-0032.
+The two facets the catalogue page offers as comboboxes, `discipline` and `specimen`
+(`UNCAPPED_FACET_KEYS`), are exempt: they list every bucket and never report `truncated`,
+on every route that computes facets, because a value left off the list is a filter a
+visitor cannot reach. Their size is bounded by the vocabulary the property admits.
 
 **One statement computes every facet's counts, not one per facet** (issue #275).
 `build_facet_counts_statement` unions each facetable descriptor's own bucket aggregation —
@@ -304,6 +310,8 @@ total whatever the filters are.
 | The threshold reverts when the transaction ends | `test_db_search_index.py` |
 | No search SQL is built by string concatenation (NFR-22) | `test_sql_parameterisation.py` |
 | A facet count equals the rows that bucket returns, per bucket | `test_api_public_search.py` |
+| Browse returns facets only for `facets=true`, over the active catalogue and the filters | `test_api_catalogue_browse_facets.py` |
+| `discipline` and `specimen` list every bucket on browse and search; another facet still truncates | `test_api_catalogue_browse_facets.py` |
 | An entry with seven specimens counts once under each of them | `test_api_public_search.py` |
 | Flipping `filterable` adds a facet with no restart | `test_api_public_search.py` |
 | An unknown, non-filterable, badly-operated or badly-valued filter is refused | `test_api_public_search.py`, `test_catalogue_facets.py` |
