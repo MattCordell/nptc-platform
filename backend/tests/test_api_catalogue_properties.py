@@ -696,7 +696,7 @@ def test_save_property_values_authenticated_without_permission_is_403(api: ApiTe
 @pytest.mark.req("FR-44")
 @pytest.mark.integration
 def test_save_property_values_by_a_reviewer_is_403_and_changes_nothing(api: ApiTestApp) -> None:
-    """The entry edit form (#526) saves a property with this route. A Reviewer holds no
+    """The entry edit form saves a property with this route. A Reviewer holds no
     `catalogue.edit_published`. The token carries MFA, so the 403 is the missing permission and
     not a step-up challenge."""
     admin_token = api.admin_token(subject="sub-save-reviewer-setup")
@@ -735,7 +735,7 @@ def test_a_property_save_appears_in_the_entry_history_and_the_audit_log(
 ) -> None:
     """The edit form's property fields: the changelog note reaches the public entry history
     (FR-19) and the audit log's own search (NFR-12), for a single-valued and a multi-valued
-    property. Scoped to this entry's own events (issue #190)."""
+    property. Scoped to this entry's own events."""
     token = api.admin_token(subject=f"sub-audit-visible-{cardinality}")
     key = _unique_key("audit_visible")
     _create_string_property(api, token, key=key, cardinality=cardinality)

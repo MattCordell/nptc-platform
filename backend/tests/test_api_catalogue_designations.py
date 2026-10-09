@@ -905,7 +905,7 @@ def test_amending_the_entrys_own_preferred_term_saves_the_entry(api: ApiTestApp)
 @pytest.mark.req("FR-44")
 @pytest.mark.integration
 def test_a_reviewer_is_refused_the_preferred_term_amendment(api: ApiTestApp) -> None:
-    """The edit form (#526) saves RCPA Preferred with this route. A Reviewer holds no
+    """The entry edit form saves RCPA Preferred with this route. A Reviewer holds no
     `catalogue.edit_published`. The token carries MFA, so the 403 is the missing permission and
     not a step-up challenge."""
     business_key = _seed_entry(api, preferred_term="Full blood count")
@@ -936,7 +936,7 @@ def test_a_preferred_term_change_appears_in_the_entry_history_and_the_audit_log(
     api: ApiTestApp,
 ) -> None:
     """The changelog note of an RCPA Preferred save reaches the public entry history (FR-19)
-    and the audit log's own search (NFR-12). Scoped to this entry's own events (issue #190)."""
+    and the audit log's own search (NFR-12). Scoped to this entry's own events."""
     business_key = _seed_entry(api, preferred_term="Full blood count", status="active")
     token = api.admin_token(subject="sub-pt-audit-visible")
     reason = "Reword the preferred term to match the current SPIA edition."
