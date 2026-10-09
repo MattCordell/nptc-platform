@@ -902,6 +902,68 @@ def test_amending_the_entrys_own_preferred_term_saves_the_entry(api: ApiTestApp)
     assert _audit_event_count(api) == before + 1
 
 
+@pytest.mark.req("FR-44")
+@pytest.mark.integration
+def test_a_reviewer_is_refused_the_preferred_term_amendment(api: ApiTestApp) -> None:
+    """The edit form (#526) saves RCPA Preferred with this route. A Reviewer holds no
+    `catalogue.edit_published`. The token carries MFA, so the 403 is the missing permission and
+    not a step-up challenge."""
+    business_key = _seed_entry(api, preferred_term="Full blood count")
+    token = api.token_for_role(subject="sub-pt-reviewer", role=Role.REVIEWER, replace_roles=True)
+    version = _stored_row_version(api, business_key)
+    audit_before = _audit_event_count(api)
+
+    response = _amend(
+        api,
+        business_key,
+        token,
+        target="preferred_term",
+        expected_row_version=version,
+    )
+
+    assert response.status_code == 403, response.text
+    assert "WWW-Authenticate" not in response.headers
+    assert _stored_row_version(api, business_key) == version
+    assert _audit_event_count(api) == audit_before
+
+
+@pytest.mark.req("FR-19")
+@pytest.mark.req("FR-37")
+@pytest.mark.req("NFR-08")
+@pytest.mark.req("NFR-12")
+@pytest.mark.integration
+def test_a_preferred_term_change_appears_in_the_entry_history_and_the_audit_log(
+    api: ApiTestApp,
+) -> None:
+    """The changelog note of an RCPA Preferred save reaches the public entry history (FR-19)
+    and the audit log's own search (NFR-12). Scoped to this entry's own events (issue #190)."""
+    business_key = _seed_entry(api, preferred_term="Full blood count", status="active")
+    token = api.admin_token(subject="sub-pt-audit-visible")
+    reason = "Reword the preferred term to match the current SPIA edition."
+
+    response = _amend(
+        api,
+        business_key,
+        token,
+        target="preferred_term",
+        reason=reason,
+        expected_row_version=_stored_row_version(api, business_key),
+    )
+
+    assert response.status_code == 200, response.text
+    history = api.get(f"/catalogue/entries/{business_key}/history", token=token).json()
+    assert reason in [item["note"] for item in history["items"]]
+    audit = api.get(
+        "/audit/events",
+        token=token,
+        params={
+            "entity_type": CatalogueEntry.__tablename__,
+            "entity_id": str(_entry_id(api, business_key)),
+        },
+    ).json()
+    assert reason in [item["reason"] for item in audit["items"]]
+
+
 @pytest.mark.req("FR-85")
 @pytest.mark.integration
 def test_amending_the_preferred_term_republishes_its_computed_length(api: ApiTestApp) -> None:
