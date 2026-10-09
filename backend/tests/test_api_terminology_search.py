@@ -19,6 +19,9 @@ from sqlalchemy.engine import Connection
 from nptc.auth.permissions import Role
 from nptc_shared.terminology import (
     AU_LANGUAGE_TAG,
+    SNOMED_SYSTEM,
+    ExpandedConcept,
+    Expansion,
     Operation,
     StubConcept,
     TerminologyConfigError,
@@ -163,6 +166,42 @@ def test_search_with_no_match_is_an_empty_200_not_an_error(api: ApiTestApp) -> N
     assert response.status_code == 200, response.text
     assert response.json()["items"] == []
     assert response.json()["total"] == 0
+
+
+@pytest.mark.req("FR-26")
+@pytest.mark.integration
+def test_search_total_is_the_servers_count_and_can_exceed_the_page(api: ApiTestApp) -> None:
+    _seed_procedures(api)
+
+    response = _search(api, _editor_token(api, "sub-search-total"), "c", count=1)
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert len(body["items"]) == 1
+    assert body["total"] == 2
+
+
+@pytest.mark.req("FR-26")
+@pytest.mark.integration
+def test_search_total_is_null_when_the_server_reports_no_count(api: ApiTestApp) -> None:
+    """A full page must not read as "no more results" when the server gave no count."""
+    api.terminology.seed_expansion(
+        _SEARCH_ECL,
+        Expansion(
+            concepts=(
+                ExpandedConcept(code=_MICROSCOPY, system=SNOMED_SYSTEM, display=_AU_PREFERRED_TERM),
+            ),
+            total=None,
+        ),
+        filter="micro",
+    )
+
+    response = _search(api, _editor_token(api, "sub-search-total-null"), "micro", count=1)
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert len(body["items"]) == 1
+    assert body["total"] is None
 
 
 @pytest.mark.req("FR-26")

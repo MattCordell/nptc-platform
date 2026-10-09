@@ -258,7 +258,9 @@ half of the SNOMED CT code picker on the admin edit form. It sits beside the `$l
 above, under the same `Permission.REGISTRY_READ` gate, in the same AU edition, with the same
 error table (a 404 from the server is a 502 here, because no single code is being looked up).
 It makes one `expand` call with `active_only=True` and the AU `display_language`, and returns
-`code` and `au_preferred_term` for each concept. The FSN is not returned: the picker calls
+`code` and `au_preferred_term` for each concept, plus the server's own `total`. `total` is `null`
+when the server reports no count, because a full page is not evidence of more results. The FSN is
+not returned: the picker calls
 `$lookup` for it after the editor chooses a concept.
 
 **The scope is fixed in code.** The ECL is always `<71388002 |Procedure|`, which excludes the

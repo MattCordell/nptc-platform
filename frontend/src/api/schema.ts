@@ -2072,13 +2072,16 @@ export interface components {
          * @description The concepts under `71388002 |Procedure|` that match `q`, most relevant first as the
          *     terminology server orders them. `items` is empty when nothing matches: that is an answer,
          *     not a failure. A server that cannot answer is a 503, never an empty page (FR-54).
-         *     `total` counts every match, so it can exceed `len(items)`.
+         *     `total` is the server's own count of every match, so it can exceed `len(items)`.
          */
         ProcedureSearchPage: {
             /** Items */
             items: components["schemas"]["ProcedureMatch"][];
-            /** Total */
-            total: number;
+            /**
+             * Total
+             * @description How many concepts match in all, as the terminology server reports it. `null` when the server reports no count: a full page then does not mean there are no more.
+             */
+            total: number | null;
         };
         /**
          * PropertyCardinality

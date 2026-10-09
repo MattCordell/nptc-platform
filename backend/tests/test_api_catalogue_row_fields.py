@@ -10,6 +10,7 @@ nothing, and a page whose statement count grows with its size.
 from __future__ import annotations
 
 import importlib.util
+import logging
 import random
 import sys
 from collections.abc import Iterator
@@ -274,10 +275,20 @@ def test_admin_rows_carry_the_same_fields(api: ApiTestApp, seeded: _Seeded) -> N
 
 @pytest.mark.req("FR-83")
 @pytest.mark.integration
-def test_admin_rows_list_an_entry_whose_stored_fsn_cannot_be_stripped(api: ApiTestApp) -> None:
+@pytest.mark.parametrize(
+    ("stored_fsn", "error_class"),
+    [
+        pytest.param("Microscopy without a tag", "NotAServedFSNError", id="no-tag"),
+        pytest.param("(procedure)", "EmptyDisplayTermError", id="only-a-tag"),
+    ],
+)
+def test_admin_rows_list_an_entry_whose_stored_fsn_cannot_be_stripped(
+    api: ApiTestApp, caplog: pytest.LogCaptureFixture, stored_fsn: str, error_class: str
+) -> None:
     """The public list 500s on this entry, and the admin list must not: the admin screen is
     where it gets repaired. `fsn` is `null` and `code` is set, which is how a client tells it
-    from an entry with no active code."""
+    from an entry with no active code. Each way the renderer can refuse is covered, and the
+    defect is logged by business key and error class without the stored text."""
     session = api.session
     base = random.randrange(100_000_000, 999_000_000)
     key = f"NPTC-{base}"
@@ -292,7 +303,7 @@ def test_admin_rows_list_an_entry_whose_stored_fsn_cannot_be_stripped(api: ApiTe
         CodeBinding(
             entry_id=entry.id,
             code=_ACTIVE_CODE,
-            fsn="Microscopy without a tag",
+            fsn=stored_fsn,
             au_preferred_term=None,
             edition_hint="au",
             status=CodeBindingStatus.ACTIVE.value,
@@ -301,18 +312,20 @@ def test_admin_rows_list_an_entry_whose_stored_fsn_cannot_be_stripped(api: ApiTe
     session.flush()
     token = api.admin_token(subject="sub-row-fields-untagged")
 
-    searched = api.get("/catalogue/admin/search", token=token, params={"q": f"Untagged {base}"})
+    with caplog.at_level(logging.WARNING, logger="nptc.api.routers.catalogue_shared"):
+        searched = api.get("/catalogue/admin/search", token=token, params={"q": f"Untagged {base}"})
+        listing = _admin_listing_rows(api, token)
 
     assert searched.status_code == 200, searched.text
-    assert "Microscopy without a tag" not in searched.text
-    rows = {
-        "search": searched.json()["items"],
-        "listing": _admin_listing_rows(api, token),
-    }
+    assert stored_fsn not in searched.text
+    rows = {"search": searched.json()["items"], "listing": listing}
     for source, items in rows.items():
         row = next(item for item in items if item["business_key"] == key)
         assert row["fsn"] is None, source
         assert row["code"] == _ACTIVE_CODE, source
+    warnings = [r.getMessage() for r in caplog.records if key in r.getMessage()]
+    assert warnings, "a tolerated FSN must leave a trace"
+    assert all(error_class in message and stored_fsn not in message for message in warnings)
 
 
 @pytest.mark.req("FR-20")

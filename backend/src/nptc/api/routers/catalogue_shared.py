@@ -28,6 +28,7 @@ List and search rows make no terminology call.
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import datetime
@@ -103,6 +104,8 @@ __all__ = [
     "snomed_synonyms_for",
     "summary_from_entry",
 ]
+
+_logger = logging.getLogger(__name__)
 
 #: Shared by every route addressing an entry by its public identifier. A
 #: business key that is not `NPTC-` plus at least six digits (FR-03) is a
@@ -669,9 +672,15 @@ def entry_summary_fields(
     if facts.fsn is not None:
         try:
             fsn = render_display_term(facts.fsn)
-        except NotAServedFSNError, EmptyDisplayTermError:
+        except (NotAServedFSNError, EmptyDisplayTermError) as exc:
             if not tolerant_fsn:
                 raise
+            # The business key and error class only: the stored FSN text is not logged.
+            _logger.warning(
+                "stored FSN of %s cannot be stripped (%s); listed with fsn null",
+                business_key,
+                type(exc).__name__,
+            )
     return {
         **entry_core_fields(business_key, preferred_term, length, status, updated_at, facts),
         "fsn": fsn,

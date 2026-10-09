@@ -6996,8 +6996,16 @@
             "title": "Items"
           },
           "total": {
-            "type": "integer",
-            "title": "Total"
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Total",
+            "description": "How many concepts match in all, as the terminology server reports it. `null` when the server reports no count: a full page then does not mean there are no more."
           }
         },
         "type": "object",
@@ -7006,7 +7014,7 @@
           "total"
         ],
         "title": "ProcedureSearchPage",
-        "description": "The concepts under `71388002 |Procedure|` that match `q`, most relevant first as the\nterminology server orders them. `items` is empty when nothing matches: that is an answer,\nnot a failure. A server that cannot answer is a 503, never an empty page (FR-54).\n`total` counts every match, so it can exceed `len(items)`."
+        "description": "The concepts under `71388002 |Procedure|` that match `q`, most relevant first as the\nterminology server orders them. `items` is empty when nothing matches: that is an answer,\nnot a failure. A server that cannot answer is a 503, never an empty page (FR-54).\n`total` is the server's own count of every match, so it can exceed `len(items)`."
       },
       "PropertyCardinality": {
         "type": "string",

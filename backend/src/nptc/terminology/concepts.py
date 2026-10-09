@@ -50,7 +50,7 @@ from nptc_shared.terminology.errors import TerminologyStatusError
 
 __all__ = [
     "PROCEDURE_SCOPE_ECL",
-    "ProcedureMatch",
+    "ProcedureConcept",
     "ProcedureMatches",
     "ResolvedConcept",
     "classify_terminology_error",
@@ -125,15 +125,18 @@ def resolve_concept(
 
 
 @dataclass(frozen=True, slots=True)
-class ProcedureMatch:
+class ProcedureConcept:
     code: str
     au_preferred_term: str | None
 
 
 @dataclass(frozen=True, slots=True)
 class ProcedureMatches:
-    items: tuple[ProcedureMatch, ...]
-    total: int
+    """`total` is the server's own count of every match, or `None` when it reported none.
+    A page that happens to be full is not evidence of more results, so no count is invented."""
+
+    items: tuple[ProcedureConcept, ...]
+    total: int | None
 
 
 def search_procedures(
@@ -175,13 +178,10 @@ def search_procedures(
     except TerminologyError as exc:
         raise classify_terminology_error(exc) from exc
     items = tuple(
-        ProcedureMatch(code=concept.code, au_preferred_term=concept.display)
+        ProcedureConcept(code=concept.code, au_preferred_term=concept.display)
         for concept in expansion.concepts
     )
-    # `total` is `None` when the server reports none; the page length is the honest floor.
-    return ProcedureMatches(
-        items=items, total=expansion.total if expansion.total is not None else len(items)
-    )
+    return ProcedureMatches(items=items, total=expansion.total)
 
 
 def classify_terminology_error(

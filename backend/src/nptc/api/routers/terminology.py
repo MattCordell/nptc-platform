@@ -41,7 +41,7 @@ from __future__ import annotations
 from typing import Annotated, Any, Final
 
 from fastapi import APIRouter, Depends, Query
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 from nptc.api.dependencies import ApiSettingsDep, get_terminology_client, permission_dep
 from nptc.api.labels import AU_PREFERRED_TERM_PROVENANCE, LabelProvenance, fsn_provenance
@@ -205,12 +205,17 @@ class ProcedureSearchPage(BaseModel):
     """The concepts under `71388002 |Procedure|` that match `q`, most relevant first as the
     terminology server orders them. `items` is empty when nothing matches: that is an answer,
     not a failure. A server that cannot answer is a 503, never an empty page (FR-54).
-    `total` counts every match, so it can exceed `len(items)`."""
+    `total` is the server's own count of every match, so it can exceed `len(items)`."""
 
     model_config = ConfigDict(frozen=True)
 
     items: list[ProcedureMatch]
-    total: int
+    total: int | None = Field(
+        description=(
+            "How many concepts match in all, as the terminology server reports it. `null` when "
+            "the server reports no count: a full page then does not mean there are no more."
+        )
+    )
 
 
 @router.get(

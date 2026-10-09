@@ -118,7 +118,8 @@ renderer, so one stored FSN with no trailing semantic tag 500s the whole page. T
 rows call `entry_summary_fields(tolerant_fsn=True)`, which returns `fsn: null` for that entry and still
 lists it, because the admin screen is where the entry gets repaired. `fsn: null` with a
 `code` set therefore means "stored FSN cannot be stripped"; `fsn: null` with `code: null`
-means "no active code". The two are told apart by `code`, not by a new flag.
+means "no active code". The two are told apart by `code`, not by a new flag. The tolerated case
+logs a warning naming the business key and the error class, never the stored FSN text.
 
 ### Errors (all-status listing and search)
 
