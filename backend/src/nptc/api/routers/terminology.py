@@ -1,8 +1,9 @@
-"""FR-26's live concept lookup route.
+"""FR-26's live concept lookup route and the code picker's scoped term search.
 
 `GET /terminology/concepts/{code}` is the one HTTP surface over
 `nptc.terminology.concepts.resolve_concept`, whose docstring holds the field-derivation and
-error-classification rules this router serialises. A domain exception carries `http_status`
+error-classification rules this router serialises. `GET /terminology/procedures` is the one
+over `search_procedures`. A domain exception carries `http_status`
 and `nptc.api.errors` maps it, so the route body has no try/except.
 `docs/architecture/terminology-client.md` ("FR-26: the interactive lookup route") records the
 reasoning behind the points below.
@@ -24,6 +25,11 @@ would make the platform an unauthenticated proxy onto a shared public Ontoserver
 `Edition.display_language` is set only on the AU edition (`nptc_shared.terminology.models`),
 so a caller can tell the AU preferred term from a silent fallback to another one (FR-82).
 
+**The search scope is fixed to `<71388002 |Procedure|` in code, never a parameter.** The
+catalogue write path does not check FR-84 (only the validation sweep does), so the picker's
+scope is an editor's only guard against binding a code outside Procedure. `q` never widens
+it, and a typed code is checked against it, which `$lookup` alone would not do.
+
 **No server-side cache and no bespoke rate limiter.** A cached FSN is the stale-label hazard
 FR-82 forbids, and `REGISTRY_READ` already limits traffic to signed-in, submission-capable
 callers. `SCTID(code)` rejects junk before a socket opens. `EntryDetail.snomed_synonyms` may
@@ -34,14 +40,14 @@ from __future__ import annotations
 
 from typing import Annotated, Any, Final
 
-from fastapi import APIRouter, Depends
-from pydantic import BaseModel, ConfigDict
+from fastapi import APIRouter, Depends, Query
+from pydantic import BaseModel, ConfigDict, Field
 
 from nptc.api.dependencies import ApiSettingsDep, get_terminology_client, permission_dep
 from nptc.api.labels import AU_PREFERRED_TERM_PROVENANCE, LabelProvenance, fsn_provenance
 from nptc.api.routers.auth import ErrorResponse
 from nptc.auth.permissions import Permission
-from nptc.terminology.concepts import resolve_concept
+from nptc.terminology.concepts import resolve_concept, search_procedures
 from nptc_shared.terminology import TerminologyClient
 
 router = APIRouter(prefix="/terminology", tags=["terminology"])
@@ -96,6 +102,20 @@ _RESPONSE_500: Final[dict[str, Any]] = {
         "`NPTC_TX_*` value. Not produced by anything a well-formed request can "
         "trigger on its own; retrying will not clear it."
     ),
+}
+
+_RESPONSE_422_SEARCH: Final[dict[str, Any]] = {
+    "model": ErrorResponse,
+    "description": "`q` is missing or blank, or `count` is outside its range.",
+}
+
+_RESPONSES_SEARCH: Final[dict[int | str, dict[str, Any]]] = {
+    401: _RESPONSE_401,
+    403: _RESPONSE_403,
+    422: _RESPONSE_422_SEARCH,
+    500: _RESPONSE_500,
+    502: _RESPONSE_502,
+    503: _RESPONSE_503,
 }
 
 _RESPONSES: Final[dict[int | str, dict[str, Any]]] = {
@@ -170,4 +190,70 @@ def get_concept(client: TerminologyClientDep, settings: ApiSettingsDep, code: st
             "fsn": fsn_provenance(settings),
             "au_preferred_term": AU_PREFERRED_TERM_PROVENANCE,
         },
+    )
+
+
+class ProcedureMatch(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    code: str
+    au_preferred_term: str | None
+    label_provenance: dict[str, LabelProvenance]
+
+
+class ProcedureSearchPage(BaseModel):
+    """The concepts under `71388002 |Procedure|` that match `q`, most relevant first as the
+    terminology server orders them. `items` is empty when nothing matches: that is an answer,
+    not a failure. A server that cannot answer is a 503, never an empty page (FR-54).
+    `total` is the server's own count of every match, so it can exceed `len(items)`."""
+
+    model_config = ConfigDict(frozen=True)
+
+    items: list[ProcedureMatch]
+    total: int | None = Field(
+        description=(
+            "How many concepts match in all, as the terminology server reports it. `null` when "
+            "the server reports no count: a full page then does not mean there are no more."
+        )
+    )
+
+
+@router.get(
+    "/procedures",
+    summary="Search active SNOMED CT procedures by term or code",
+    responses=_RESPONSES_SEARCH,
+    dependencies=[_READ],
+)
+def search_procedure_concepts(
+    client: TerminologyClientDep,
+    q: Annotated[
+        str,
+        Query(
+            min_length=1,
+            max_length=200,
+            pattern=r"\S",
+            description=(
+                "A term, or a SNOMED CT code of 6 to 18 digits. The terminology server "
+                "decides how a term matches: Ontoserver matches word prefixes. A code returns "
+                "that concept only if it is a procedure, and nothing if it is not or fails "
+                "its check digit."
+            ),
+        ),
+    ],
+    count: Annotated[int, Query(ge=1, le=50)] = 20,
+) -> ProcedureSearchPage:
+    """The SNOMED CT code picker's term search (FR-26), scoped to active descendants of
+    `71388002 |Procedure|` (the root itself is excluded). One `$expand`, in the AU edition
+    with AU preferred terms. The scope is not a parameter."""
+    found = search_procedures(client, q, count=count)
+    return ProcedureSearchPage(
+        items=[
+            ProcedureMatch(
+                code=item.code,
+                au_preferred_term=item.au_preferred_term,
+                label_provenance={"au_preferred_term": AU_PREFERRED_TERM_PROVENANCE},
+            )
+            for item in found.items
+        ],
+        total=found.total,
     )

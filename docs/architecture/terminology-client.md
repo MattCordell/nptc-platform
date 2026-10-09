@@ -250,6 +250,38 @@ rate limiter: FR-82 forbids a stale served label, and `Permission.REGISTRY_READ`
 bounds and attributes traffic to signed-in, submission-capable callers, which is the
 control an anonymous limiter cannot provide.
 
+## FR-26: the code picker's scoped term search (issue #526)
+
+`GET /api/v1/terminology/procedures?q=&count=` (`nptc.api.routers.terminology.
+search_procedure_concepts`, `nptc.terminology.concepts.search_procedures`) is the term-search
+half of the SNOMED CT code picker on the admin edit form. It sits beside the `$lookup` route
+above, under the same `Permission.REGISTRY_READ` gate, in the same AU edition, with the same
+error table (a 404 from the server is a 502 here, because no single code is being looked up).
+It makes one `expand` call with `active_only=True` and the AU `display_language`, and returns
+`code` and `au_preferred_term` for each concept, plus the server's own `total`. `total` is `null`
+when the server reports no count, because a full page is not evidence of more results. The FSN
+is not returned: the picker calls `$lookup` for it after the editor chooses a concept.
+
+**The scope is fixed in code.** The ECL is always `<71388002 |Procedure|`, which excludes the
+root itself, and no parameter widens it. The catalogue write path does not check FR-84 (the
+validation sweep does), so this scope is the editor's only guard against binding a code outside
+Procedure.
+
+**A typed code is checked against the scope too.** `$lookup` accepts any concept, so a code
+(6 to 18 digits) expands as `<71388002 AND <code>` with no `filter`. A concept outside
+Procedure, the root, and an inactive concept all come back as an empty page. A code that fails
+its Verhoeff check digit is an empty page with no upstream request, not a 422: an editor typing
+a code passes through invalid prefixes.
+
+**An empty match is a 200.** A server that cannot answer is a 503 (`Retry-After` when the server
+sent one) or a 502, never an empty page (FR-54), so the picker can say "the terminology server
+is unreachable" and leave the rest of the form working.
+
+**Match rules belong to the server.** A term goes to `expand` as `filter`. Ontoserver matches
+word prefixes on the display text, while `StubTerminologyClient` matches any case-insensitive
+substring. A test that passes against the stub shows the route's scope and error handling, not
+Ontoserver's ranking.
+
 ## FR-10: the coded-property values route (issue #247)
 
 `GET /api/v1/registry/properties/{key}/values`

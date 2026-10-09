@@ -35,7 +35,7 @@ from nptc.terminology.errors import (
     TerminologyUnavailableError,
     TerminologyUpstreamError,
 )
-from nptc_shared.sctid import SCTID
+from nptc_shared.sctid import SCTID, InvalidSCTIDError, has_valid_format
 from nptc_shared.terminology import (
     SNOMED_CT_AU,
     Edition,
@@ -48,7 +48,20 @@ from nptc_shared.terminology import (
 )
 from nptc_shared.terminology.errors import TerminologyStatusError
 
-__all__ = ["ResolvedConcept", "classify_terminology_error", "resolve_concept"]
+__all__ = [
+    "PROCEDURE_SCOPE_ECL",
+    "ProcedureConcept",
+    "ProcedureMatches",
+    "ResolvedConcept",
+    "classify_terminology_error",
+    "resolve_concept",
+    "search_procedures",
+]
+
+#: The code picker's scope: every descendant of `71388002 |Procedure|`, never the root itself.
+#: Fixed here so a caller cannot widen it. The write path does not check FR-84, so this is the
+#: only thing keeping an editor from binding a code outside Procedure.
+PROCEDURE_SCOPE_ECL = "<71388002"
 
 #: See the module docstring: only `inactive` is requested.
 _LOOKUP_PROPERTIES: tuple[str, ...] = ("inactive",)
@@ -109,6 +122,66 @@ def resolve_concept(
         edition=edition.label,
         resolved_version=result.resolved_version,
     )
+
+
+@dataclass(frozen=True, slots=True)
+class ProcedureConcept:
+    code: str
+    au_preferred_term: str | None
+
+
+@dataclass(frozen=True, slots=True)
+class ProcedureMatches:
+    """`total` is the server's own count of every match, or `None` when it reported none.
+    A page that happens to be full is not evidence of more results, so no count is invented."""
+
+    items: tuple[ProcedureConcept, ...]
+    total: int | None
+
+
+def search_procedures(
+    client: TerminologyClient, q: str, *, count: int, edition: Edition = SNOMED_CT_AU
+) -> ProcedureMatches:
+    """One `ValueSet/$expand` of `PROCEDURE_SCOPE_ECL`, active concepts only, for the
+    code picker (FR-26).
+
+    `q` is a code or a term, told apart by shape. A code (6 to 18 digits) expands as
+    `<71388002 AND <code>` with no `filter`, so a typed code outside Procedure comes back
+    empty, where `$lookup` would accept it. A code that fails Verhoeff is an empty result
+    with no request, not a 422, because an editor typing a code passes through invalid
+    prefixes. Anything else is a `filter` on the display text.
+
+    An empty match is a result, never an error. The server defines a term match: Ontoserver
+    matches word prefixes, and the offline stub matches any substring.
+    """
+    text = q.strip()
+    if has_valid_format(text):
+        try:
+            SCTID(text)
+        except InvalidSCTIDError:
+            return ProcedureMatches(items=(), total=0)
+        ecl, term = f"{PROCEDURE_SCOPE_ECL} AND {text}", None
+    else:
+        ecl, term = PROCEDURE_SCOPE_ECL, text
+    try:
+        expansion = client.expand(
+            ecl,
+            edition=edition,
+            count=count,
+            active_only=True,
+            filter=term,
+            # FR-82: the picker shows the edition's own preferred term.
+            display_language=edition.display_language,
+        )
+    except TerminologyConfigError:
+        raise
+    except TerminologyError as exc:
+        raise classify_terminology_error(exc) from exc
+    items = tuple(
+        ProcedureConcept(code=concept.code, au_preferred_term=concept.display)
+        for concept in expansion.concepts
+    )
+    return ProcedureMatches(items=items, total=expansion.total)
 
 
 def classify_terminology_error(

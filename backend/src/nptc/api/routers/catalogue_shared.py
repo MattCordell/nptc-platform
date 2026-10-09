@@ -28,6 +28,7 @@ List and search rows make no terminology call.
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import datetime
@@ -60,7 +61,12 @@ from nptc.catalogue.facets import Facet as DomainFacet
 from nptc.db.models.catalogue_entry import CatalogueEntry
 from nptc.db.models.code_binding import SNOMED_CT_SYSTEM, CodeBindingStatus
 from nptc.db.session import end_read_transaction
-from nptc.exports.semantic_tag import render_display_term, trim_specimen_suffix
+from nptc.exports.semantic_tag import (
+    EmptyDisplayTermError,
+    NotAServedFSNError,
+    render_display_term,
+    trim_specimen_suffix,
+)
 from nptc.registry.handlers import DatatypeRegistry, SerialisationTarget
 from nptc.settings import ApiSettings
 from nptc.terminology.synonyms import SnomedSynonymSource
@@ -98,6 +104,8 @@ __all__ = [
     "snomed_synonyms_for",
     "summary_from_entry",
 ]
+
+_logger = logging.getLogger(__name__)
 
 #: Shared by every route addressing an entry by its public identifier. A
 #: business key that is not `NPTC-` plus at least six digits (FR-03) is a
@@ -648,14 +656,34 @@ def entry_summary_fields(
     status: str,
     updated_at: datetime,
     facts: queries.RowFacts,
+    *,
+    tolerant_fsn: bool = False,
 ) -> dict[str, Any]:
     """Raises `NotAServedFSNError` or `EmptyDisplayTermError` for a stored FSN FR-83 cannot
     strip. That is stored data written before the transform seeded served FSNs (a workbook label
     has no tag), so it fails the request loudly (a 500 with a logged error) rather than show a
-    value that may already have been stripped."""
+    value that may already have been stripped.
+
+    `tolerant_fsn` is for the admin list and search, which serve the screen that repairs such an
+    entry: the FSN becomes `None` and the row stays listed. `code` is still set on that row,
+    which tells it apart from an entry with no active code (`code` and `fsn` both `None`). This
+    is the only call to the renderer in this module (see `test_catalogue_bindings.py`)."""
+    fsn: str | None = None
+    if facts.fsn is not None:
+        try:
+            fsn = render_display_term(facts.fsn)
+        except (NotAServedFSNError, EmptyDisplayTermError) as exc:
+            if not tolerant_fsn:
+                raise
+            # The business key and error class only: the stored FSN text is not logged.
+            _logger.warning(
+                "stored FSN of %s cannot be stripped (%s); listed with fsn null",
+                business_key,
+                type(exc).__name__,
+            )
     return {
         **entry_core_fields(business_key, preferred_term, length, status, updated_at, facts),
-        "fsn": render_display_term(facts.fsn) if facts.fsn is not None else None,
+        "fsn": fsn,
         "specimens": list(dict.fromkeys(trim_specimen_suffix(label) for label in facts.specimens)),
         "label_provenance": _ENTRY_SUMMARY_LABEL_PROVENANCE,
     }

@@ -4308,6 +4308,135 @@
         }
       }
     },
+    "/api/v1/terminology/procedures": {
+      "get": {
+        "tags": [
+          "terminology"
+        ],
+        "summary": "Search active SNOMED CT procedures by term or code",
+        "description": "The SNOMED CT code picker's term search (FR-26), scoped to active descendants of\n`71388002 |Procedure|` (the root itself is excluded). One `$expand`, in the AU edition\nwith AU preferred terms. The scope is not a parameter.",
+        "operationId": "search_procedure_concepts_api_v1_terminology_procedures_get",
+        "parameters": [
+          {
+            "name": "q",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 200,
+              "pattern": "\\S",
+              "description": "A term, or a SNOMED CT code of 6 to 18 digits. The terminology server decides how a term matches: Ontoserver matches word prefixes. A code returns that concept only if it is a procedure, and nothing if it is not or fails its check digit.",
+              "title": "Q"
+            },
+            "description": "A term, or a SNOMED CT code of 6 to 18 digits. The terminology server decides how a term matches: Ontoserver matches word prefixes. A code returns that concept only if it is a procedure, and nothing if it is not or fails its check digit."
+          },
+          {
+            "name": "count",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 50,
+              "minimum": 1,
+              "default": 20,
+              "title": "Count"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProcedureSearchPage"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No credential, or one that could not be verified.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The caller is authenticated but does not hold `registry.read`.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "`q` is missing or blank, or `count` is outside its range.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "The service is misconfigured, not a caller mistake - a malformed `NPTC_TX_*` value. Not produced by anything a well-formed request can trigger on its own; retrying will not clear it.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "The terminology server's response could not be used - an unparseable body, the wrong resource type, or a 4xx that was not itself an answer to \"does this code exist\". Names no URL, variable or upstream host.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "The terminology server could not be reached, or a rate limit persisted through retries - the code field's live assist degrades; nothing else about the entry is affected (FR-54). May carry a `Retry-After` header.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "An address exceeded its request budget (FR-22): an anonymous caller its anonymous budget, or a caller whose credentials the API kept rejecting its budget for rejected credentials. Wait for the number of seconds in `Retry-After`, then try again. A valid credential is never counted. The body's `bulk_artefacts` names where to fetch the whole catalogue instead.",
+            "headers": {
+              "Retry-After": {
+                "description": "Whole seconds until the caller's request budget is available again.",
+                "schema": {
+                  "type": "integer",
+                  "minimum": 1
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RateLimitedResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/audit/events": {
       "get": {
         "tags": [
@@ -4851,6 +4980,26 @@
             "type": "object",
             "title": "Label Provenance"
           },
+          "fsn": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Fsn",
+            "description": "The fully specified name of the entry's active SNOMED CT code with its trailing semantic tag removed (FR-83). `null` in two cases: the entry has no active code (`code` is then `null` too), or its stored FSN cannot be stripped (`code` is set). `bindings[].fsn` on the detail keeps the tag."
+          },
+          "specimens": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Specimens",
+            "description": "The display text of each of the entry's specimen values, in recorded order, with a trailing specimen word removed and repeats dropped. Falls back to the code where a value carries no display. Empty when none is recorded."
+          },
           "row_version": {
             "type": "integer",
             "title": "Row Version"
@@ -4867,10 +5016,12 @@
           "code",
           "disciplines",
           "label_provenance",
+          "fsn",
+          "specimens",
           "row_version"
         ],
         "title": "AdminEntrySummary",
-        "description": "`EntryCore` plus FR-38's optimistic-locking token. It carries neither `fsn` nor\n`specimens`, which are the public list's: a stored FSN FR-83 cannot strip fails the\npublic list, and must not also hide an entry from the screen that repairs it.\n\nDefined here, not in `catalogue_shared.py`: that module is imported by\nthe public router, and a field the public surface must never carry\n(`EntryDetail`'s own docstring explains why `EntrySummary` does not\ncarry it) has to live somewhere the public router cannot reach by\nconstruction, not merely by convention. `test_api_public_response_\nhygiene.py` asserts the public listing/search routes still omit it.\n\nThe bulk reclassify route (FR-39) locks on `(business_key,\nexpected_row_version)`; this is what lets its selection surface read a\n`row_version` per row instead of re-reading the entry once selected."
+        "description": "`EntrySummary` plus FR-38's optimistic-locking token. Its `fsn` is tolerant: a stored\nFSN FR-83 cannot strip fails the public list, but must not also hide an entry from the\nscreen that repairs it (`entry_summary_fields(tolerant_fsn=True)`).\n\nDefined here, not in `catalogue_shared.py`: that module is imported by\nthe public router, and a field the public surface must never carry\n(`EntryDetail`'s own docstring explains why `EntrySummary` does not\ncarry it) has to live somewhere the public router cannot reach by\nconstruction, not merely by convention. `test_api_public_response_\nhygiene.py` asserts the public listing/search routes still omit it.\n\nThe bulk reclassify route (FR-39) locks on `(business_key,\nexpected_row_version)`; this is what lets a row carry a `row_version`\ninstead of re-reading the entry once opened."
       },
       "AdminSearchHit": {
         "properties": {
@@ -4926,6 +5077,26 @@
             "type": "object",
             "title": "Label Provenance"
           },
+          "fsn": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Fsn",
+            "description": "The fully specified name of the entry's active SNOMED CT code with its trailing semantic tag removed (FR-83). `null` in two cases: the entry has no active code (`code` is then `null` too), or its stored FSN cannot be stripped (`code` is set). `bindings[].fsn` on the detail keeps the tag."
+          },
+          "specimens": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Specimens",
+            "description": "The display text of each of the entry's specimen values, in recorded order, with a trailing specimen word removed and repeats dropped. Falls back to the code where a value carries no display. Empty when none is recorded."
+          },
           "row_version": {
             "type": "integer",
             "title": "Row Version"
@@ -4947,6 +5118,8 @@
           "code",
           "disciplines",
           "label_provenance",
+          "fsn",
+          "specimens",
           "row_version",
           "score"
         ],
@@ -6779,6 +6952,69 @@
         ],
         "title": "PatchEntryRequest",
         "description": "The body of `PATCH /catalogue/entries/{business_key}`. Unknown fields are refused, so a\nclient that still sends the retired `specimen_unconstrained` fails loudly (ADR-0044)."
+      },
+      "ProcedureMatch": {
+        "properties": {
+          "code": {
+            "type": "string",
+            "title": "Code"
+          },
+          "au_preferred_term": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Au Preferred Term"
+          },
+          "label_provenance": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/LabelProvenance"
+            },
+            "type": "object",
+            "title": "Label Provenance"
+          }
+        },
+        "type": "object",
+        "required": [
+          "code",
+          "au_preferred_term",
+          "label_provenance"
+        ],
+        "title": "ProcedureMatch"
+      },
+      "ProcedureSearchPage": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/ProcedureMatch"
+            },
+            "type": "array",
+            "title": "Items"
+          },
+          "total": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Total",
+            "description": "How many concepts match in all, as the terminology server reports it. `null` when the server reports no count: a full page then does not mean there are no more."
+          }
+        },
+        "type": "object",
+        "required": [
+          "items",
+          "total"
+        ],
+        "title": "ProcedureSearchPage",
+        "description": "The concepts under `71388002 |Procedure|` that match `q`, most relevant first as the\nterminology server orders them. `items` is empty when nothing matches: that is an answer,\nnot a failure. A server that cannot answer is a 503, never an empty page (FR-54).\n`total` is the server's own count of every match, so it can exceed `len(items)`."
       },
       "PropertyCardinality": {
         "type": "string",
