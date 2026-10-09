@@ -225,6 +225,14 @@ table. `au_preferred_term` is `LookupResult.display` under `display_language=
 AU_LANGUAGE_TAG`, never a designation scan - see "Editions and versions" again for why a
 second rule here would silently disagree with the sweep's own.
 
+**A property list filters designations too.** Ontoserver returns a `$lookup`'s designations
+only when no `property` is named, or when `designation` (or `*`) is among them. The FSN is
+read from the designations, so a request for `inactive` alone yields no FSN, and the entry
+form refuses to bind the code. `OntoserverClient.lookup` therefore adds `designation` to
+any non-empty list, so a caller names only the extra properties it wants. A `$lookup` with
+no list is sent unchanged. `includeDesignations` is an `$expand` parameter and has no effect
+on `$lookup`.
+
 The route's error table reuses this package's classification (`TerminologyError.
 retryable`, `errors.is_concept_absence` - promoted out of `sweep.py`'s own private
 helper for exactly this second caller, FR-74) rather than re-deriving it:
