@@ -13,14 +13,15 @@ change its label or flags, or retire it, see
 [Managing registry properties](managing-registry-properties.md). This guide covers values
 on an entry, not the property definitions themselves.
 
-Open an entry for editing at **Administration → Catalogue → Edit**, or go straight to
+Open an entry for editing from **[Administration → Catalogue](finding-entries.md)** by
+choosing its requesting term, or go straight to
 `/admin/catalogue/NPTC-000247/edit` for the entry you want. Entries that have not been
 published yet can be edited the same way as published ones.
 
 ## What you see
 
-The edit form lists **Registry properties** below the preferred term, one control for each
-active property, in the order the registry gives them. Each shows what is currently recorded.
+The edit form lists **Registry properties** below the SNOMED CT code and the synonyms, one
+control for each active property, in the order the registry gives them. Each shows what is currently recorded.
 
 The controls are generated from the registry's own definitions, not hand-built for each
 property. If an administrator adds a property definition elsewhere in the platform, it
@@ -88,8 +89,8 @@ you did. The save stopped at that point. Fields saved before it stay saved, and 
 lists the ones that were not sent. The screen picks up their change for you — check yours is
 still needed, then save again.
 
-**"You cannot edit this entry with your current sign-in."** See the note on multi-factor
-authentication at the top of this page.
+**"You cannot edit this entry with your current sign-in."** See
+[Editing an entry](editing-an-entry.md#if-something-goes-wrong).
 
 **"... could not be refreshed just now, so what follows may be out of date."** The entry
 loaded, but a later refresh was refused — usually a sign-in that has expired while the

@@ -15,6 +15,8 @@ been published yet can be edited the same way as published ones.
 
 - **Identifier.** For example `NPTC-000006`. It is shown as text. The platform creates it
   and it never changes.
+- **Entry status and last changed.** Shown as text beside the identifier. You cannot edit
+  either here.
 - **RCPA Preferred.** The catalogue's own name for the test. Under the box you see its
   length in characters. The length updates as you type. It is counted the way the catalogue
   counts it, after the spacing is cleaned, so a trailing non-breaking space does not add to
