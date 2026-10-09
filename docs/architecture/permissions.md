@@ -178,8 +178,8 @@ See [`docs/operations/upgrade.md`](../operations/upgrade.md) for the full runboo
 
 ## NFR-06: mandatory MFA for administrators
 
-The token carries no `acr`/`amr` and the realm declares no roles (ADR-0014), so Keycloak
-cannot itself know who is an administrator — enforcement is necessarily server-side.
+The realm declares no roles (ADR-0014), so Keycloak cannot itself know who is an
+administrator — enforcement is necessarily server-side.
 Keycloak's job is only to make step-up authentication achievable and provable.
 
 **Realm** (`deploy/keycloak/realm/nptc-realm.json`): `browserFlow: "nptc browser"`, a
@@ -190,6 +190,8 @@ satisfying `acr_values`, not merely when the user happens to already have TOTP
 configured. Verified against a real, disposable Keycloak 26.7.1 container: the realm
 imports cleanly, and a full browser authorization-code request with `acr_values=2`
 against a user with no TOTP redirects to `CONFIGURE_TOTP` exactly as designed.
+`nptc-frontend` lists the built-in `acr` client scope in `defaultClientScopes`, because
+its mapper is what writes the `acr` claim into the token.
 
 **Claims**: `OidcIdentityClaims.acr`/`auth_time` (both optional, added without breaking
 any existing constructor call site), narrowed in `TokenVerifier.verify` exactly as

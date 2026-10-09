@@ -145,6 +145,10 @@ docker compose -f deploy/compose.yml up -d --force-recreate keycloak
 per-service form needs Compose v2.24+ — on an older v2 it tears down the whole stack. The
 single `--force-recreate` command above works on any Compose v2 and says what it means.)
 
+**Adding the `acr` scope to an existing realm.** A realm imported before `nptc-frontend`
+listed the `acr` client scope issues tokens with no `acr` claim, so no Administrator can
+complete MFA step-up. Recreate the container as above to pick up the scope.
+
 **The login theme is selected here and mounted separately.** The realm file sets
 `"loginTheme": "nptc"`, and `deploy/compose.yml` mounts `deploy/keycloak/themes/nptc` read-only
 at `/opt/keycloak/themes/nptc`. The two must agree: a realm that names a theme no mount

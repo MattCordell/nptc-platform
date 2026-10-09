@@ -364,6 +364,16 @@ def test_loa_condition_pins_level_2_matching_the_backend_default(realm: dict[str
     assert matches[0]["config"]["loa-condition-level"] == "2"
 
 
+@pytest.mark.req("NFR-06")
+def test_frontend_client_tokens_carry_the_acr_claim(realm: dict[str, Any]) -> None:
+    """Keycloak writes `acr` only through the built-in `acr` client scope's
+    mapper. Without that scope, `principal_for` never sees a satisfying
+    `acr`, so MFA step-up can never succeed, however the user signs in."""
+    frontend = _client(realm, "nptc-frontend")
+
+    assert "acr" in frontend["defaultClientScopes"]
+
+
 def _wait_for_discovery_document(
     base_url: str, attempts: int = 60, delay: float = 2.0
 ) -> httpx.Response:
@@ -450,6 +460,16 @@ def test_keycloak_imports_the_realm_and_serves_discovery() -> None:
         assert client["rootUrl"] == frontend_base_url
         assert client["redirectUris"] == [f"{frontend_base_url}/*"]
         assert client["webOrigins"] == [frontend_base_url]
+
+        # The offline test checks the name in the file; only the imported
+        # client shows Keycloak bound it to its built-in `acr` scope.
+        scopes_response = httpx.get(
+            f"{base_url}/admin/realms/nptc/clients/{client['id']}/default-client-scopes",
+            headers={"Authorization": f"Bearer {admin_token}"},
+            timeout=30,
+        )
+        scopes_response.raise_for_status()
+        assert "acr" in {scope["name"] for scope in scopes_response.json()}
 
         required_actions_response = httpx.get(
             f"{base_url}/admin/realms/nptc/authentication/required-actions",
