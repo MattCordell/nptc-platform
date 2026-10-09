@@ -130,6 +130,7 @@ export function CodeField({
       <ProcedurePicker
         id={CODE_FIELD_ID}
         label={active === null ? "SNOMED CT code" : "Replacement SNOMED CT code"}
+        error={error}
         onPick={onPick}
       />
 
@@ -139,9 +140,6 @@ export function CodeField({
           activeCode={active?.code ?? null}
           onClear={onClear}
         />
-      )}
-      {error !== undefined && (
-        <p className="m-0 text-sm text-[var(--color-danger)]">{error}</p>
       )}
 
       <EntryBindings bindings={bindings} />

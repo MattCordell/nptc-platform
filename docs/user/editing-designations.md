@@ -1,104 +1,82 @@
 # Editing an entry's terms
 
-Every catalogue entry has one **preferred term** and any number of **synonyms**. This
-guide covers adding, editing and retiring them, and what to do when the catalogue tells
-you a term is already in use somewhere else.
+Every catalogue entry has one **preferred term** (**RCPA Preferred**) and any number of
+**synonyms** (**RCPA Synonyms**). This guide covers adding, editing, removing and reinstating
+synonyms, and what to do when the catalogue tells you a term is already in use somewhere
+else.
 
 You need the Administrator role to change terms. Acknowledging a possible duplicate needs
 only the Reviewer role.
 
-Open an entry for editing at **Administration → Catalogue → Edit**, or go straight to
-`/admin/catalogue/NPTC-000247/edit` for the entry you want. Entries that have not been
-published yet can be edited the same way as published ones.
+Open an entry for editing at **Administration → Catalogue**, or go straight to
+`/admin/catalogue/NPTC-000247/edit`. Terms are part of the one
+[edit form](editing-an-entry.md), so they save with **Save** and share the form's changelog
+note.
 
 ## What you see
 
-The **Terms** table lists every term the entry has ever held, one row per term, active
-terms first:
+- **RCPA Preferred** is the catalogue's own name for the test. Under the box you see its
+  **length** in characters, updated as you type. The length is worked out by the catalogue.
+  It is not stored and not typed, so it always matches the term it describes.
+- **Synonym 1, Synonym 2 and so on** are the entry's active synonyms, one box each.
+- **Add synonyms** is one box for new terms.
+- **Retired synonyms** lists terms the entry used to hold, each with a **Reinstate** button.
+  This list appears only when the entry has some.
 
-- The **preferred term** first. This is the catalogue's own name for the test.
-- Every **synonym** after it.
-- Every **retired term** last, marked with its status.
+A retired term is history, not something the entry currently publishes.
 
-A retired term is history, not something the entry currently publishes — the **Status**
-column tells the two apart. A retired row cannot be edited or retired again, but it can be
-brought back: see [Reinstating a retired term](#reinstating-a-retired-term) below.
+## Editing a term
 
-**Length** is the character count of the preferred term. It is worked out by the
-catalogue, not stored and not typed, so it always matches the term it describes. There is
-no way to edit it, and that is deliberate: a length that could be edited separately from
-its term is a length that can be wrong. The edit form above the table shows it under
-**RCPA Preferred** and updates it as you type.
+Change the text in the box and choose **Save**. To change the preferred term, edit
+**RCPA Preferred** the same way. The change is saved with your changelog note, together with
+anything else you changed.
 
-**The preferred term is edited in the form above the table**, not from this table. Its row
-says so. See [Editing an entry](editing-an-entry.md#the-form).
+An edit that cleans to the same term is not a change. For example, adding a trailing space
+sends nothing.
+
+## Removing a synonym
+
+Choose **Remove** beside the synonym. The box is replaced by a line saying the term **will be
+removed when you save**. Nothing is sent yet. Choose **Keep** to change your mind.
+
+When you choose **Save**, the term stops being published. The catalogue keeps it, and
+records who removed it and why, in the entry's history. It then appears under **Retired
+synonyms**.
+
+**The preferred term cannot be removed.** Every entry must have a preferred term at all
+times. To change what the entry is called, edit **RCPA Preferred**.
 
 ## Adding synonyms
 
-Use **Add synonyms**.
+Type one term in **Add synonyms**, or paste a whole cell from the old spreadsheet. Terms
+separated by semicolons are split into one term each, so pasting `Zovirax;;Cyclir` adds
+**Zovirax** and **Cyclir**: two terms, not three. The empty stretch between the doubled
+semicolon is dropped, because a blank term is not a thing the catalogue can hold.
 
-You can type a single term, or paste a whole cell from the old spreadsheet. Terms
-separated by semicolons are split into one row each, so pasting
-`Zovirax;;Cyclir` adds **Zovirax** and **Cyclir** — two terms, not three. The empty
-stretch between the doubled semicolon is dropped, because a blank term is not a thing the
-catalogue can hold.
+Before you save, the form tells you exactly what it will add: *"Save will add 2 terms:
+“Zovirax”, “Cyclir”"*. Check the split matches what you meant.
 
 You can add up to 100 terms at once. A larger paste is refused before it is sent, with a
 count, so you can split it.
 
-Before you save, the screen tells you exactly what it will create — *"This will add 2
-terms: “Zovirax”, “Cyclir”"* — so you can check the split matches what you meant.
-
-Every change needs a **changelog note**. It becomes the published History text for the
-entry, so write a sentence describing the change. Single words like "update" or "fix" are
-refused, and Save stays unavailable — and tells you why, in the note's own field — until
-you write one, rather than only reporting it after you try to save.
-
-## Editing a term
-
-Choose **Edit** on any active synonym. Change the term, add a changelog note, and choose
-**Save term**.
-
-To change the preferred term, use **RCPA Preferred** in the form above the table. It saves
-with the form's own changelog note, together with any registry properties you changed.
-
-If someone else changes the entry while you have it open, your save is refused and you are
-told who changed it, when, and which values moved. Nothing of yours is saved. The screen
-starts reloading their change for you, so check yours is still needed and save it again.
-
-## Retiring a synonym
-
-Choose **Retire** on the row, give a changelog note, and confirm.
-
-The term stops being published. It stays in the Terms table, marked **retired** in the
-Status column, at the bottom of the list — the catalogue keeps it, and records who
-retired it and why, in the entry's history.
-
-**The preferred term cannot be retired**, so no Retire button appears on that row. Every
-entry must have a preferred term at all times. To change what the entry is called, edit
-**RCPA Preferred** in the form instead.
-
 ## Reinstating a retired term
 
-Choose **Reinstate** on a retired row, give a changelog note, and confirm.
+Choose **Reinstate** beside a term under **Retired synonyms**, write a changelog note and
+confirm. This saves at once, without **Save**.
 
-The term is published again, and it is the same row as before: the entry's history still
-reads as one continuous record — created, retired, reinstated — rather than a retirement
-followed by an unrelated-looking new term. This is why reinstating is better than adding
-the term afresh: adding it again would start its history over as a new row and lose the
-link to what happened before.
+The term is published again, and it is the same row as before. The entry's history still
+reads as one continuous record (created, retired, reinstated) rather than a retirement
+followed by an unrelated-looking new term. Reinstating is better than adding the term
+afresh, because adding it again would start its history over.
 
-If the term retired and was then re-added as a new synonym in the meantime, that new
-synonym is already active, so there is nothing to reinstate — the screen refuses the save
-and tells you the term is already active. Edit or retire the new synonym instead.
+If the term was re-added as a new synonym in the meantime, that synonym is already active,
+so there is nothing to reinstate. Edit or remove the new synonym instead.
 
 If the term became another live entry's preferred term while this one was retired,
-reinstating is blocked the same way adding or editing onto that term would be: see
-[When a term is already in use elsewhere](#when-a-term-is-already-in-use-elsewhere) below.
+reinstating is blocked the same way adding it would be. See
+[When a term is already in use elsewhere](#when-a-term-is-already-in-use-elsewhere).
 
-An earlier acknowledgement of a possible duplicate still applies after you reinstate: if
-you acknowledged this term's overlap with another entry before retiring it, that
-acknowledgement carries over and the overlap is not reported again.
+An earlier acknowledgement of a possible duplicate still applies after you reinstate.
 
 ## When a term is already in use elsewhere
 
@@ -108,81 +86,78 @@ and a version with a non-breaking space in it all count as the same term.
 
 There are two outcomes, and they behave differently.
 
-### The save is blocked
+### The term is refused
 
-If your term is another entry's **preferred term**, the save is refused. The screen names
-the entry it clashes with and links to it. Nothing is saved.
+If your term is another entry's **preferred term**, that term is refused. The summary names
+the entry it clashes with and links to it. The box keeps what you typed, and your other
+changes still save. Nothing was saved for that term.
 
-Either choose a different term, or open that other entry and resolve it there first — for
-example by retiring the term over there, if it belongs on your entry instead.
+Either choose a different term, or open that other entry and resolve it there first, for
+example by removing the term over there if it belongs on your entry instead.
 
-### The save goes through, with a note
+### The term is saved, with a note
 
 If your term is already a **synonym** on another entry, the save succeeds and the term is
 added. Two entries can legitimately share a synonym, so this is a note rather than a
 refusal.
 
-The term then appears under **Check these terms**, naming the other entry. You have two
+The summary then lists the term under **Check these**, naming the other entry. You have two
 options:
 
-- Change or retire the term, if the overlap was a mistake.
-- Choose **Acknowledge** and give a changelog note, if the overlap is intended. The
-  catalogue records the decision and stops reporting that term on this entry from then on.
+- Change or remove the term, if the overlap was a mistake.
+- Choose **Acknowledge** beside it and give a changelog note, if the overlap is intended.
+  The catalogue records the decision and stops reporting that term on this entry from then
+  on. This saves at once.
 
-Acknowledging applies to this entry only. The other entry is untouched, and its own
-editors still see the overlap until they acknowledge it themselves.
+Acknowledging applies to this entry only. The other entry is untouched, and its own editors
+still see the overlap until they acknowledge it themselves.
 
-Acknowledgements cannot be withdrawn. If you acknowledge one by mistake, change or retire
-the term instead — retiring stops it being published, though the row stays in the Terms
-table, marked **retired** in the Status column, rather than disappearing.
+Acknowledgements cannot be withdrawn. If you acknowledge one by mistake, change or remove
+the term instead.
 
 ### A preferred term over the maximum length, with a note
 
 An administrator can set a maximum length for preferred terms. If you save a preferred term
-longer than that maximum, the save still goes through. The summary under the form lists it
-under **Check these**, with its length and the maximum. For example: "The preferred term is
-31 characters long, which is over the maximum of 10. Consider shortening it."
+longer than that maximum, the save still goes through. The summary lists it under **Check
+these**, with its length and the maximum. For example: "The preferred term is 31 characters
+long, which is over the maximum of 10. Consider shortening it."
 
 There is nothing to acknowledge. Edit **RCPA Preferred** again if you want to shorten it. The
-note describes the last save, so it is gone once you save again. If no maximum is set, which is
-the default, you never see this note.
+note describes the last save, so it is gone once you save again. If no maximum is set, which
+is the default, you never see this note.
 
 ## If something goes wrong
 
-**"This term is already in use on another entry."** The blocked case above. Nothing was
-saved. Choose a different term, or resolve it on the entry named in the message.
+**"This term is already in use on another entry."** The refused case above. Choose a
+different term, or resolve it on the entry named in the summary.
 
 **"This entry already has an active designation for this term, once case, spacing and
-punctuation are ignored."** The entry already holds this term. Check the Terms table — you
+punctuation are ignored."** The entry already holds this term. Check the synonym boxes. You
 may be adding something that is already there under slightly different capitalisation.
 
+**"Enter the synonym, or remove it."** A synonym box is empty. Type the term, or choose
+**Remove**.
+
 **Save stays unavailable, with a message under the changelog note.** The note is empty,
-too short, or a single low-information word such as "update" or "fix" — the screen tells
-you which, before you try to save. Write a sentence saying what changed and why; Save
-becomes available as soon as the note passes.
+too short, or a single low-information word such as "update" or "fix". Write a sentence
+saying what changed and why. Save becomes available as soon as the note passes.
 
 **"This term could not be saved."** The term contains a character that has no single
-correct repair — a zero-width space, or a control character — usually picked up by pasting
-from a formatted document. Retype the term rather than pasting it.
+correct repair, such as a zero-width space or a control character. This is usually picked up
+by pasting from a formatted document. Retype the term rather than pasting it.
 
 **"Someone else changed this entry while you had it open."** Another editor saved before
-you did. Nothing of yours was saved. The screen picks up their change for you - check yours
-is still needed, then save it again.
+you did. Nothing of yours was saved from that point. The screen picks up their change for
+you. Check yours is still needed, then save again.
 
-**"No matching designation was found for the given term."** When editing, amending or
-retiring: the term was retired or edited by someone else between the page loading and
-your save. When reinstating: the term has no retired row on this entry to bring back.
-Reload the entry and check the Terms table.
+**"No matching designation was found for the given term."** When editing or removing: the
+term was removed or edited by someone else between the page loading and your save. When
+reinstating: the term has no retired row on this entry to bring back. Reload the entry and
+check the synonym boxes.
 
-**"This term is already active on this entry, so there is nothing to reinstate."** The
-term is already active — it was never retired, someone else already reinstated it, or it
-was re-added as a new synonym after retiring. Reload the entry and check the Terms table
-before trying again.
+**"This term is already active on this entry, so there is nothing to reinstate."** The term
+is already active. It was never retired, someone else already reinstated it, or it was
+re-added as a new synonym after retiring. Reload the entry before trying again.
 
-**"You cannot edit this entry with your current sign-in."** See the note on multi-factor
-authentication at the top of this page.
-
-**"... could not be refreshed just now, so what follows may be out of date."** The entry
-loaded, but a later refresh was refused - usually a sign-in that has expired while the
-screen was open. The terms you can see may no longer be current. Sign in again and reopen
-the entry before making further changes.
+**"You cannot edit this entry with your current sign-in."** See
+[Editing an entry](editing-an-entry.md#if-something-goes-wrong).

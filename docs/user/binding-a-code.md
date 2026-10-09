@@ -1,115 +1,110 @@
 # Binding a SNOMED CT code
 
-Every catalogue entry can hold one **active code binding** — the SNOMED CT code the entry
-publishes — plus any number of **retired** ones, kept for history. This guide covers
-binding, retiring and replacing a code, and what to do when the terminology server cannot
-answer.
+Every catalogue entry can hold one **active code** (its SNOMED CT binding), plus any number
+of **retired** ones, kept for history. This guide covers finding a code, binding it,
+replacing it, retiring it, and what to do when the terminology server cannot answer.
 
-You need the Administrator role to change bindings.
+You need the Administrator role to change a code.
 
-Open an entry for editing at **Administration → Catalogue → Edit**, or go straight to
-`/admin/catalogue/NPTC-000247/edit` for the entry you want. Entries that have not been
-published yet can be edited the same way as published ones.
+Open an entry for editing at **Administration → Catalogue**, or go straight to
+`/admin/catalogue/NPTC-000247/edit`. The **SNOMED CT code** section is part of the one
+[edit form](editing-an-entry.md), so it saves with **Save** and shares the form's changelog
+note.
 
 ## What you see
 
-The **Code bindings** table lists every binding this entry has ever had — active and
-retired — one row each: the code, its fully specified name, its AU preferred term, its
-status, and, for a retired row, why it was retired and what replaced it if anything did.
+The section shows the entry's active code with its fully specified name and its AU
+preferred term. If the entry has no code, it says so.
 
-Retired bindings stay listed, the same way retired terms do in the Terms table on this
-screen. A retired code is still a code someone might be holding a reference to, and the
-entry that replaced it is exactly what that person needs to find.
+Retired codes stay listed under **Retired SNOMED CT codes**, with the reason and the code
+that replaced each one, if any did. A retired code is still a code someone might hold a
+reference to, and the code that replaced it is what that person needs to find.
 
-## You only ever type the code
+## Finding a code
 
-Type a SNOMED CT code and the screen resolves its fully specified name, AU preferred term
-and current status live against the terminology server, NCTS's own Ontoserver. You cannot
-type either name yourself — there is no field for it. This is deliberate: a name that
-could be typed is a name that could disagree with what SNOMED CT actually publishes for
-that code, and this screen exists to make that impossible.
+Type in the search box. It is called **SNOMED CT code** when the entry has no code, and
+**Replacement SNOMED CT code** when it has one. You can type:
 
-A code cannot be bound until it resolves. If you see **"This code must resolve against the
-terminology server before it can be bound"**, the code has not yet resolved — check what
-the screen shows underneath the code field:
+- **A term**, such as `microscopy`. The terminology server (NCTS's Ontoserver) matches it,
+  and the matching concepts appear as a list of codes with their AU preferred terms.
+- **A whole code.** The matching concept appears if it is one the catalogue accepts.
 
-- **A name and a status** — the code resolved. You can bind it.
-- **"… was not found in the AU edition. Check the identifier."** — this code does not
-  exist in the SNOMED CT Australian edition. Check you have the right code.
-- **"The terminology server could not be reached…"** — the server could not be reached
-  right now. This is not the same as the code not existing: wait a moment and try again,
-  rather than assuming the code is wrong.
+**Only active procedures are offered.** The search covers the concepts under Procedure in
+SNOMED CT, and not Procedure itself. A code from anywhere else, such as a disorder or a
+body structure, is never listed. If you type one, the box says **"No procedure matches.
+Only concepts under Procedure can be bound."** This is deliberate. It is the only check
+at save time that the code is a procedure.
 
-An **inactive** code can still be bound. The screen tells you it is inactive, but does not
-stop you — the checks that would refuse an inactive code at bind time are a later stage of
-the platform, not this screen. Look closely before binding one on purpose.
+A long list says **"Showing 20 of 140."** Type more to narrow it.
+
+Use the arrow keys to move through the list. The first result is highlighted, so **Enter**
+chooses it.
+
+## You only ever pick the code
+
+Choose a result and the form reads its fully specified name, AU preferred term and status
+from the terminology server. You cannot type either name. A name that could be typed is a
+name that could disagree with what SNOMED CT publishes for that code, and this screen exists
+to make that impossible.
+
+Choose **Clear the chosen code** to change your mind.
+
+If the server returns no name for the code, the form says so and does not let you save it.
+If you choose **Save** while a code is still being checked, you see **"Wait for the code to
+finish checking before saving."**
 
 ## Binding a code
 
-Use **Bind a code**. Type the code, wait for it to resolve, give a changelog note, and
-choose **Bind code**.
+When the entry has no code, choose the code, write the changelog note and choose **Save**.
+The form says **"Saving binds this code to the entry."**
 
-This form only appears while the entry has no active binding — an entry can have at most
-one. If the entry already has one, retire or replace it first.
+## Replacing a code
 
-Every change needs a **changelog note**. It is the same field as the changelog note
-elsewhere on this screen, and it becomes the published History text for the entry, so
-write a sentence describing the change. Single words like "update" or "fix" are refused,
-and the button stays unavailable — with a message under the note explaining why — until
-you write one.
+When the entry has a code, choose a replacement and **Save**. The form says **"Saving
+retires 391483001 and binds this code in its place."**
 
-## Retiring a binding
+One request retires the old code, binds the new one and records the new code against the
+retired row. One changelog note covers both steps, since replacing is one editorial
+decision. If someone else changes the entry first, none of the steps run.
 
-Choose **Retire** on the active row, give a changelog note, and confirm.
+## Retiring a code with no replacement
 
-The binding stops being active and the row updates to show it is retired, with your
-reason. Nothing is deleted — the code and its history stay on the entry, and the entry can
-now take a new binding.
+Choose **Retire without a replacement** beside the active code, write a changelog note and
+confirm. This saves at once, without **Save**.
 
-Retiring on its own records no successor. If you are retiring this code **because**
-another one replaces it, use Replace instead — Retire alone cannot record that link.
+The code stops being active and stays listed as retired, with your reason. The entry now has
+no code and can take a new one. Retiring on its own records no successor. If another code
+takes its place, use a replacement instead, because only a replacement records that link.
 
-## Replacing a binding
+## When the terminology server cannot answer
 
-Choose **Replace** on the active row. Type the successor's code, wait for it to resolve,
-give a changelog note, and confirm.
-
-This retires the current binding and binds the successor in one change, and records the
-successor's code against the retired row — visible from that row in the table from then
-on. One changelog note covers both steps, since replacing is one editorial decision, not
-two.
-
-If someone else changes the entry while you have Replace open, none of the three steps
-run — the predecessor stays active, no successor is created, and nothing is recorded.
+The box says so, using the server's own sentence, followed by **"You can still change the
+rest of this entry."** The rest of the form works. You can save your other changes now and
+come back for the code. This is not the same as a code that does not exist, so wait a moment
+and try again before assuming the code is wrong.
 
 ## If something goes wrong
 
-**"This code must resolve against the terminology server before it can be bound."** See
-[You only ever type the code](#you-only-ever-type-the-code) above.
+**"No procedure matches. Only concepts under Procedure can be bound."** Nothing the server
+holds matches what you typed, or the match is not a procedure. Check the term or the code.
 
-**"… was not found in the AU edition. Check the identifier."** The code does not exist in
-the SNOMED CT Australian edition as far as the terminology server knows. Check the code.
+**"The terminology server did not return a name for ... It cannot be bound until it does."**
+The server knows the code but returned no name for it. Try another code, or try again later.
 
-**"The terminology server could not be reached…"** A live check could not be completed
-right now. Every other part of this screen is unaffected — wait a moment and try again.
+**"This code is already actively bound to another catalogue entry."** A code can be active on one
+entry only. Find that entry and retire the code there first. The save marks the code field,
+and your other changes still save.
 
-**The button stays unavailable, with a message under the changelog note.** The note is
-empty, too short, or a single low-information word such as "update" or "fix" — the screen
-tells you which, before you try to save. Write a sentence saying what changed and why; the
-button becomes available as soon as the note passes.
+**"This entry already has an active code binding."** Someone else bound a code while you had
+the screen open. Reload the entry and replace the code that is there now.
 
-**"This entry already has an active code binding."** Someone else bound a code to this
-entry while you had the screen open, or a second Bind attempt reached the server anyway.
-Reload the entry and use Retire or Replace on the binding that is there now.
+**"Someone else changed this entry while you had it open."** Another editor saved first.
+Nothing of yours was saved from that point. The screen reloads their change. Check yours is
+still needed, then save again.
 
-**"Someone else changed this entry while you had it open."** Another editor saved a
-change to this entry — a term, a code binding, or a property value — before your Bind,
-Retire or Replace request reached the server. Nothing of yours was saved. The screen
-starts reloading their change for you; check yours is still needed, then try again.
+**Save stays unavailable, with a message under the changelog note.** The note is empty, too
+short, or a single low-information word such as "update" or "fix". Write a sentence saying
+what changed and why.
 
-**"You cannot edit this entry with your current sign-in."** See the note on multi-factor
-authentication at the top of this page.
-
-**"... could not be refreshed just now, so what follows may be out of date."** The entry
-loaded, but a later refresh was refused — usually a sign-in that has expired while the
-screen was open. Sign in again and reopen the entry before making further changes.
+**"You cannot edit this entry with your current sign-in."** See
+[Editing an entry](editing-an-entry.md#if-something-goes-wrong).

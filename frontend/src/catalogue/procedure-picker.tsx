@@ -20,6 +20,9 @@ import { useDebouncedValue } from "./use-debounced-value.ts";
 
 const SEARCH_DEBOUNCE_MS = 400;
 
+/** The route's own ceiling on `q`. A longer search is refused with no sentence to show. */
+const MAX_SEARCH_LENGTH = 200;
+
 const ITEM_CLASSES =
   "flex min-h-8 cursor-pointer select-none items-center gap-2 px-2 py-1 text-sm text-[var(--color-text)] data-[highlighted]:bg-[var(--color-accent)] data-[highlighted]:text-[var(--color-accent-contrast)]";
 
@@ -33,10 +36,13 @@ const itemLabel = (option: Option): string => option.label;
 export function ProcedurePicker({
   id,
   label,
+  error,
   onPick,
 }: {
   id: string;
   label: string;
+  /** A refusal to show on the box, such as a code the server would not name. */
+  error?: string;
   onPick: (code: string) => void;
 }) {
   const [text, setText] = useState("");
@@ -68,7 +74,7 @@ export function ProcedurePicker({
       ? "Searching…"
       : outage
         ? `${
-            refusalDetail(search.error) ?? "The terminology server could not be reached."
+            refusalDetail(search.error) ?? "The code search could not be completed."
           } You can still change the rest of this entry.`
         : noMatch
           ? "No procedure matches. Only concepts under Procedure can be bound."
@@ -81,12 +87,15 @@ export function ProcedurePicker({
       id={id}
       label={label}
       hint="Type a term, or a SNOMED CT code. Only procedures are offered."
-      error={outage ? statusText : undefined}
+      error={outage ? statusText : error}
     >
       {(controlProps) => (
         <Combobox.Root<Option, false>
           items={options}
           filter={null}
+          // Enter chooses the first result. With nothing highlighted it would
+          // submit the whole form instead.
+          autoHighlight="always"
           value={null}
           inputValue={text}
           open={open && typed}
@@ -113,6 +122,7 @@ export function ProcedurePicker({
             aria-label={label}
             className={INPUT_CLASSES}
             inputMode="search"
+            maxLength={MAX_SEARCH_LENGTH}
             autoComplete="off"
           />
           <Combobox.Portal>

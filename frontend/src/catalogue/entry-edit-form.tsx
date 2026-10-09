@@ -626,11 +626,18 @@ export function EntryEditForm({ entry }: { entry: EntryDetail }) {
           selection={selection}
           error={codeError}
           onPick={(code) => {
-            if (code !== activeCode) {
-              setPickedCode(code);
+            clearRefusal(BINDING_CHANGE_ID);
+            if (code === activeCode) {
+              setOwnErrors([
+                {
+                  fieldId: CODE_FIELD_ID,
+                  message: "That code is already bound to this entry.",
+                },
+              ]);
+              return;
             }
             setOwnErrors([]);
-            clearRefusal(BINDING_CHANGE_ID);
+            setPickedCode(code);
           }}
           onClear={() => {
             setPickedCode(null);

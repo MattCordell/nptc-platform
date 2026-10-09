@@ -443,7 +443,9 @@ describe("saving a code (FR-06, FR-08)", () => {
         method: "POST",
         path: BIND_PATH,
         status: 409,
-        body: { detail: "That code is already bound to another catalogue entry." },
+        body: {
+          detail: "This code is already actively bound to another catalogue entry.",
+        },
       },
       usageOk(5),
     ]);
@@ -455,7 +457,9 @@ describe("saving a code (FR-06, FR-08)", () => {
     await save(user);
 
     await screen.findByRole("heading", { name: "Some changes were not saved" });
-    expect(summary().getByText(/already bound to another catalogue entry/)).toBeVisible();
+    expect(
+      summary().getByText(/already actively bound to another catalogue entry/),
+    ).toBeVisible();
     expect(form().getByText(FSN)).toBeInTheDocument();
     // A refusal changed nothing on the server, so the next write keeps the loaded version.
     expect(bodyOf(calls, USAGE_PATH)).toMatchObject({ expected_row_version: 4 });
@@ -1008,5 +1012,77 @@ describe("retiring the code with no replacement (FR-08)", () => {
     await user.click(form().getByRole("button", { name: RETIRE_BUTTON }));
 
     await expectNoA11yViolations(container);
+  });
+});
+
+describe("choosing a code by keyboard, and the same code twice", () => {
+  it("chooses the first result on Enter, and does not submit the form", async () => {
+    const calls = stubApi([entryRoute(), PROPERTIES_OK, PROCEDURES_OK, conceptRoute()]);
+    const user = userEvent.setup();
+    await renderLoaded();
+
+    await user.type(form().getByLabelText("SNOMED CT code"), "micro");
+    await screen.findByRole("option", { name: new RegExp(CODE) }, { timeout: 2000 });
+    await user.keyboard("{Enter}");
+
+    expect(await form().findByText(FSN, {}, { timeout: 2000 })).toBeVisible();
+    expect(writes(calls)).toHaveLength(0);
+  });
+
+  it("says so when the chosen code is the one the entry already has", async () => {
+    stubApi([
+      entryRoute({ ...ENTRY, bindings: [{ ...ACTIVE_BINDING, code: CODE, fsn: FSN }] }),
+      PROPERTIES_OK,
+      PROCEDURES_OK,
+      conceptRoute(),
+    ]);
+    const user = userEvent.setup();
+    await renderLoaded();
+
+    await user.type(form().getByLabelText("Replacement SNOMED CT code"), "micro");
+    await user.click(
+      await screen.findByRole("option", { name: new RegExp(CODE) }, { timeout: 2000 }),
+    );
+
+    expect(
+      (await form().findAllByText("That code is already bound to this entry.")).length,
+    ).toBeGreaterThan(0);
+    expect(form().queryByText("Chosen code")).not.toBeInTheDocument();
+  });
+
+  it("limits a search to the length the server accepts", async () => {
+    stubApi([entryRoute(), PROPERTIES_OK]);
+    await renderLoaded();
+
+    expect(form().getByLabelText("SNOMED CT code")).toHaveAttribute("maxlength", "200");
+  });
+});
+
+describe("a reinstated synonym that duplicates another entry's (FR-05)", () => {
+  it("lists the warning with an Acknowledge button", async () => {
+    stubApi([
+      entryRoute(),
+      PROPERTIES_OK,
+      {
+        method: "POST",
+        path: REINSTATE_PATH,
+        status: 200,
+        body: {
+          designation: { term: "Old note", status: "active", length: 8 },
+          warnings: [{ ...COLLISION_WARNING, term: "Old note" }],
+          row_version: 5,
+        },
+      },
+    ]);
+    const user = userEvent.setup();
+    await renderLoaded();
+
+    await user.click(form().getByRole("button", { name: "Reinstate Old note" }));
+    await user.type(inDialog().getByLabelText("Changelog note"), "Still in use");
+    await user.click(inDialog().getByRole("button", { name: "Reinstate term" }));
+
+    expect(
+      await screen.findByRole("button", { name: "Acknowledge Old note" }),
+    ).toBeVisible();
   });
 });
