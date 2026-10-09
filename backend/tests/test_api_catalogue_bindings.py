@@ -26,6 +26,7 @@ from sqlalchemy import func, select
 from sqlalchemy.engine import Connection
 
 from nptc.audit.writer import AuditContext
+from nptc.auth.permissions import Role
 from nptc.catalogue import queries
 from nptc.catalogue.entries import EntryChanges, create_entry, save_entry
 from nptc.db.models.audit import AuditEvent
@@ -999,3 +1000,78 @@ def test_conflict_response_names_no_internal_identifier(api: ApiTestApp) -> None
         r"\b[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}\b"
     )
     assert uuid_pattern.search(response.text) is None, response.text
+
+
+def _write_binding(
+    api: ApiTestApp, business_key: str, token: str, operation: str, **overrides: object
+) -> Any:
+    """One of the three binding writes the edit form sends, by name. `bind` needs an entry with
+    no active binding. `replace` and `retire` need one on `CODE_A`."""
+    if operation == "bind":
+        return _bind(api, business_key, token, **overrides)
+    if operation == "replace":
+        return _replace(api, business_key, CODE_A, token, **overrides)
+    return _retire(api, business_key, CODE_A, token, **overrides)
+
+
+@pytest.mark.req("FR-44")
+@pytest.mark.integration
+@pytest.mark.parametrize("operation", ["bind", "replace", "retire"])
+def test_a_reviewer_is_refused_every_binding_write_on_the_edit_form(
+    api: ApiTestApp, operation: str
+) -> None:
+    """The token carries MFA, so the 403 is the missing `catalogue.edit_published` and not a
+    step-up challenge. A refused write changes neither the entry nor the audit log."""
+    business_key = _seed_entry(api)
+    if operation != "bind":
+        admin = api.admin_token(subject=f"sub-binding-reviewer-seed-{operation}")
+        assert _bind(api, business_key, admin).status_code == 201
+    reviewer = api.token_for_role(
+        subject=f"sub-binding-reviewer-{operation}", role=Role.REVIEWER, replace_roles=True
+    )
+    version = _row_version(api, business_key)
+    audit_before = _audit_event_count(api)
+
+    response = _write_binding(api, business_key, reviewer, operation)
+
+    assert response.status_code == 403, response.text
+    assert "WWW-Authenticate" not in response.headers
+    assert _row_version(api, business_key) == version
+    assert _audit_event_count(api) == audit_before
+
+
+@pytest.mark.req("FR-19")
+@pytest.mark.req("FR-37")
+@pytest.mark.req("NFR-08")
+@pytest.mark.req("NFR-12")
+@pytest.mark.integration
+@pytest.mark.parametrize("operation", ["bind", "replace", "retire"])
+def test_a_binding_change_appears_in_the_entry_history_and_the_audit_log(
+    api: ApiTestApp, operation: str
+) -> None:
+    """The changelog note of a code change reaches the public entry history (FR-19) and the
+    audit log's own search (NFR-12). Scoped to this entry's own binding rows."""
+    business_key = _seed_entry(api, status="active")
+    token = api.admin_token(subject=f"sub-binding-audit-visible-{operation}")
+    entry_id = _entry_id(api, business_key)
+    if operation != "bind":
+        assert _bind(api, business_key, token).status_code == 201
+    reason = f"Code change ({operation}) noted for the history and the audit log."
+
+    response = _write_binding(api, business_key, token, operation, reason=reason)
+
+    assert response.status_code in (200, 201), response.text
+    changed_code, changed_status = {
+        "bind": (CODE_A, "active"),
+        "replace": (CODE_B, "active"),
+        "retire": (CODE_A, "retired"),
+    }[operation]
+    binding_id = _binding_id(api, entry_id=entry_id, code=changed_code, status=changed_status)
+    history = api.get(f"/catalogue/entries/{business_key}/history", token=token).json()
+    assert reason in [item["note"] for item in history["items"]]
+    audit = api.get(
+        "/audit/events",
+        token=token,
+        params={"entity_type": CodeBinding.__tablename__, "entity_id": str(binding_id)},
+    ).json()
+    assert reason in [item["reason"] for item in audit["items"]]
