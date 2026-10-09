@@ -502,6 +502,9 @@ export function EntryEditForm({ entry }: { entry: EntryDetail }) {
     if (found.length > 0) {
       return { ok: false };
     }
+    // A warning from an earlier reinstatement describes that write, as the
+    // summary's warnings describe the last run.
+    setDialogWarnings([]);
     const sent = changed;
     const storedTerm = runIsNewer ? baseline.term : entry.preferred_term;
     try {
