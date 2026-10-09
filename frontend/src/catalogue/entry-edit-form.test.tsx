@@ -628,6 +628,23 @@ describe("the Save button", () => {
     expect(button).not.toHaveAttribute("aria-disabled");
   });
 
+  it("does not count a change that cleans to the stored term", async () => {
+    // The server treats a term that differs only in whitespace it cleans away as
+    // no change, so the form must not offer to save it.
+    const calls = stubApi(BASE_ROUTES);
+    const user = userEvent.setup();
+    await renderLoaded();
+
+    await user.type(form().getByLabelText("RCPA Preferred"), "\u00a0");
+    await fillNote(user, "Nothing real changed");
+    await save(user);
+
+    expect(await screen.findAllByText("There are no changes to save.")).not.toHaveLength(
+      0,
+    );
+    expect(writes(calls)).toHaveLength(0);
+  });
+
   it("shows an empty term and a missing note together on the same click", async () => {
     const calls = stubApi(BASE_ROUTES);
     const user = userEvent.setup();
@@ -917,5 +934,95 @@ describe("a failure that stops the run", () => {
       summary().getByText(/Not sent, because an earlier field failed/),
     ).toBeInTheDocument();
     expect(writes(calls)).toHaveLength(1);
+  });
+});
+
+describe("saving again after a run", () => {
+  it("addresses the next save from the run's own result while the entry is still reloading", async () => {
+    let written = false;
+    const calls = stubApi(
+      [
+        ...BASE_ROUTES,
+        amendOk(),
+        propertyRefusal(DISCIPLINE_PATH, "Not a recognised discipline code."),
+      ],
+      {
+        vary: (call) => {
+          if (call.method !== "GET") {
+            written = true;
+            return null;
+          }
+          // After the first write the refetch never answers, so the entry on screen
+          // still holds the version and term the page loaded with.
+          return written && call.path.endsWith(ENTRY_PATH)
+            ? { ...READ_OK, neverSettles: true }
+            : null;
+        },
+      },
+    );
+    const user = userEvent.setup();
+    await renderLoaded();
+
+    const term = form().getByLabelText("RCPA Preferred");
+    await user.clear(term);
+    await user.paste("Serum ferritin");
+    await choose(user, "Discipline 1", "BIOC");
+    await fillNote(user, "Correct two fields together");
+    await save(user);
+    await screen.findByRole("heading", { name: "Some changes were not saved" });
+
+    await user.type(term, " level");
+    await save(user);
+
+    await waitFor(() => expect(writes(calls)).toHaveLength(4));
+    const second = writes(calls).filter((call) => call.path.endsWith(AMEND_PATH))[1];
+    expect(second?.body).toMatchObject({
+      term: "Serum ferritin",
+      new_term: "Serum ferritin level",
+      expected_row_version: 5,
+    });
+  });
+
+  it("addresses the next save from the reloaded entry after someone else changed it", async () => {
+    let conflicted = false;
+    const calls = stubApi(
+      [
+        ...BASE_ROUTES,
+        { method: "POST", path: AMEND_PATH, status: 409, body: VERSION_CONFLICT },
+      ],
+      {
+        vary: (call) => {
+          if (call.method === "POST") {
+            conflicted = true;
+            return null;
+          }
+          return conflicted && call.path.endsWith(ENTRY_PATH)
+            ? {
+                ...READ_OK,
+                body: { ...ENTRY, preferred_term: "Ferritin (S)", row_version: 9 },
+              }
+            : null;
+        },
+      },
+    );
+    const user = userEvent.setup();
+    await renderLoaded();
+
+    const term = form().getByLabelText("RCPA Preferred");
+    await user.clear(term);
+    await user.paste("Serum ferritin");
+    await fillNote(user, "Reword the preferred term");
+    await save(user);
+    await screen.findByRole("heading", { name: "Some changes were not saved" });
+    await screen.findByRole("heading", { name: "Ferritin (S)", level: 1 });
+
+    await save(user);
+
+    await waitFor(() => expect(writes(calls)).toHaveLength(2));
+    expect(writes(calls)[1]?.body).toMatchObject({
+      term: "Ferritin (S)",
+      new_term: "Serum ferritin",
+      expected_row_version: 9,
+    });
   });
 });

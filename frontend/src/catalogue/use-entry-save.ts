@@ -85,8 +85,11 @@ export function useEntrySave(businessKey: string) {
       }
       return run;
     },
-    onSettled: () =>
-      queryClient.invalidateQueries({ queryKey: adminEntryDetailKey(businessKey) }),
+    onSettled: () => {
+      // Not returned: the mutation would wait for the refetch, and the summary
+      // should appear as soon as the writes are done.
+      void queryClient.invalidateQueries({ queryKey: adminEntryDetailKey(businessKey) });
+    },
   });
 
   async function save(request: EntrySaveRequest): Promise<SaveRun> {

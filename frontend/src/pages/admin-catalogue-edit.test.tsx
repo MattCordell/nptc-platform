@@ -753,6 +753,40 @@ describe("adding synonyms", () => {
     expect(callsTo(calls, ADD_PATH)).toHaveLength(1);
   });
 
+  it("reaches step-up when the form's write is refused for want of MFA, and does not replay it", async () => {
+    // The form's save run catches every failure to build its summary, so it must
+    // still rethrow the one that stopped it: the mutation cache is what
+    // recognises the challenge (ADR-0036).
+    const user = userEvent.setup();
+    const stepUp = vi.fn().mockResolvedValue("done");
+    const calls = stubApi([
+      READ_OK,
+      {
+        method: "POST",
+        path: AMEND_PATH,
+        status: 403,
+        body: { detail: "This action requires multi-factor authentication." },
+        headers: {
+          "WWW-Authenticate":
+            'Bearer error="insufficient_user_authentication", acr_values="2"',
+        },
+      },
+    ]);
+    await renderRoute(EDIT_URL, { auth: { ...SIGNED_IN.auth, stepUp } });
+    await screen.findByRole("heading", { name: "Ferritin", level: 1 });
+
+    await renameViaForm(user, "Rename the entry");
+
+    await waitFor(() => expect(stepUp).toHaveBeenCalledWith("2"));
+    // The editor's input is still there, the summary says what was not saved,
+    // and nothing was sent a second time.
+    expect(inForm().getByLabelText("RCPA Preferred")).toHaveValue("Ferritin renamed");
+    expect(
+      await screen.findByRole("heading", { name: "Some changes were not saved" }),
+    ).toBeInTheDocument();
+    expect(callsTo(calls, AMEND_PATH)).toHaveLength(1);
+  });
+
   it("splits a pasted cell into individual terms and shows what it will create", async () => {
     // FR-04's own acceptance criterion, end to end: the doubled semicolon in
     // "Zovirax;;Cyclir" must produce two terms and no empty row - and the

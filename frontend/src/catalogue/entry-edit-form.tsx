@@ -16,6 +16,7 @@ import { ChangelogNoteField, useChangelogNote } from "./changelog-note-field.tsx
 import { RefusalNotice } from "./collision-notice.tsx";
 import { formatPropertyValue } from "./format-property-value.ts";
 import { propertyValidationFieldErrors } from "./property-form-errors.ts";
+import { normaliseForComparison } from "./python-text.ts";
 import {
   CONTROLS,
   RepeatableValues,
@@ -186,7 +187,7 @@ export function EntryEditForm({ entry }: { entry: EntryDetail }) {
 
   function pendingChanges(): PendingChange[] {
     const found: PendingChange[] = [];
-    if (term !== baseline.term) {
+    if (normaliseForComparison(term) !== normaliseForComparison(baseline.term)) {
       found.push({
         change: {
           kind: "preferred_term",
@@ -240,7 +241,7 @@ export function EntryEditForm({ entry }: { entry: EntryDetail }) {
   }
 
   function validateOwnFields(): FormError[] {
-    return term.trim().length === 0
+    return normaliseForComparison(term) === ""
       ? [{ fieldId: TERM_FIELD_ID, message: "Enter the preferred term." }]
       : [];
   }
@@ -251,7 +252,7 @@ export function EntryEditForm({ entry }: { entry: EntryDetail }) {
       term: baseline.term,
       values: { ...baseline.values },
     };
-    let nextTerm = term;
+    let storedTerm: { sent: string; saved: string } | null = null;
     for (const outcome of result.outcomes) {
       const { change } = outcome;
       if (outcome.status === "saved") {
@@ -260,8 +261,8 @@ export function EntryEditForm({ entry }: { entry: EntryDetail }) {
           if (outcome.length !== null) {
             setServerLength(outcome.length);
           }
-          if (nextTerm === change.newTerm && outcome.savedTerm !== null) {
-            nextTerm = outcome.savedTerm;
+          if (outcome.savedTerm !== null) {
+            storedTerm = { sent: change.newTerm, saved: outcome.savedTerm };
           }
         } else {
           nextBaseline.values[change.key] = change.values;
@@ -291,7 +292,10 @@ export function EntryEditForm({ entry }: { entry: EntryDetail }) {
       }
     }
     setBaseline(nextBaseline);
-    setTerm(nextTerm);
+    if (storedTerm !== null) {
+      const { sent, saved } = storedTerm;
+      setTerm((current) => (current === sent ? saved : current));
+    }
     setRefusals(nextRefusals);
     setRun(result);
   }
@@ -304,11 +308,22 @@ export function EntryEditForm({ entry }: { entry: EntryDetail }) {
       return { ok: false };
     }
     const sent = changed;
+    // The entry is refetched after every run, but not before an editor can press
+    // Save again. A run's own last version, and the term it stored, are newer
+    // than the entry until that refetch lands, and sending the older ones would
+    // make a save conflict with the editor's own previous save.
+    const runIsNewer = run !== null && run.rowVersion > entry.row_version;
+    const rowVersion = runIsNewer ? run.rowVersion : entry.row_version;
+    const storedTerm = runIsNewer ? baseline.term : entry.preferred_term;
     try {
       const result = await entrySave.save({
-        changes: sent.map((item) => item.change),
+        changes: sent.map(({ change }) =>
+          change.kind === "preferred_term"
+            ? { ...change, currentTerm: storedTerm }
+            : change,
+        ),
         note: changelogNote.note,
-        rowVersion: entry.row_version,
+        rowVersion,
       });
       applyRun(result, sent);
       announce(describeRun(result));
