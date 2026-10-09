@@ -1272,3 +1272,57 @@ def test_describe_never_runs_the_fr84_hierarchy_check_or_fr99_tag_check() -> Non
 
     assert _hierarchy_expansions(client) == ()
     assert len(client.requests) == 1
+
+
+@pytest.mark.req("FR-99")
+def test_the_delta_lookup_returns_the_fsn_from_a_server_that_filters_designations() -> None:
+    """The sweep names seven properties and no `designation`. Against a server that
+    returns designations only when asked, the FSN must still arrive, or FR-99's tag
+    check counts every delta code as an unresolved FSN."""
+    code = "73638008"
+    fsn = "11-deoxycortisol measurement (procedure)"
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("$expand"):
+            return httpx.Response(
+                200, json={"resourceType": "ValueSet", "expansion": {"total": 0, "contains": []}}
+            )
+        parameters: list[dict[str, object]] = [
+            {
+                "name": "property",
+                "part": [
+                    {"name": "code", "valueCode": "inactive"},
+                    {"name": "value", "valueBoolean": False},
+                ],
+            }
+        ]
+        if "designation" in request.url.params.get_list("property"):
+            parameters.append(
+                {
+                    "name": "designation",
+                    "part": [
+                        {"name": "language", "valueCode": "en"},
+                        {
+                            "name": "use",
+                            "valueCoding": {
+                                "system": "http://snomed.info/sct",
+                                "code": "900000000000003001",
+                            },
+                        },
+                        {"name": "value", "valueString": fsn},
+                    ],
+                }
+            )
+        return httpx.Response(200, json={"resourceType": "Parameters", "parameter": parameters})
+
+    client = OntoserverClient(
+        TerminologyConfig(base_url="https://tx.example.test/fhir"),
+        transport=httpx.MockTransport(handler),
+        sleep=lambda _seconds: None,
+    )
+
+    with client:
+        result = TerminologySweep(client).run([code], edition=SNOMED_CT_AU)
+
+    assert result.unresolved_fsn_count == 0
+    assert [entry.fully_specified_name for entry in result.designations] == [fsn]
