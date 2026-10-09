@@ -122,14 +122,15 @@ detail routes carry `snomed_synonyms`, which has three states:
 | Value | Meaning |
 |---|---|
 | `null` | The entry has no active SNOMED CT binding, so nothing was looked up. |
-| `{"status": "available", "terms": [...]}` | The terminology server's synonyms for the active code. `terms` can be empty. |
+| `{"status": "available", "terms": [...]}` | The terminology server's synonyms for the active code. `terms` is empty when the concept has none, or when the code is not in the current AU edition. |
 | `{"status": "unavailable", "terms": []}` | The server could not answer. The rest of the response is unchanged and still 200. |
 
 `terms` leaves out the FSN and the AU preferred term, which `bindings` already carries. It
 is not limited to en-AU synonyms, because no FHIR operation separates them, so US
 spellings can appear. `label_provenance` is the same `synonym`/`not_applicable` descriptor
 a `designations` row carries (FR-98). Results are cached in process by code for 24 hours,
-and a failure for 60 seconds, so this field can lag a new SNOMED CT release by a day. It
+so this field can lag a new SNOMED CT release by a day. After the server fails, every entry
+shows `unavailable` for 60 seconds without asking it again. It
 does not take part in `row_version` or the change history. List and search rows carry no
 such field and make no terminology call.
 [terminology-client.md](terminology-client.md#entry-detail-live-snomed-ct-synonyms-issue-517)

@@ -1,8 +1,7 @@
 """The SNOMED CT synonyms an entry's detail page shows for its active binding (FR-53, FR-54).
 
 **Fetched live, cached in process, never stored.** One `$lookup` against the AU edition per
-code, kept for `SYNONYM_TTL_SECONDS`. A failure is kept for `FAILURE_TTL_SECONDS`, so a down
-server is asked at most once a minute per code, not once per page view.
+code, kept for `SYNONYM_TTL_SECONDS`.
 
 **Every synonym the server serves, not only the en-AU ones.** No FHIR operation on Ontoserver
 6.29 separates the synonyms acceptable in the AU language refset from the rest: `$lookup` serves
@@ -13,10 +12,19 @@ refset's preferred term, so US spellings such as "Anemia" can appear.
 defaults (30 s, three retries) could hold it for over a minute. `interactive_config` gives it one
 attempt and at most `INTERACTIVE_TIMEOUT_SECONDS`.
 
-**Any `TerminologyError` is "unavailable", never an error response.** The page still loads with
-its stored rows (FR-54), and "unavailable" stays distinct from "no synonyms". A
-`TerminologyConfigError` is re-raised instead, because it is a deployment fault for
-`nptc.api.errors` to report.
+**No `TerminologyError` reaches the page as an error response (FR-54).** Each kind is cached
+for as long as waiting could change it:
+
+- A retryable failure (timeout, transport, 5xx, 429) means the server is down. Every code is
+  `unavailable`, with no request, for `FAILURE_TTL_SECONDS`, so an outage costs one timeout a
+  minute rather than one per uncached code.
+- A concept absence means the code is not in the current AU edition. It has no synonyms to
+  show, so it is `available` with no terms for `SYNONYM_TTL_SECONDS`. Reporting the code itself
+  is the validation sweep's job (FR-45), not the page's.
+- Any other failure is `unavailable` for that code for `FAILURE_TTL_SECONDS`.
+
+A `TerminologyConfigError` is re-raised, because it is a deployment fault for `nptc.api.errors`
+to report.
 """
 
 from __future__ import annotations
@@ -36,6 +44,7 @@ from nptc_shared.terminology import (
     TerminologyConfig,
     TerminologyConfigError,
     TerminologyError,
+    is_concept_absence,
 )
 from nptc_shared.terminology.models import Designation, LookupResult
 
@@ -83,6 +92,7 @@ class SnomedSynonymResult:
 
 
 _UNAVAILABLE: Final = SnomedSynonymResult(SynonymStatus.UNAVAILABLE)
+_NONE: Final = SnomedSynonymResult(SynonymStatus.AVAILABLE)
 
 
 def interactive_config(config: TerminologyConfig) -> TerminologyConfig:
@@ -132,6 +142,7 @@ class SnomedSynonymSource:
         self._clock = clock
         self._max_entries = max_entries
         self._entries: OrderedDict[str, tuple[float, SnomedSynonymResult]] = OrderedDict()
+        self._outage_until = float("-inf")
         self._lock = threading.Lock()
 
     def synonyms_for(self, code: str, *, preferred_term: str | None) -> SnomedSynonymResult:
@@ -140,21 +151,19 @@ class SnomedSynonymSource:
         result = self._cached(code)
         if result is None:
             result = self._fetch(code)
-            self._store(code, result)
         if preferred_term is None or result.status is SynonymStatus.UNAVAILABLE:
             return result
         return replace(result, terms=tuple(t for t in result.terms if t != preferred_term))
 
     def _cached(self, code: str) -> SnomedSynonymResult | None:
         with self._lock:
+            now = self._clock()
             entry = self._entries.get(code)
-            if entry is None:
-                return None
-            expires_at, result = entry
-            if self._clock() >= expires_at:
+            if entry is not None and now < entry[0]:
+                return entry[1]
+            if entry is not None:
                 del self._entries[code]
-                return None
-            return result
+            return _UNAVAILABLE if now < self._outage_until else None
 
     def _fetch(self, code: str) -> SnomedSynonymResult:
         try:
@@ -164,18 +173,24 @@ class SnomedSynonymSource:
         except TerminologyConfigError:
             raise
         except TerminologyError as exc:
+            if is_concept_absence(exc):
+                _logger.info("SNOMED CT code %s is not in the AU edition", code)
+                return self._store(code, _NONE, SYNONYM_TTL_SECONDS)
             _logger.warning(
                 "SNOMED CT synonyms unavailable for code %s: %s", code, type(exc).__name__
             )
-            return _UNAVAILABLE
-        return SnomedSynonymResult(SynonymStatus.AVAILABLE, select_synonyms(lookup))
+            if exc.retryable:
+                with self._lock:
+                    self._outage_until = self._clock() + FAILURE_TTL_SECONDS
+                return _UNAVAILABLE
+            return self._store(code, _UNAVAILABLE, FAILURE_TTL_SECONDS)
+        result = SnomedSynonymResult(SynonymStatus.AVAILABLE, select_synonyms(lookup))
+        return self._store(code, result, SYNONYM_TTL_SECONDS)
 
-    def _store(self, code: str, result: SnomedSynonymResult) -> None:
-        ttl = (
-            SYNONYM_TTL_SECONDS if result.status is SynonymStatus.AVAILABLE else FAILURE_TTL_SECONDS
-        )
+    def _store(self, code: str, result: SnomedSynonymResult, ttl: float) -> SnomedSynonymResult:
         with self._lock:
             self._entries[code] = (self._clock() + ttl, result)
             self._entries.move_to_end(code)
             while len(self._entries) > self._max_entries:
                 self._entries.popitem(last=False)
+        return result

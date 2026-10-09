@@ -2411,7 +2411,8 @@ export interface components {
          *     and the binding's AU preferred term, and is not limited to en-AU: no FHIR operation
          *     separates the AU-acceptable synonyms, so US spellings can appear (see
          *     `nptc.terminology.synonyms`). `status` is `unavailable` when the server could not answer;
-         *     `terms` is then empty, which is not the same as `available` with no terms.
+         *     `terms` is then empty, which is not the same as `available` with no terms. A code missing
+         *     from the current AU edition is `available` with no terms.
          */
         SnomedSynonyms: {
             /**

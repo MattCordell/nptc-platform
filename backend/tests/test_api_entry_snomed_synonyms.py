@@ -234,3 +234,36 @@ def test_the_admin_detail_carries_the_same_field(api: ApiTestApp, seeded: Seeded
 
     assert response.status_code == 200, response.text
     assert response.json()["snomed_synonyms"]["terms"] == ["AFB microscopy"]
+
+
+class _TransactionProbe(StubTerminologyClient):
+    """Records whether the request's session still had a transaction open when `lookup` ran."""
+
+    def __init__(self, session: Any) -> None:
+        super().__init__()
+        self.session = session
+        self.in_transaction: list[bool] = []
+
+    def lookup(self, code: str, **kwargs: Any) -> LookupResult:
+        self.in_transaction.append(self.session.in_transaction())
+        return LookupResult(code=code, system=SNOMED_SYSTEM, display=None)
+
+
+@pytest.mark.req("FR-54")
+@pytest.mark.integration
+@pytest.mark.parametrize("route", ["public", "admin"])
+def test_the_lookup_runs_after_the_read_transaction_has_ended(
+    api: ApiTestApp, seeded: SeededCatalogue, route: str
+) -> None:
+    """A slow server must not hold a pooled connection: during an outage, a handful of first
+    views would otherwise exhaust the pool and stall every other route."""
+    probe = _TransactionProbe(api.session)
+    api.app.dependency_overrides[get_snomed_synonym_source] = lambda: SnomedSynonymSource(probe)
+    if route == "public":
+        response = api.get(f"/catalogue/entries/{seeded.canonical}")
+    else:
+        token = api.admin_token(subject="sub-admin-synonym-transaction")
+        response = api.get(f"/catalogue/admin/entries/{seeded.canonical}", token=token)
+
+    assert response.status_code == 200, response.text
+    assert probe.in_transaction == [False]

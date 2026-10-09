@@ -77,6 +77,12 @@ def run_after_commit_actions(session: Session) -> None:
             _log.error("a post-commit action failed (%s)", type(exc).__name__)
 
 
+def end_read_transaction(session: Session) -> None:
+    """Commits a read-only request now, returning its pooled connection before slow non-database
+    work. Read-only because queued `after_commit` actions would wait for `session_scope`."""
+    session.commit()
+
+
 def session_scope() -> Iterator[Session]:
     """One session per request, committed on success and rolled back on any exception. The commit
     lives here, not in each route, so a state change and the `audit_event` row recording it commit

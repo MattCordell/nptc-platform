@@ -57,6 +57,7 @@ from nptc.catalogue.facets import (
 )
 from nptc.db.models.catalogue_entry import CatalogueEntry
 from nptc.db.models.code_binding import SNOMED_CT_SYSTEM, CodeBindingStatus
+from nptc.db.session import end_read_transaction
 from nptc.exports.semantic_tag import render_display_term, trim_specimen_suffix
 from nptc.registry.handlers import DatatypeRegistry, SerialisationTarget
 from nptc.settings import ApiSettings
@@ -529,7 +530,8 @@ class SnomedSynonyms(BaseModel):
     and the binding's AU preferred term, and is not limited to en-AU: no FHIR operation
     separates the AU-acceptable synonyms, so US spellings can appear (see
     `nptc.terminology.synonyms`). `status` is `unavailable` when the server could not answer;
-    `terms` is then empty, which is not the same as `available` with no terms.
+    `terms` is then empty, which is not the same as `available` with no terms. A code missing
+    from the current AU edition is `available` with no terms.
     """
 
     model_config = ConfigDict(frozen=True)
@@ -654,7 +656,7 @@ def build_entry_detail(
     it, so one edit cannot update only some copies."""
     entry_ids = (entry.id,)
     bindings = queries.load_bindings(session, entry_ids)
-    return EntryDetail(
+    stored = {
         **entry_core_fields(
             entry.business_key,
             entry.preferred_term,
@@ -663,24 +665,26 @@ def build_entry_detail(
             entry.updated_at,
             queries.row_facts_for(session, entry.business_key),
         ),
-        row_version=entry.row_version,
-        designations=[
+        "row_version": entry.row_version,
+        "designations": [
             designation_from_row(row) for row in queries.load_designations(session, entry_ids)
         ],
-        bindings=[binding_from_row(row, settings) for row in bindings],
-        properties=[
+        "bindings": [binding_from_row(row, settings) for row in bindings],
+        "properties": [
             property_value_from_row(row, registry)
             for row in queries.load_property_values(session, entry_ids)
         ],
-        snomed_synonyms=snomed_synonyms_for(bindings, synonyms),
-    )
+    }
+    end_read_transaction(session)
+    return EntryDetail(**stored, snomed_synonyms=snomed_synonyms_for(bindings, synonyms))
 
 
 def snomed_synonyms_for(
     bindings: Sequence[queries.BindingRow], source: SnomedSynonymSource
 ) -> SnomedSynonyms | None:
     """The `EntryDetail.snomed_synonyms` for an entry's bindings, shared by every route that
-    builds an `EntryDetail`. Asks `source` only when one binding is active and SNOMED CT."""
+    builds an `EntryDetail`. Asks `source` only when one binding is active and SNOMED CT.
+    Callers end the read transaction first, so a slow server never holds a pooled connection."""
     active = next(
         (
             row

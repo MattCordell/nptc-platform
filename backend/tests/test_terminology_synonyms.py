@@ -31,10 +31,13 @@ from nptc_shared.terminology import (
     StubTerminologyClient,
     TerminologyConfig,
     TerminologyConfigError,
+    TerminologyError,
+    TerminologyProtocolError,
     TerminologyStatusError,
     TerminologyTimeoutError,
     TerminologyTransportError,
 )
+from nptc_shared.terminology.errors import OperationOutcomeIssue
 from nptc_shared.terminology.stub import StubNotSeededError, StubRequest
 
 _HL7 = "http://terminology.hl7.org/CodeSystem/hl7TermMaintInfra"
@@ -80,11 +83,12 @@ class _Clock:
 
 
 class _SwitchableClient(StubTerminologyClient):
-    """The seeded stub, failing every `lookup` while `down` is set."""
+    """The seeded stub, failing every `lookup` with `error` while `down` is set."""
 
-    def __init__(self, *, down: bool = False) -> None:
+    def __init__(self, *, down: bool = False, error: TerminologyError | None = None) -> None:
         super().__init__(concepts=_SEEDED)
         self.down = down
+        self.error = error or TerminologyTransportError("connection refused")
 
     def lookup(
         self,
@@ -96,7 +100,7 @@ class _SwitchableClient(StubTerminologyClient):
     ) -> LookupResult:
         if self.down:
             self._requests.append(StubRequest(Operation.LOOKUP, code))
-            raise TerminologyTransportError("connection refused")
+            raise self.error
         return super().lookup(
             code, edition=edition, properties=properties, display_language=display_language
         )
@@ -188,12 +192,12 @@ def test_the_stored_preferred_term_is_dropped_even_when_the_server_serves_anothe
         TerminologyTimeoutError("timed out"),
         TerminologyStatusError("unavailable", status_code=503),
         TerminologyTransportError("connection refused"),
-        TerminologyStatusError("not found", status_code=404),
+        TerminologyProtocolError("not a Parameters resource"),
         StubNotSeededError("nothing seeded"),
     ],
-    ids=["timeout", "503", "transport", "absent", "unseeded"],
+    ids=["timeout", "503", "transport", "protocol", "unseeded"],
 )
-def test_any_terminology_error_is_unavailable_not_an_exception(error: Exception) -> None:
+def test_a_terminology_failure_is_unavailable_not_an_exception(error: Exception) -> None:
     stub = StubTerminologyClient()
     stub.seed_error(Operation.LOOKUP, error, key="26604007")  # type: ignore[arg-type]
     source = SnomedSynonymSource(stub)
@@ -231,7 +235,7 @@ def test_a_result_is_cached_until_its_lifetime_ends() -> None:
 
 
 @pytest.mark.req("FR-54")
-def test_a_failure_is_cached_briefly_then_retried() -> None:
+def test_an_outage_answers_every_code_without_a_request_then_retries() -> None:
     client = _SwitchableClient(down=True)
     clock = _Clock()
     source = SnomedSynonymSource(client, clock=clock)
@@ -239,6 +243,7 @@ def test_a_failure_is_cached_briefly_then_retried() -> None:
     assert source.synonyms_for("26604007", preferred_term=None).status is SynonymStatus.UNAVAILABLE
     clock.now += FAILURE_TTL_SECONDS - 1
     assert source.synonyms_for("26604007", preferred_term=None).status is SynonymStatus.UNAVAILABLE
+    assert source.synonyms_for("167217005", preferred_term=None).status is SynonymStatus.UNAVAILABLE
     assert client.lookups == 1
 
     client.down = False
@@ -247,6 +252,69 @@ def test_a_failure_is_cached_briefly_then_retried() -> None:
     assert recovered == SnomedSynonymResult(
         SynonymStatus.AVAILABLE, ("FBC - Full blood count", "FBE")
     )
+    assert client.lookups == 2
+
+
+@pytest.mark.req("FR-54")
+def test_an_outage_does_not_hide_a_result_cached_before_it() -> None:
+    client = _SwitchableClient()
+    clock = _Clock()
+    source = SnomedSynonymSource(client, clock=clock)
+    before = source.synonyms_for("26604007", preferred_term=None)
+
+    client.down = True
+    assert source.synonyms_for("167217005", preferred_term=None).status is SynonymStatus.UNAVAILABLE
+
+    assert source.synonyms_for("26604007", preferred_term=None) == before
+    assert before.status is SynonymStatus.AVAILABLE
+    assert client.lookups == 2
+
+
+@pytest.mark.req("FR-54")
+def test_a_non_retryable_failure_is_cached_for_its_code_only() -> None:
+    client = _SwitchableClient(down=True, error=TerminologyProtocolError("not Parameters"))
+    clock = _Clock()
+    source = SnomedSynonymSource(client, clock=clock)
+
+    source.synonyms_for("26604007", preferred_term=None)
+    source.synonyms_for("26604007", preferred_term=None)
+    assert client.lookups == 1
+
+    source.synonyms_for("167217005", preferred_term=None)
+    assert client.lookups == 2
+
+    clock.now += FAILURE_TTL_SECONDS
+    source.synonyms_for("26604007", preferred_term=None)
+    assert client.lookups == 3
+
+
+@pytest.mark.req("FR-54")
+@pytest.mark.parametrize(
+    "error",
+    [
+        TerminologyStatusError("not found", status_code=404),
+        TerminologyStatusError(
+            "not found",
+            status_code=400,
+            issues=(OperationOutcomeIssue(severity="error", code="not-found"),),
+        ),
+    ],
+    ids=["404", "400-not-found-outcome"],
+)
+def test_an_absent_code_has_no_synonyms_and_is_cached_like_a_result(
+    error: TerminologyError,
+) -> None:
+    client = _SwitchableClient(down=True, error=error)
+    clock = _Clock()
+    source = SnomedSynonymSource(client, clock=clock)
+
+    assert source.synonyms_for("26604007", preferred_term=None) == SnomedSynonymResult(
+        SynonymStatus.AVAILABLE, ()
+    )
+    clock.now += SYNONYM_TTL_SECONDS - 1
+    source.synonyms_for("26604007", preferred_term=None)
+    source.synonyms_for("167217005", preferred_term=None)
+
     assert client.lookups == 2
 
 

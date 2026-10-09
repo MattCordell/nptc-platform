@@ -72,6 +72,7 @@ from nptc.catalogue.facets import load_facet_context, parse_filters
 from nptc.catalogue.length_report import compute_length_distribution
 from nptc.catalogue.maintenance import SortName
 from nptc.catalogue.term_hygiene import preferred_term_length
+from nptc.db.session import end_read_transaction
 from nptc.registry.handlers import DatatypeRegistry
 
 router = APIRouter(prefix="/catalogue", tags=["catalogue-admin"])
@@ -450,7 +451,7 @@ def read_entry_any_status(
     entry = load_entry_for_update(session, business_key)
     entry_ids = (entry.id,)
     bindings = queries.load_bindings(session, entry_ids)
-    return EntryDetail(
+    stored = {
         **entry_core_fields(
             entry.business_key,
             entry.preferred_term,
@@ -459,18 +460,19 @@ def read_entry_any_status(
             entry.updated_at,
             queries.row_facts_for(session, entry.business_key),
         ),
-        row_version=entry.row_version,
-        designations=[
+        "row_version": entry.row_version,
+        "designations": [
             designation_from_row(row)
             for row in queries.load_designations_any_status(session, entry_ids)
         ],
-        bindings=[binding_from_row(row, settings) for row in bindings],
-        properties=[
+        "bindings": [binding_from_row(row, settings) for row in bindings],
+        "properties": [
             property_value_from_row(row, registry)
             for row in queries.load_property_values(session, entry_ids)
         ],
-        snomed_synonyms=snomed_synonyms_for(bindings, synonyms),
-    )
+    }
+    end_read_transaction(session)
+    return EntryDetail(**stored, snomed_synonyms=snomed_synonyms_for(bindings, synonyms))
 
 
 class LengthDistributionBucket(BaseModel):

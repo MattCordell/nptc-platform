@@ -368,7 +368,8 @@ say so. A true en-AU filter needs a server that exposes acceptability.
 | Setting | Value | Why |
 |---|---|---|
 | Result lifetime | 24 h | AU releases are monthly. |
-| Failure lifetime | 60 s | A down server is asked at most once a minute per code. |
+| Outage window | 60 s | After a retryable failure, every code is `unavailable` with no request, so an outage costs one timeout a minute. |
+| Other failure lifetime | 60 s, per code | A malformed answer for one code is retried a minute later. |
 | Maximum codes held | 10,000 | The catalogue holds about 2,000 active bindings, with a ceiling near 5,000. |
 | Timeout | 3 s, or `NPTC_TX_TIMEOUT_SECONDS` if shorter | Live lookups took 0.3 to 0.9 s on 2026-10-09. |
 | Retries | None | The page waits on this call. |
@@ -378,10 +379,23 @@ from `interactive_config`, applied to a second `OntoserverClient` built by
 `get_snomed_synonym_source`. The shared client's defaults (30 s, three retries) could hold
 the page for over a minute.
 
-Any `TerminologyError` becomes `status: "unavailable"` with no terms, and the response
-is still 200 (FR-54). This covers a timeout, a transport failure, a 5xx, a rate limit and
-an unknown code. A `TerminologyConfigError` is the exception: it propagates to the 500
-that `nptc.api.errors` gives it.
+No `TerminologyError` fails the page (FR-54). Each kind is cached for as long as waiting
+could change it:
+
+| Failure | Field | Cached |
+|---|---|---|
+| Retryable: a timeout, a transport failure, a 5xx or a 429 | `unavailable` | 60 s, for every code |
+| Concept absence (`is_concept_absence`): the code is not in the current AU edition | `available`, no terms | 24 h, for that code |
+| Anything else, such as an unparseable body | `unavailable` | 60 s, for that code |
+
+An absent code shows no synonyms rather than "try again later", because waiting will not
+fix it. Reporting the code itself is the validation sweep's job (FR-45). A
+`TerminologyConfigError` propagates to the 500 that `nptc.api.errors` gives it.
+
+**The lookup runs with no database connection held.** The detail builders read every stored
+row, then call `nptc.db.session.end_read_transaction` before the lookup. Otherwise each
+request would hold a pooled connection, idle in a transaction, for up to 3 s. During an
+outage a handful of first views could then exhaust the pool and stall every other route.
 
 ### Why this cache and anonymous access are acceptable here
 
