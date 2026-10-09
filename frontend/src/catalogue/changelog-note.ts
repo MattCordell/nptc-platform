@@ -14,6 +14,12 @@
  * it is still rejected server-side.
  */
 
+import {
+  PYTHON_SPACE_CHARS,
+  PYTHON_SPACE_CLASS,
+  normaliseForComparison,
+} from "./python-text.ts";
+
 //: Mirrors `MINIMUM_NOTE_LENGTH` in `changelog.py`.
 export const MINIMUM_NOTE_LENGTH = 10;
 
@@ -45,45 +51,6 @@ const LOW_INFORMATION_NOTES = new Set<string>([
   "misc",
   "",
 ]);
-
-/**
- * Every codepoint Unicode classifies as general category `Zs` other than
- * the ordinary space - the set `nptc_shared.text.is_normalisable_space`
- * matches. Written as escapes, never as the characters themselves, the same
- * posture `split-synonyms.ts`'s `PYTHON_SPACE_CLASS` takes for a related but
- * wider set: a source file containing an invisible character is the defect
- * class this platform exists to eliminate.
- */
-const NON_ASCII_ZS_SPACE = new RegExp(
-  "[\\u00a0\\u1680\\u2000-\\u200a\\u202f\\u205f\\u3000]",
-  "gu",
-);
-
-//: The inner character-class content of the same Python `str.strip()`/`\s`
-//: set `split-synonyms.ts` defines as `PYTHON_SPACE_CLASS` - kept as the bare
-//: escapes (no surrounding `[]`) so both the edge-trim below and `fold`'s
-//: punctuation-strip/word-split (issue #62 review) can build their own
-//: character classes from the one definition rather than drifting apart.
-const PYTHON_SPACE_CHARS =
-  "\\t\\n\\v\\f\\r\\u001c-\\u001f \\u0085\\u00a0\\u1680\\u2000-\\u200a" +
-  "\\u2028\\u2029\\u202f\\u205f\\u3000";
-const PYTHON_SPACE_CLASS = `[${PYTHON_SPACE_CHARS}]`;
-const PYTHON_EDGE_WHITESPACE = new RegExp(
-  `^${PYTHON_SPACE_CLASS}+|${PYTHON_SPACE_CLASS}+$`,
-  "gu",
-);
-
-/**
- * Mirrors `nptc_shared.text.normalise_for_comparison`: NFC, every
- * non-ASCII `Zs` space character collapsed to an ordinary space wherever
- * it occurs, then edge whitespace stripped using Python's (wider)
- * `str.strip()` class.
- */
-function normaliseForComparison(text: string): string {
-  const composed = text.normalize("NFC");
-  const collapsed = composed.replace(NON_ASCII_ZS_SPACE, " ");
-  return collapsed.replace(PYTHON_EDGE_WHITESPACE, "");
-}
 
 //: Mirrors `_STRIP_PUNCTUATION_RE` (`[^\w\s]`, Unicode). CPython's Unicode
 //: `\w` matches exactly `GC ∈ {L*, N*}` (letters and *every* numeric

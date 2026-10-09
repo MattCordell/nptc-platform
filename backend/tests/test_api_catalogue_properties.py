@@ -22,6 +22,7 @@ from sqlalchemy import func, select
 from sqlalchemy.engine import Connection
 
 from nptc.audit.writer import AuditContext
+from nptc.auth.permissions import Role
 from nptc.catalogue.entries import create_entry
 from nptc.db.models.audit import AuditEvent
 from nptc.db.models.catalogue_entry import CatalogueEntry
@@ -81,7 +82,12 @@ def _unique_key(prefix: str) -> str:
 
 
 def _create_string_property(
-    api: ApiTestApp, token: str, *, key: str, max_length: int | None = None
+    api: ApiTestApp,
+    token: str,
+    *,
+    key: str,
+    max_length: int | None = None,
+    cardinality: str = "0..1",
 ) -> Any:
     constraints: dict[str, object] = {"maxLength": max_length} if max_length is not None else {}
     response = api.post(
@@ -91,7 +97,7 @@ def _create_string_property(
             "key": key,
             "label": key.replace("_", " ").title(),
             "datatype": "string",
-            "cardinality": "0..1",
+            "cardinality": cardinality,
             "scope": "both",
             "display_order": 0,
             "constraints": constraints,
@@ -103,10 +109,14 @@ def _create_string_property(
 
 
 def _new_entry(
-    api: ApiTestApp, preferred_term: str = "FR-248 property write entry"
+    api: ApiTestApp, preferred_term: str = "FR-248 property write entry", status: str = "draft"
 ) -> CatalogueEntry:
     entry = create_entry(
-        api.session, AuditContext.system(), preferred_term=preferred_term, reason=_REASON
+        api.session,
+        AuditContext.system(),
+        preferred_term=preferred_term,
+        reason=_REASON,
+        status=status,
     )
     api.session.flush()
     return entry
@@ -681,6 +691,76 @@ def test_save_property_values_authenticated_without_permission_is_403(api: ApiTe
     )
 
     assert response.status_code == 403, response.text
+
+
+@pytest.mark.req("FR-44")
+@pytest.mark.integration
+def test_save_property_values_by_a_reviewer_is_403_and_changes_nothing(api: ApiTestApp) -> None:
+    """The entry edit form saves a property with this route. A Reviewer holds no
+    `catalogue.edit_published`. The token carries MFA, so the 403 is the missing permission and
+    not a step-up challenge."""
+    admin_token = api.admin_token(subject="sub-save-reviewer-setup")
+    key = _unique_key("save_reviewer")
+    _create_string_property(api, admin_token, key=key)
+    entry = _new_entry(api)
+    token = api.token_for_role(subject="sub-save-reviewer", role=Role.REVIEWER, replace_roles=True)
+    audit_before = _audit_event_count(api)
+
+    response = _put_values(
+        api,
+        token,
+        business_key=entry.business_key,
+        property_key=key,
+        values=[{"value": "a value"}],
+        expected_row_version=entry.row_version,
+    )
+
+    assert response.status_code == 403, response.text
+    assert "WWW-Authenticate" not in response.headers
+    assert _property_value_count(api, entry_id=entry.id, property_key=key) == 0
+    assert _audit_event_count(api) == audit_before
+
+
+@pytest.mark.req("FR-19")
+@pytest.mark.req("FR-37")
+@pytest.mark.req("NFR-08")
+@pytest.mark.req("NFR-12")
+@pytest.mark.integration
+@pytest.mark.parametrize(
+    ("cardinality", "values"),
+    [("0..1", [{"value": "one"}]), ("0..*", [{"value": "one"}, {"value": "two"}])],
+)
+def test_a_property_save_appears_in_the_entry_history_and_the_audit_log(
+    api: ApiTestApp, cardinality: str, values: list[dict[str, object]]
+) -> None:
+    """The edit form's property fields: the changelog note reaches the public entry history
+    (FR-19) and the audit log's own search (NFR-12), for a single-valued and a multi-valued
+    property. Scoped to this entry's own events."""
+    token = api.admin_token(subject=f"sub-audit-visible-{cardinality}")
+    key = _unique_key("audit_visible")
+    _create_string_property(api, token, key=key, cardinality=cardinality)
+    entry = _new_entry(api, status="active")
+    reason = f"Record the {cardinality} values for the visibility check."
+
+    response = _put_values(
+        api,
+        token,
+        business_key=entry.business_key,
+        property_key=key,
+        values=values,
+        expected_row_version=entry.row_version,
+        reason=reason,
+    )
+
+    assert response.status_code == 200, response.text
+    history = api.get(f"/catalogue/entries/{entry.business_key}/history", token=token).json()
+    assert reason in [item["note"] for item in history["items"]]
+    audit = api.get(
+        "/audit/events",
+        token=token,
+        params={"entity_type": _PROPERTY_VALUE_SET_ENTITY_TYPE, "entity_id": f"{entry.id}:{key}"},
+    ).json()
+    assert [item["reason"] for item in audit["items"]] == [reason]
 
 
 @pytest.mark.req("NFR-06")

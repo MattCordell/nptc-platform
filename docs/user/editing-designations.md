@@ -27,7 +27,11 @@ brought back: see [Reinstating a retired term](#reinstating-a-retired-term) belo
 **Length** is the character count of the preferred term. It is worked out by the
 catalogue, not stored and not typed, so it always matches the term it describes. There is
 no way to edit it, and that is deliberate: a length that could be edited separately from
-its term is a length that can be wrong.
+its term is a length that can be wrong. The edit form above the table shows it under
+**RCPA Preferred** and updates it as you type.
+
+**The preferred term is edited in the form above the table**, not from this table. Its row
+says so. See [Editing an entry](editing-an-entry.md#the-form).
 
 ## Adding synonyms
 
@@ -52,11 +56,11 @@ you write one, rather than only reporting it after you try to save.
 
 ## Editing a term
 
-Choose **Edit** on any active row. Change the term, add a changelog note, and choose
+Choose **Edit** on any active synonym. Change the term, add a changelog note, and choose
 **Save term**.
 
-Editing the preferred term works the same way as editing a synonym, even though the
-catalogue stores the two differently behind the scenes.
+To change the preferred term, use **RCPA Preferred** in the form above the table. It saves
+with the form's own changelog note, together with any registry properties you changed.
 
 If someone else changes the entry while you have it open, your save is refused and you are
 told who changed it, when, and which values moved. Nothing of yours is saved. The screen
@@ -72,7 +76,7 @@ retired it and why, in the entry's history.
 
 **The preferred term cannot be retired**, so no Retire button appears on that row. Every
 entry must have a preferred term at all times. To change what the entry is called, edit
-the preferred term instead.
+**RCPA Preferred** in the form instead.
 
 ## Reinstating a retired term
 
@@ -135,14 +139,13 @@ table, marked **retired** in the Status column, rather than disappearing.
 ### A preferred term over the maximum length, with a note
 
 An administrator can set a maximum length for preferred terms. If you save a preferred term
-longer than that maximum, the save still goes through. The term appears under **Check these
-terms** with its length and the maximum. For example: "The preferred term is 31 characters
-long, which is over the maximum of 10. Consider shortening it."
+longer than that maximum, the save still goes through. The summary under the form lists it
+under **Check these**, with its length and the maximum. For example: "The preferred term is
+31 characters long, which is over the maximum of 10. Consider shortening it."
 
-There is nothing to acknowledge. Edit the preferred term again if you want to shorten it. The
-note is gone once you save the next change, even if that change is to a different term and the
-preferred term is still over the maximum. If no maximum is set, which is the default, you
-never see this note.
+There is nothing to acknowledge. Edit **RCPA Preferred** again if you want to shorten it. The
+note describes the last save, so it is gone once you save again. If no maximum is set, which is
+the default, you never see this note.
 
 ## If something goes wrong
 

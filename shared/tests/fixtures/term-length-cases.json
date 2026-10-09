@@ -1,0 +1,92 @@
+[
+  {
+    "name": "plain ASCII",
+    "term": "Full blood count",
+    "length": 16
+  },
+  {
+    "name": "empty",
+    "term": "",
+    "length": 0
+  },
+  {
+    "name": "only ordinary spaces",
+    "term": "   ",
+    "length": 0
+  },
+  {
+    "name": "trailing non-breaking space",
+    "term": "Ferritin\u00a0",
+    "length": 8
+  },
+  {
+    "name": "leading non-breaking space",
+    "term": "\u00a0Ferritin",
+    "length": 8
+  },
+  {
+    "name": "interior non-breaking space",
+    "term": "Serum\u00a0ferritin",
+    "length": 14
+  },
+  {
+    "name": "trailing narrow no-break space",
+    "term": "Ferritin\u202f",
+    "length": 8
+  },
+  {
+    "name": "only non-breaking spaces",
+    "term": "\u00a0\u00a0",
+    "length": 0
+  },
+  {
+    "name": "decomposed accented letter",
+    "term": "Cafe\u0301 screen",
+    "length": 11
+  },
+  {
+    "name": "precomposed accented letter",
+    "term": "Caf\u00e9 screen",
+    "length": 11
+  },
+  {
+    "name": "astral character",
+    "term": "Test \ud83e\uddea tube",
+    "length": 11
+  },
+  {
+    "name": "NEL at the edge is stripped",
+    "term": "\u0085Ferritin\u0085",
+    "length": 8
+  },
+  {
+    "name": "unit separator at the edge is stripped",
+    "term": "\u001cFerritin\u001f",
+    "length": 8
+  },
+  {
+    "name": "BOM at the edge is not stripped",
+    "term": "\ufeffFerritin",
+    "length": 9
+  },
+  {
+    "name": "zero-width space is not stripped",
+    "term": "Fer\u200britin",
+    "length": 9
+  },
+  {
+    "name": "ideographic space at the edge",
+    "term": "\u3000Ferritin\u3000",
+    "length": 8
+  },
+  {
+    "name": "micro sign is not folded",
+    "term": "\u00b5g/L",
+    "length": 4
+  },
+  {
+    "name": "tab at the edge is stripped",
+    "term": "\tFerritin\n",
+    "length": 8
+  }
+]

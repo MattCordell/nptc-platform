@@ -159,6 +159,13 @@ export function DesignationsPanel({ entry }: { entry: EntryDetail }) {
             header: "Actions",
             render: (row) => {
               if (row.status === "active") {
+                // The entry's own preferred term is edited in the form above,
+                // which carries its own changelog note, length and row version.
+                // No retire action either: `catalogue_entry.preferred_term` is
+                // NOT NULL and no route retires it (ADR-0022).
+                if (row.isEntryPreferredTerm) {
+                  return <span>Edit it in the form above.</span>;
+                }
                 return (
                   <span className="flex gap-2">
                     {/* Named for the row, not just "Edit": a screen-reader user
@@ -180,20 +187,14 @@ export function DesignationsPanel({ entry }: { entry: EntryDetail }) {
                     >
                       Edit
                     </Button>
-                    {/* No retire action on the entry's own preferred term:
-                        `catalogue_entry.preferred_term` is NOT NULL and no route
-                        retires it (ADR-0022). Offering a button that could only
-                        ever fail would be worse than not offering one. */}
-                    {!row.isEntryPreferredTerm && (
-                      <Button
-                        type="button"
-                        variant="danger"
-                        aria-label={`Retire ${row.term} (${row.use})`}
-                        onClick={() => setRetiring(row)}
-                      >
-                        Retire
-                      </Button>
-                    )}
+                    <Button
+                      type="button"
+                      variant="danger"
+                      aria-label={`Retire ${row.term} (${row.use})`}
+                      onClick={() => setRetiring(row)}
+                    >
+                      Retire
+                    </Button>
                   </span>
                 );
               }
@@ -505,12 +506,10 @@ function AmendDialog({
             {
               term: row.term,
               new_term: newTerm,
-              // Which storage home `term` means. Sent on every amendment,
-              // not just the preferred one: nothing forbids a synonym whose
-              // comparison key equals its own entry's preferred term, and
-              // without `target` the route resolves designations first - so an
-              // unqualified request for either would silently move the other.
-              target: row.isEntryPreferredTerm ? "preferred_term" : "synonym",
+              // Without `target` the route resolves designations first, and
+              // nothing forbids a synonym whose comparison key equals its own
+              // entry's preferred term, so the request must say which it means.
+              target: "synonym",
               // FR-38 (issue #300): required on both branches, unconditionally
               // - the backend rejects either without it. One code path, and
               // no save that skips the lock.
@@ -524,11 +523,6 @@ function AmendDialog({
         <Field
           id="amend-term"
           label="Term"
-          hint={
-            row.isEntryPreferredTerm
-              ? "This is the catalogue's own preferred term for this entry."
-              : undefined
-          }
           error={errors.find((error) => error.fieldId === "amend-term")?.message}
         >
           {(controlProps) => (

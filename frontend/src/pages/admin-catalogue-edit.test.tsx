@@ -195,16 +195,16 @@ function inBindingsPanel() {
   return within(screen.getByRole("region", { name: "Code bindings" }));
 }
 
-/**
- * Queries scoped to the registry properties panel (issue #61's plan) - the
- * same reason as `inTermsPanel()`/`inBindingsPanel()`. Unlike those two,
- * nothing in this file stubbed `GET /registry/properties` before, so every
- * test that rendered this far actually exercised `PropertiesPanel`'s error
- * branch ("Registry properties could not be loaded") rather than its real
- * content - see the "cross-panel" describe block below.
- */
-function inPropertiesPanel() {
-  return within(screen.getByRole("region", { name: "Registry properties" }));
+/** Queries scoped to the edit form, for the same reason as `inTermsPanel()`. */
+function inForm() {
+  return within(screen.getByRole("region", { name: "Edit entry" }));
+}
+
+/** Changes the preferred term in the form and saves it, to drive a write through the page. */
+async function renameViaForm(user: ReturnType<typeof userEvent.setup>, note: string) {
+  await user.type(inForm().getByLabelText("RCPA Preferred"), " renamed");
+  await user.type(inForm().getByLabelText("Changelog note"), note);
+  await user.click(inForm().getByRole("button", { name: "Save" }));
 }
 
 afterEach(() => {
@@ -235,20 +235,14 @@ describe("the entry it loads", () => {
     );
   });
 
-  it("shows the computed preferred-term length with no control to edit it", async () => {
-    // FR-24/FR-85. The figure is the server's, computed from the cleaned term,
-    // and must not be editable on any code path for any role.
+  it("states the preferred-term length as text, with no control to edit it (FR-24, FR-85)", async () => {
+    // The figure beside the term is text, and nothing on the screen is a
+    // control for it on any code path for any role.
     stubApi([READ_OK]);
 
     const { container } = await renderLoaded();
 
-    // Scoped to the definition it labels: 8 is also a designation's length in
-    // the table below, and an unscoped getByText would match either.
-    expect(
-      screen.getByText("Preferred term length").nextElementSibling,
-    ).toHaveTextContent("8");
-    // The FR-24 assertion proper: no control resolves to it, and no control
-    // anywhere on the screen is holding the value.
+    expect(inForm().getByText(/Length: 8 characters/)).toBeInTheDocument();
     expect(screen.queryByLabelText(/length/i)).not.toBeInTheDocument();
     expect(screen.queryByDisplayValue("8")).not.toBeInTheDocument();
     expect(container.querySelector("input[name*='length' i]")).toBeNull();
@@ -451,9 +445,7 @@ describe("the entry it loads", () => {
     await screen.findByRole("heading", { name: "Ferritin", level: 1 });
     expect(stepUp).toHaveBeenCalledTimes(1);
 
-    await user.click(screen.getByRole("button", { name: "Edit Ferritin (preferred)" }));
-    await user.type(inDialog().getByLabelText(/Changelog note/), "Rename the entry");
-    await user.click(inDialog().getByRole("button", { name: "Save term" }));
+    await renameViaForm(user, "Rename the entry");
 
     await waitFor(() => expect(stepUp).toHaveBeenCalledTimes(2));
   });
@@ -586,9 +578,7 @@ describe("the entry it loads", () => {
     // review).
     const readsBefore = readsOf(calls).length;
 
-    await user.click(screen.getByRole("button", { name: "Edit Ferritin (preferred)" }));
-    await user.type(inDialog().getByLabelText(/Changelog note/), "Rename the entry");
-    await user.click(inDialog().getByRole("button", { name: "Save term" }));
+    await renameViaForm(user, "Rename the entry");
 
     expect(
       await screen.findByText(/could not be refreshed just now/),
@@ -686,24 +676,17 @@ describe("the terms table", () => {
     ).toBeInTheDocument();
   });
 
-  it("tells two rows apart when a synonym shadows the preferred term", async () => {
+  it("points the preferred term's row at the form, and edits only the synonym there", async () => {
     // `POST .../designations` will happily create a synonym whose comparison
-    // key equals its own entry's preferred term - the state `target` exists
-    // to reach past. Both rows then read "Ferritin", so naming the buttons by
-    // term alone would leave a screen-reader user with two identical actions
-    // and no way to know which one moves which.
+    // key equals its own entry's preferred term. Both rows then read
+    // "Ferritin"; only the synonym is edited from this table, so a
+    // screen-reader user is never offered two identical buttons.
     stubApi([
       {
         ...READ_OK,
         body: {
           ...ENTRY,
-          designations: [
-            {
-              term: "Ferritin",
-              status: "active",
-              length: 8,
-            },
-          ],
+          designations: [{ term: "Ferritin", status: "active", length: 8 }],
         },
       },
     ]);
@@ -711,27 +694,24 @@ describe("the terms table", () => {
     await renderLoaded();
 
     expect(
-      screen.getByRole("button", { name: "Edit Ferritin (preferred)" }),
-    ).toBeInTheDocument();
+      screen.queryByRole("button", { name: "Edit Ferritin (preferred)" }),
+    ).not.toBeInTheDocument();
+    expect(screen.getByText("Edit it in the form above.")).toBeInTheDocument();
     expect(
       screen.getByRole("button", { name: "Edit Ferritin (synonym)" }),
     ).toBeInTheDocument();
   });
 
-  it("keeps the preferred term editable on a draft entry", async () => {
-    // Found in review. An entry's own lifecycle
-    // (draft/active/deprecated/withdrawn) is not a fact about any of its
-    // terms, and once it reached the row actions it took the Edit action away
-    // from every unpublished entry - precisely the kind this screen exists to
-    // edit (#228).
+  it("edits the preferred term of a draft entry in the form", async () => {
+    // An entry's own lifecycle (draft/active/deprecated/withdrawn) is not a
+    // fact about any of its terms. The screen exists for unpublished entries
+    // above all.
     stubApi([READ_OK]);
 
     await renderLoaded();
 
-    const preferredRow = screen.getAllByRole("row")[1] as HTMLElement;
-    expect(
-      within(preferredRow).getByRole("button", { name: "Edit Ferritin (preferred)" }),
-    ).toBeInTheDocument();
+    expect(inForm().getByLabelText("RCPA Preferred")).toBeEnabled();
+    expect(inForm().getByLabelText("RCPA Preferred")).toHaveValue("Ferritin");
   });
 });
 
@@ -771,6 +751,40 @@ describe("adding synonyms", () => {
     expect(screen.getByLabelText("Synonyms")).toHaveValue("Zovirax");
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
     expect(callsTo(calls, ADD_PATH)).toHaveLength(1);
+  });
+
+  it("reaches step-up when the form's write is refused for want of MFA, and does not replay it", async () => {
+    // The form's save run catches every failure to build its summary, so it must
+    // still rethrow the one that stopped it: the mutation cache is what
+    // recognises the challenge (ADR-0036).
+    const user = userEvent.setup();
+    const stepUp = vi.fn().mockResolvedValue("done");
+    const calls = stubApi([
+      READ_OK,
+      {
+        method: "POST",
+        path: AMEND_PATH,
+        status: 403,
+        body: { detail: "This action requires multi-factor authentication." },
+        headers: {
+          "WWW-Authenticate":
+            'Bearer error="insufficient_user_authentication", acr_values="2"',
+        },
+      },
+    ]);
+    await renderRoute(EDIT_URL, { auth: { ...SIGNED_IN.auth, stepUp } });
+    await screen.findByRole("heading", { name: "Ferritin", level: 1 });
+
+    await renameViaForm(user, "Rename the entry");
+
+    await waitFor(() => expect(stepUp).toHaveBeenCalledWith("2"));
+    // The editor's input is still there, the summary says what was not saved,
+    // and nothing was sent a second time.
+    expect(inForm().getByLabelText("RCPA Preferred")).toHaveValue("Ferritin renamed");
+    expect(
+      await screen.findByRole("heading", { name: "Some changes were not saved" }),
+    ).toBeInTheDocument();
+    expect(callsTo(calls, AMEND_PATH)).toHaveLength(1);
   });
 
   it("splits a pasted cell into individual terms and shows what it will create", async () => {
@@ -1138,122 +1152,7 @@ describe("a warning-severity collision", () => {
 });
 
 describe("amending a term", () => {
-  it("addresses the entry's own preferred term with target and a row version", async () => {
-    // FR-38 plus the disambiguator. Without `target: "preferred_term"` the route
-    // resolves designations first, so a synonym shadowing the preferred term
-    // would be moved instead - silently, and with no way back.
-    const user = userEvent.setup();
-    const calls = stubApi([
-      READ_OK,
-      {
-        method: "POST",
-        path: AMEND_PATH,
-        status: 200,
-        body: {
-          designation: {
-            term: "Serum ferritin level",
-            status: "active",
-            length: 20,
-          },
-          warnings: [],
-          row_version: 4,
-        },
-      },
-    ]);
-    await renderLoaded();
-
-    await user.click(screen.getByRole("button", { name: "Edit Ferritin (preferred)" }));
-    const term = inDialog().getByLabelText("Term");
-    await user.clear(term);
-    await user.type(term, "Serum ferritin level");
-    await user.type(
-      inDialog().getByLabelText(/Changelog note/),
-      "Disambiguate from plasma",
-    );
-    await user.click(inDialog().getByRole("button", { name: "Save term" }));
-
-    await waitFor(() => expect(callsTo(calls, AMEND_PATH)).toHaveLength(1));
-    expect(callsTo(calls, AMEND_PATH)[0]?.body).toEqual({
-      term: "Ferritin",
-      new_term: "Serum ferritin level",
-      target: "preferred_term",
-      expected_row_version: 3,
-      reason: "Disambiguate from plasma",
-    });
-  });
-
   describe("an over-length preferred term (FR-86)", () => {
-    const OVER_LENGTH_AMENDED = {
-      method: "POST",
-      path: AMEND_PATH,
-      status: 200,
-      body: {
-        designation: {
-          term: "Serum ferritin level, automated",
-          status: "active",
-          length: 31,
-        },
-        warnings: [{ kind: "length", length: 31, max_length: 10 }],
-        row_version: 4,
-      },
-    } as const;
-
-    async function amendPreferredTerm(user: ReturnType<typeof userEvent.setup>) {
-      await user.click(screen.getByRole("button", { name: "Edit Ferritin (preferred)" }));
-      const term = inDialog().getByLabelText("Term");
-      await user.clear(term);
-      await user.type(term, "Serum ferritin level, automated");
-      await user.type(
-        inDialog().getByLabelText(/Changelog note/),
-        "Align with the new wording",
-      );
-      await user.click(inDialog().getByRole("button", { name: "Save term" }));
-    }
-
-    it("states the length and the maximum, and the save still goes through", async () => {
-      const user = userEvent.setup();
-      stubApi([READ_OK, OVER_LENGTH_AMENDED]);
-      await renderLoaded();
-
-      await amendPreferredTerm(user);
-
-      expect(
-        await screen.findByRole("heading", { name: "Check these terms" }),
-      ).toBeInTheDocument();
-      expect(
-        screen.getByText(/preferred term is 31 characters long.*maximum of 10/),
-      ).toBeInTheDocument();
-      // Saved, not refused: the dialog closed and no error summary is showing.
-      expect(screen.queryByText("There is a problem")).not.toBeInTheDocument();
-      expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
-    });
-
-    it("offers no Acknowledge action, because there is nothing to acknowledge", async () => {
-      const user = userEvent.setup();
-      stubApi([READ_OK, OVER_LENGTH_AMENDED]);
-      await renderLoaded();
-
-      await amendPreferredTerm(user);
-
-      await screen.findByRole("heading", { name: "Check these terms" });
-      expect(
-        screen.queryByRole("button", { name: /^Acknowledge/ }),
-      ).not.toBeInTheDocument();
-      expect(screen.queryByText(/Acknowledge a duplicate/)).not.toBeInTheDocument();
-    });
-
-    it("announces the length warning to a screen reader", async () => {
-      const user = userEvent.setup();
-      stubApi([READ_OK, OVER_LENGTH_AMENDED]);
-      await renderLoaded();
-
-      await amendPreferredTerm(user);
-
-      await waitFor(() =>
-        expect(announced()).toContain("Term saved. 1 length warning to review."),
-      );
-    });
-
     it("shows a length warning beside a duplicate, with Acknowledge only on the duplicate", async () => {
       const user = userEvent.setup();
       stubApi([
@@ -1336,75 +1235,6 @@ describe("amending a term", () => {
       expect(screen.getAllByRole("button", { name: /^Acknowledge/ })).toHaveLength(2);
       expect(screen.getAllByText(/Acknowledge a duplicate to confirm/)).toHaveLength(1);
     });
-
-    it("drops the length warning when the next write returns none", async () => {
-      // Every warning describes the last write, so a later add replaces the list
-      // even though the preferred term is still over the maximum.
-      const user = userEvent.setup();
-      stubApi([
-        READ_OK,
-        OVER_LENGTH_AMENDED,
-        {
-          method: "POST",
-          path: ADD_PATH,
-          status: 201,
-          body: { designations: [], warnings: [], row_version: 5 },
-        },
-      ]);
-      await renderLoaded();
-      await amendPreferredTerm(user);
-      await screen.findByText(/preferred term is 31 characters long/);
-
-      await user.type(screen.getByLabelText("Synonyms"), "Ferritin assay");
-      await user.type(
-        inTermsPanel().getByLabelText(/Changelog note/),
-        "Add the assay wording",
-      );
-      await user.click(screen.getByRole("button", { name: "Add terms" }));
-
-      await waitFor(() =>
-        expect(
-          screen.queryByText(/preferred term is 31 characters long/),
-        ).not.toBeInTheDocument(),
-      );
-    });
-
-    it("keeps the warning when an unrelated synonym is retired", async () => {
-      // Retiring clears the collision warning about the retired term only; a
-      // length warning is about the preferred term, which a retire never touches.
-      const user = userEvent.setup();
-      stubApi([
-        READ_OK,
-        OVER_LENGTH_AMENDED,
-        {
-          method: "POST",
-          path: RETIRE_PATH,
-          status: 200,
-          body: {
-            designation: {
-              term: "Serum ferritin",
-              status: "retired",
-              length: 14,
-            },
-            row_version: 5,
-          },
-        },
-      ]);
-      await renderLoaded();
-      await amendPreferredTerm(user);
-      await screen.findByRole("heading", { name: "Check these terms" });
-
-      await user.click(
-        screen.getByRole("button", { name: "Retire Serum ferritin (synonym)" }),
-      );
-      await user.type(inDialog().getByLabelText(/Changelog note/), "Retire the synonym");
-      await user.click(inDialog().getByRole("button", { name: "Retire term" }));
-
-      await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
-      expect(
-        screen.getByText(/preferred term is 31 characters long/),
-      ).toBeInTheDocument();
-    });
   });
 
   it("addresses a synonym as a synonym, never falling back to the entry", async () => {
@@ -1443,249 +1273,6 @@ describe("amending a term", () => {
       new_term: "Ferritin, serum",
       expected_row_version: 3,
     });
-  });
-
-  it("explains a version conflict and what to do about it", async () => {
-    const user = userEvent.setup();
-    stubApi([
-      READ_OK,
-      {
-        method: "POST",
-        path: AMEND_PATH,
-        status: 409,
-        body: {
-          detail: "This entry was changed by someone else since you loaded it.",
-          business_key: BUSINESS_KEY,
-          expected_row_version: 3,
-          current_row_version: 4,
-          conflicts: [
-            {
-              field: "preferred_term",
-              submitted: "Serum ferritin level",
-              current: "Ferritin (S)",
-            },
-          ],
-          changed_by: "A Curator",
-          changed_at: "2026-09-02T01:00:00Z",
-        },
-      },
-    ]);
-    await renderLoaded();
-
-    await user.click(screen.getByRole("button", { name: "Edit Ferritin (preferred)" }));
-    await user.type(
-      inDialog().getByLabelText(/Changelog note/),
-      "Disambiguate from plasma",
-    );
-    await user.click(inDialog().getByRole("button", { name: "Save term" }));
-
-    expect(await screen.findByText(/A Curator/)).toBeInTheDocument();
-    expect(screen.getByText(/Ferritin \(S\)/)).toBeInTheDocument();
-    expect(screen.getByText(/The entry is reloading/)).toBeInTheDocument();
-  });
-
-  it("reads correctly when the concurrent edit touched a different field", async () => {
-    // `conflicts` is empty here by design: the entry moved, so the save is
-    // still refused, but there is no field-level disagreement to list. The
-    // copy must not promise a list it then does not show.
-    const user = userEvent.setup();
-    stubApi([
-      READ_OK,
-      {
-        method: "POST",
-        path: AMEND_PATH,
-        status: 409,
-        body: {
-          detail: "This entry was changed by someone else since you loaded it.",
-          business_key: BUSINESS_KEY,
-          expected_row_version: 3,
-          current_row_version: 4,
-          conflicts: [],
-          changed_by: null,
-          changed_at: null,
-        },
-      },
-    ]);
-    await renderLoaded();
-
-    await user.click(screen.getByRole("button", { name: "Edit Ferritin (preferred)" }));
-    await user.type(
-      inDialog().getByLabelText(/Changelog note/),
-      "Disambiguate from plasma",
-    );
-    await user.click(inDialog().getByRole("button", { name: "Save term" }));
-
-    expect(
-      await screen.findByText(/Someone else changed this entry/),
-    ).toBeInTheDocument();
-    expect(screen.queryByText(/What you sent/)).not.toBeInTheDocument();
-    expect(screen.getByText(/The entry is reloading/)).toBeInTheDocument();
-  });
-
-  it("refetches the entry on a version conflict, so a retry can succeed", async () => {
-    // The refusal says the entry has been reloaded. `invalidateQueries` runs
-    // on success only by default, so without the mutation's `onError` the
-    // cached `row_version` would stay stale and every retry from this dialog
-    // would fail identically - advice the screen does not carry out (review
-    // finding 3).
-    const user = userEvent.setup();
-    const calls = stubApi([
-      READ_OK,
-      {
-        method: "POST",
-        path: AMEND_PATH,
-        status: 409,
-        body: {
-          detail: "This entry was changed by someone else since you loaded it.",
-          business_key: BUSINESS_KEY,
-          expected_row_version: 3,
-          current_row_version: 4,
-          conflicts: [],
-          changed_by: "A Curator",
-          changed_at: "2026-09-02T01:00:00Z",
-        },
-      },
-    ]);
-    await renderLoaded();
-    const readsBefore = readsOf(calls).length;
-
-    await user.click(screen.getByRole("button", { name: "Edit Ferritin (preferred)" }));
-    await user.type(
-      inDialog().getByLabelText(/Changelog note/),
-      "Disambiguate from plasma",
-    );
-    await user.click(inDialog().getByRole("button", { name: "Save term" }));
-
-    await screen.findByText(/The entry is reloading/);
-    await waitFor(() => expect(readsOf(calls).length).toBeGreaterThan(readsBefore));
-  });
-
-  it("does not refetch when the amendment is refused for a collision", async () => {
-    // The other side of the conflict refetch: a collision means nothing moved,
-    // so re-reading would only discard what the editor typed for no gain.
-    const user = userEvent.setup();
-    const calls = stubApi([
-      READ_OK,
-      {
-        method: "POST",
-        path: AMEND_PATH,
-        status: 409,
-        body: {
-          detail: "This term is already in use on another entry.",
-          collisions: [
-            {
-              term: "Iron studies",
-              business_key: "NPTC-000900",
-              preferred_term: "Iron studies",
-            },
-          ],
-        },
-      },
-    ]);
-    await renderLoaded();
-    const readsBefore = readsOf(calls).length;
-
-    await user.click(screen.getByRole("button", { name: "Edit Ferritin (preferred)" }));
-    await user.type(inDialog().getByLabelText(/Changelog note/), "Rename the entry");
-    await user.click(inDialog().getByRole("button", { name: "Save term" }));
-
-    expect(await screen.findByText(/Nothing has been saved/)).toBeInTheDocument();
-    expect(readsOf(calls)).toHaveLength(readsBefore);
-  });
-
-  it("renders a conflicting value that is not a string", async () => {
-    // `submitted`/`current` are deliberately untyped on the wire - the audit
-    // diff carries whatever the field holds, and a flag is a boolean. Assuming
-    // a string here would print nothing at all for the one kind of value whose
-    // two states look most alike.
-    const user = userEvent.setup();
-    stubApi([
-      READ_OK,
-      {
-        method: "POST",
-        path: AMEND_PATH,
-        status: 409,
-        body: {
-          detail: "This entry was changed by someone else since you loaded it.",
-          business_key: BUSINESS_KEY,
-          expected_row_version: 3,
-          current_row_version: 4,
-          conflicts: [{ field: "provisional", submitted: false, current: true }],
-          changed_by: "A Curator",
-          changed_at: "2026-09-02T01:00:00Z",
-        },
-      },
-    ]);
-    await renderLoaded();
-
-    await user.click(screen.getByRole("button", { name: "Edit Ferritin (preferred)" }));
-    await user.type(
-      inDialog().getByLabelText(/Changelog note/),
-      "Disambiguate from plasma",
-    );
-    await user.click(inDialog().getByRole("button", { name: "Save term" }));
-
-    // The field name is in its own <strong>, so climb to the list item that
-    // carries the whole sentence.
-    const item = (await screen.findByText("provisional")).closest("li");
-    expect(item).toHaveTextContent("you sent false");
-    expect(item).toHaveTextContent("it is now true");
-  });
-
-  it("has no control for the computed length in the dialog either", async () => {
-    // FR-24 is "on any code path", so the dialog is its own check.
-    const user = userEvent.setup();
-    stubApi([READ_OK]);
-    await renderLoaded();
-
-    await user.click(screen.getByRole("button", { name: "Edit Ferritin (preferred)" }));
-
-    const dialog = screen.getByRole("dialog");
-    expect(within(dialog).queryByLabelText(/length/i)).not.toBeInTheDocument();
-    expect(within(dialog).getAllByRole("textbox")).toHaveLength(2);
-  });
-
-  it("gates Save term on a changelog note (FR-37, issue #62)", async () => {
-    const user = userEvent.setup();
-    const calls = stubApi([READ_OK]);
-    await renderLoaded();
-
-    await user.click(screen.getByRole("button", { name: "Edit Ferritin (preferred)" }));
-    const dialog = within(screen.getByRole("dialog"));
-    expect(dialog.getByRole("button", { name: "Save term" })).toHaveAttribute(
-      "aria-disabled",
-      "true",
-    );
-
-    await user.type(dialog.getByLabelText("Changelog note"), "Correct the term");
-    expect(dialog.getByRole("button", { name: "Save term" })).not.toHaveAttribute(
-      "aria-disabled",
-    );
-    expect(callsTo(calls, AMEND_PATH)).toHaveLength(0);
-  });
-
-  it("shows the term's own error alongside the changelog note gate on the same click (issue #62 review)", async () => {
-    // Before this was fixed, the term's own validation lived inside
-    // `onSubmit`, which never ran while the note gate was blocked - so an
-    // empty term and an empty note together surfaced only the note's
-    // failure on this first click, and the empty-term error only appeared
-    // on a second click, after the note was fixed.
-    const user = userEvent.setup();
-    const calls = stubApi([READ_OK]);
-    await renderLoaded();
-
-    await user.click(screen.getByRole("button", { name: "Edit Ferritin (preferred)" }));
-    const dialog = inDialog();
-    await user.clear(dialog.getByLabelText("Term"));
-    await user.click(dialog.getByRole("button", { name: "Save term" }));
-
-    expect(
-      (await dialog.findAllByText("Enter the term this should become.")).length,
-    ).toBeGreaterThan(0);
-    expect(dialog.getAllByText(/A changelog note is required\./).length).toBeGreaterThan(
-      0,
-    );
-    expect(callsTo(calls, AMEND_PATH)).toHaveLength(0);
   });
 });
 
@@ -2663,14 +2250,12 @@ describe("cross-panel", () => {
 
   const PROPERTIES_SAVE_PATH = `/catalogue/entries/${BUSINESS_KEY}/properties/usage_guidance`;
 
-  it("renders all three panels populated, each individually reachable, and a save in one leaves the others working against the bumped row_version", async () => {
+  it("renders the form and both panels populated, and a save in the form leaves the panels working against the bumped row_version", async () => {
     const user = userEvent.setup();
-    // The entry-core amend (`AMEND_PATH`, addressing the preferred term) is
-    // the write; `expected_row_version` bumps from 3 to 4 in its response,
-    // and every mutation's `onSuccess` invalidates the admin entry-detail
-    // query (`nptc/api/queries.ts`), so the refetch below is what actually
-    // carries the bumped version to the other two panels' own `entry.row_
-    // version` prop - not anything either of them computes itself.
+    // The form's preferred-term amend is the first write; `expected_row_version`
+    // bumps from 3 to 4 in its response. The form refetches the entry once its
+    // run ends, and that refetch is what carries the bumped version to the
+    // form's next save and to the bindings panel's own `entry.row_version`.
     let amended = false;
     let propertySaved = false;
     const RETIRE_PATH = `${BIND_PATH}/${FSN_CODE}/retirement`;
@@ -2684,9 +2269,9 @@ describe("cross-panel", () => {
           status: 200,
           body: {
             designation: {
-              term: "Ferritin, renamed",
+              term: "Ferritin renamed",
               status: "active",
-              length: 17,
+              length: 16,
             },
             warnings: [],
             row_version: 4,
@@ -2732,7 +2317,7 @@ describe("cross-panel", () => {
                 body: {
                   ...POPULATED_ENTRY,
                   row_version: 5,
-                  preferred_term: "Ferritin, renamed",
+                  preferred_term: "Ferritin renamed",
                 },
               };
             }
@@ -2742,7 +2327,7 @@ describe("cross-panel", () => {
                 body: {
                   ...POPULATED_ENTRY,
                   row_version: 4,
-                  preferred_term: "Ferritin, renamed",
+                  preferred_term: "Ferritin renamed",
                 },
               };
             }
@@ -2752,83 +2337,48 @@ describe("cross-panel", () => {
       },
     );
     await renderLoaded();
-    // `getByRole("region", ...)` resolves as soon as the panel's own heading
-    // exists, which is unconditional - waiting on its *content* is what
-    // actually proves `GET /registry/properties` landed and the panel left
-    // its "Loading…"/error branch.
-    await inPropertiesPanel().findByText("Needs review");
+    // The form's property row arrives after the registry definitions do.
+    expect(await screen.findByDisplayValue("Needs review")).toBeInTheDocument();
 
-    // All three panels coexist and are each individually reachable - the
-    // AC's own wording. Scoped queries, not merely "does not throw": each
-    // must find its own content, not another panel's.
     expect(
       inTermsPanel().getByRole("table", { name: `Terms on ${BUSINESS_KEY}` }),
     ).toBeInTheDocument();
     expect(
       inBindingsPanel().getByRole("rowheader", { name: FSN_CODE }),
     ).toBeInTheDocument();
-    expect(inPropertiesPanel().getByText("Needs review")).toBeInTheDocument();
 
-    // The save: amend the entry's own preferred term, which bumps row_version.
-    await user.click(screen.getByRole("button", { name: "Edit Ferritin (preferred)" }));
-    const term = inDialog().getByLabelText("Term");
+    // First save: the preferred term, which bumps row_version to 4.
+    const term = inForm().getByLabelText("RCPA Preferred");
     await user.clear(term);
-    await user.type(term, "Ferritin, renamed");
-    await user.type(
-      inDialog().getByLabelText(/Changelog note/),
-      "Cross-panel audit test",
-    );
-    await user.click(inDialog().getByRole("button", { name: "Save term" }));
+    await user.type(term, "Ferritin renamed");
+    await user.type(inForm().getByLabelText("Changelog note"), "Cross-panel audit test");
+    await user.click(inForm().getByRole("button", { name: "Save" }));
 
-    // Waiting on the refetched heading, not merely on the POST call landing:
-    // the row_version this test cares about only reaches the other panels
-    // once the invalidated query's refetch has actually resolved and
-    // re-rendered - the heading text changing is that refetch's own,
-    // externally-observable signal (the stubbed refetch body renames the
-    // entry, deliberately, so this has something to wait for).
-    await screen.findByRole("heading", { name: "Ferritin, renamed", level: 1 });
-
-    // The other two panels are still working, against the entry the
-    // invalidated query refetched - not stuck on the pre-save render.
+    // The refetched heading is the observable signal that the entry the other
+    // parts of the screen read from has been replaced.
+    await screen.findByRole("heading", { name: "Ferritin renamed", level: 1 });
     expect(
       inBindingsPanel().getByRole("rowheader", { name: FSN_CODE }),
     ).toBeInTheDocument();
 
-    // The propagation the plan's own gap calls out: the properties panel's
-    // *next* save must carry the bumped `row_version` (4), not the stale
-    // value (3) the page first loaded with.
-    await user.click(
-      inPropertiesPanel().getByRole("button", { name: "Edit Usage guidance" }),
-    );
-    const value = inDialog().getByLabelText("Usage guidance");
+    // Second save, from the same form: a property, which must carry the bumped
+    // version (4), not the one the page first loaded with (3).
+    const value = inForm().getByLabelText("Usage guidance");
     await user.clear(value);
     await user.type(value, "Reviewed and updated");
-    await user.type(inDialog().getByLabelText(/Changelog note/), "Update after review");
-    await user.click(inDialog().getByRole("button", { name: "Save" }));
+    await user.type(inForm().getByLabelText("Changelog note"), "Update after review");
+    await user.click(inForm().getByRole("button", { name: "Save" }));
 
-    // `callsTo` (used everywhere else in this file) only matches `POST` -
-    // this write is a `PUT` (`useSavePropertyValues`), so it is filtered
-    // directly rather than through that helper.
     const propertySaveCalls = () =>
       calls.filter(
         (call) => call.method === "PUT" && call.path.endsWith(PROPERTIES_SAVE_PATH),
       );
     await waitFor(() => expect(propertySaveCalls()).toHaveLength(1));
-    expect(propertySaveCalls()[0]?.body).toMatchObject({
-      expected_row_version: 4,
-    });
+    expect(propertySaveCalls()[0]?.body).toMatchObject({ expected_row_version: 4 });
 
-    // The propagation this PR adds: the code bindings panel's own writes
-    // (issue #60) must thread the same refetched `row_version` the
-    // properties panel just proved it received - not the value the page
-    // first loaded with, and not the designation amend's own bump alone.
-    // The property save above bumped `row_version` to 5, so this retire
-    // must carry that, not the stale 3 or the intermediate 4.
-    await waitFor(() =>
-      expect(
-        screen.getByRole("heading", { name: "Ferritin, renamed", level: 1 }),
-      ).toBeInTheDocument(),
-    );
+    // The bindings panel's own write must carry the version the form's save
+    // just produced (5), not the stale 3 or the intermediate 4.
+    await waitFor(() => expect(readsOf(calls).length).toBeGreaterThan(2));
     await user.click(screen.getByRole("button", { name: `Retire ${FSN_CODE}` }));
     await user.type(inDialog().getByLabelText(/Changelog note/), "Cross-panel");
     await user.click(inDialog().getByRole("button", { name: "Retire binding" }));
@@ -2839,11 +2389,11 @@ describe("cross-panel", () => {
     expect(retireCalls()[0]?.body).toMatchObject({ expected_row_version: 5 });
   });
 
-  it("has no automated accessibility violations with all three panels populated", async () => {
+  it("has no automated accessibility violations with the form and both panels populated", async () => {
     stubApi([POPULATED_READ_OK, PROPERTIES_OK]);
 
     const { container } = await renderLoaded();
-    await inPropertiesPanel().findByText("Needs review");
+    await screen.findByDisplayValue("Needs review");
 
     await expectNoA11yViolations(container);
   });
@@ -2863,7 +2413,9 @@ describe("accessibility", () => {
     stubApi([READ_OK]);
     const { container } = await renderLoaded();
 
-    await user.click(screen.getByRole("button", { name: "Edit Ferritin (preferred)" }));
+    await user.click(
+      screen.getByRole("button", { name: "Edit Serum ferritin (synonym)" }),
+    );
 
     await expectNoA11yViolations(container);
   });

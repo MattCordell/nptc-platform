@@ -6,13 +6,10 @@ import { useAdminEntryDetail } from "../api/queries.ts";
 import { ApiError } from "../api/unwrap.ts";
 import { BindingsPanel } from "../catalogue/bindings-panel.tsx";
 import { DesignationsPanel } from "../catalogue/designations-panel.tsx";
-import { PropertiesPanel } from "../catalogue/properties-panel.tsx";
-import { statusLabelFor, statusToneFor } from "../catalogue/status-options.ts";
-import { Card } from "../components/card.tsx";
+import { EntryEditForm } from "../catalogue/entry-edit-form.tsx";
 import { LiveRegion } from "../components/live-region.tsx";
 import { PageContainer } from "../components/page-container.tsx";
 import { PageHeader } from "../components/page-header.tsx";
-import { StatusBadge } from "../components/status-badge.tsx";
 import { useAnnounce } from "../components/use-announce.ts";
 
 /**
@@ -22,9 +19,9 @@ import { useAnnounce } from "../components/use-announce.ts";
  * edited is very often `draft`, and the public route 404s a draft entry
  * identically to a key that was never minted (#142/#228).
  *
- * This page is the shell. #149 fills in the designations panel, #150 the code
- * bindings panel, and #151 the registry properties panel below it - the last
- * of the three sibling sections.
+ * This page is the shell. `EntryEditForm` edits the preferred term and the
+ * registry properties in one form; the designations and code bindings panels
+ * below it still save on their own.
  */
 
 /**
@@ -130,28 +127,7 @@ export function AdminCatalogueEditPage() {
 
         {entry.data && (
           <>
-            <Card>
-              <dl className="m-0 grid grid-cols-[max-content_1fr] gap-x-6 gap-y-3">
-                <dt className="text-[var(--color-text-muted)]">Identifier</dt>
-                <dd className="m-0 font-mono">{entry.data.business_key}</dd>
-                <dt className="text-[var(--color-text-muted)]">Entry status</dt>
-                <dd className="m-0">
-                  <StatusBadge
-                    tone={statusToneFor(entry.data.status)}
-                    label={statusLabelFor(entry.data.status)}
-                  />
-                </dd>
-                {/* FR-85/FR-24: the published character count of the preferred
-                    term, computed by the server and shown as text. There is
-                    deliberately no control for it anywhere on this screen. */}
-                <dt className="text-[var(--color-text-muted)]">Preferred term length</dt>
-                <dd className="m-0 tabular-nums">{entry.data.length}</dd>
-                <dt className="text-[var(--color-text-muted)]">Last changed</dt>
-                <dd className="m-0 tabular-nums">
-                  {new Date(entry.data.updated_at).toLocaleString()}
-                </dd>
-              </dl>
-            </Card>
+            <EntryEditForm key={entry.data.business_key} entry={entry.data} />
 
             {/* Keyed on the entry so its panel state - the warnings from the
                 last write, and any open dialog - cannot survive navigation from
@@ -159,7 +135,6 @@ export function AdminCatalogueEditPage() {
                 route component rather than remounting it (review finding 4). */}
             <DesignationsPanel key={entry.data.business_key} entry={entry.data} />
             <BindingsPanel key={entry.data.business_key} entry={entry.data} />
-            <PropertiesPanel key={entry.data.business_key} entry={entry.data} />
           </>
         )}
       </PageContainer>
