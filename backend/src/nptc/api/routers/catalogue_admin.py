@@ -41,7 +41,13 @@ from fastapi import APIRouter, Depends, Query, Request
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy.orm import Session
 
-from nptc.api.dependencies import ApiSettingsDep, get_datatype_registry, get_session, permission_dep
+from nptc.api.dependencies import (
+    ApiSettingsDep,
+    SnomedSynonymSourceDep,
+    get_datatype_registry,
+    get_session,
+    permission_dep,
+)
 from nptc.api.routers.auth import ErrorResponse
 from nptc.api.routers.catalogue_shared import (
     BusinessKeyPath,
@@ -57,6 +63,7 @@ from nptc.api.routers.catalogue_shared import (
     entry_core_fields,
     filter_parameter,
     property_value_from_row,
+    snomed_synonyms_for,
 )
 from nptc.auth.permissions import Permission
 from nptc.catalogue import maintenance, queries, search
@@ -65,6 +72,7 @@ from nptc.catalogue.facets import load_facet_context, parse_filters
 from nptc.catalogue.length_report import compute_length_distribution
 from nptc.catalogue.maintenance import SortName
 from nptc.catalogue.term_hygiene import preferred_term_length
+from nptc.db.session import end_read_transaction
 from nptc.registry.handlers import DatatypeRegistry
 
 router = APIRouter(prefix="/catalogue", tags=["catalogue-admin"])
@@ -430,6 +438,7 @@ def read_entry_any_status(
     session: SessionDep,
     registry: RegistryDep,
     settings: ApiSettingsDep,
+    synonyms: SnomedSynonymSourceDep,
     business_key: BusinessKeyPath,
 ) -> EntryDetail:
     """The `catalogue.edit_published`-gated counterpart to `catalogue.py`'s
@@ -441,7 +450,8 @@ def read_entry_any_status(
     state before the write routes save changes to it."""
     entry = load_entry_for_update(session, business_key)
     entry_ids = (entry.id,)
-    return EntryDetail(
+    bindings = queries.load_bindings(session, entry_ids)
+    stored = {
         **entry_core_fields(
             entry.business_key,
             entry.preferred_term,
@@ -450,19 +460,19 @@ def read_entry_any_status(
             entry.updated_at,
             queries.row_facts_for(session, entry.business_key),
         ),
-        row_version=entry.row_version,
-        designations=[
+        "row_version": entry.row_version,
+        "designations": [
             designation_from_row(row)
             for row in queries.load_designations_any_status(session, entry_ids)
         ],
-        bindings=[
-            binding_from_row(row, settings) for row in queries.load_bindings(session, entry_ids)
-        ],
-        properties=[
+        "bindings": [binding_from_row(row, settings) for row in bindings],
+        "properties": [
             property_value_from_row(row, registry)
             for row in queries.load_property_values(session, entry_ids)
         ],
-    )
+    }
+    end_read_transaction(session)
+    return EntryDetail(**stored, snomed_synonyms=snomed_synonyms_for(bindings, synonyms))
 
 
 class LengthDistributionBucket(BaseModel):

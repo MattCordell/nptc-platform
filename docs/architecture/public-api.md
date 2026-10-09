@@ -116,6 +116,26 @@ too, because its reader is an editor deciding against editorial history, not an
 implementer with no use for it. See
 [catalogue-write-api.md](catalogue-write-api.md#entry-read-any-status-issue-228).
 
+**SNOMED CT synonyms are fetched live, not stored** (FR-53, FR-54, issue #517). The
+detail routes carry `snomed_synonyms`, which has three states:
+
+| Value | Meaning |
+|---|---|
+| `null` | The entry has no active SNOMED CT binding, so nothing was looked up. |
+| `{"status": "available", "terms": [...]}` | The terminology server's synonyms for the active code. `terms` is empty when the concept has none, or when the code is not in the current AU edition. |
+| `{"status": "unavailable", "terms": []}` | The server could not answer. The rest of the response is unchanged and still 200. |
+
+`terms` leaves out the FSN and the AU preferred term, which `bindings` already carries. It
+is not limited to en-AU synonyms, because no FHIR operation separates them, so US
+spellings can appear. `label_provenance` is the same `synonym`/`not_applicable` descriptor
+a `designations` row carries (FR-98). Results are cached in process by code for 24 hours,
+so this field can lag a new SNOMED CT release by a day. After the server fails, every entry
+shows `unavailable` for 60 seconds without asking it again. It
+does not take part in `row_version` or the change history. List and search rows carry no
+such field and make no terminology call.
+[terminology-client.md](terminology-client.md#entry-detail-live-snomed-ct-synonyms-issue-517)
+has the filter, the probe that ruled out an en-AU filter, and the failure budget.
+
 **`has_open_finding` names nothing about the finding itself** (FR-18, issue #141). It is
 a bare boolean: `true` when the entry carries at least one `open` `ValidationFinding`,
 `false` when its findings (if any) are all `acknowledged`, `resolved` or `superseded`,

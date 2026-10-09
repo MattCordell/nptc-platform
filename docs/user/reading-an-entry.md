@@ -31,8 +31,15 @@ The rows come in this order:
    appears exactly as SNOMED CT gives it, with its bracketed tag, such as "(procedure)".
 4. **SNOMED CT Preferred** is the Australian preferred term for that code. The row is
    absent if none is recorded.
+5. **SNOMED CT Synonym** rows follow, one for each other name SNOMED CT gives that code.
 
 A test with no active SNOMED CT code shows the RCPA rows only.
+
+The SNOMED CT synonyms come from the terminology server when you open the page, so they
+can change when SNOMED CT does. They are not limited to Australian usage, and can include
+other English spellings, such as "Anemia" beside "Anaemia". If the server cannot be
+reached, the table shows the other rows and says "SNOMED CT synonyms could not be
+loaded. Try again later."
 
 ### Retired SNOMED CT codes
 
@@ -96,6 +103,8 @@ catalogue** to find the test by name or code.
 - If the page has a test on screen but cannot refresh it, it keeps showing it and warns you
   it may be out of date.
 - If **Recent changes** cannot be loaded, that box says so. The rest of the page still works.
+- If the SNOMED CT synonyms cannot be loaded, the **Terms** table says so. Its other rows
+  still show.
 
 ## Using it with a keyboard or screen reader
 

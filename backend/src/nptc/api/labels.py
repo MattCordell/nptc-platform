@@ -78,7 +78,8 @@ AU_PREFERRED_TERM_PROVENANCE = LabelProvenance(
     semantic_tag=SemanticTagState.NOT_APPLICABLE,
 )
 
-#: A catalogue-authored synonym. Not an FSN, so `NOT_APPLICABLE`.
+#: A synonym: catalogue-authored, or served live as `EntryDetail.snomed_synonyms`. Not an FSN,
+#: so `NOT_APPLICABLE`.
 SYNONYM_PROVENANCE = LabelProvenance(
     designation=DesignationType.SYNONYM,
     semantic_tag=SemanticTagState.NOT_APPLICABLE,

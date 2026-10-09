@@ -6255,6 +6255,16 @@
             },
             "type": "array",
             "title": "Properties"
+          },
+          "snomed_synonyms": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SnomedSynonyms"
+              },
+              {
+                "type": "null"
+              }
+            ]
           }
         },
         "type": "object",
@@ -6271,7 +6281,8 @@
           "row_version",
           "designations",
           "bindings",
-          "properties"
+          "properties",
+          "snomed_synonyms"
         ],
         "title": "EntryDetail",
         "description": "A summary plus everything attached to the entry.\n\nOne response rather than making a client fetch four: the sub-resources\nare also served individually (a client refreshing one panel should not\nre-fetch the lot), but the common case is \"show me this entry\", and\nfour round trips for one screen is a contract that pushes latency onto\nevery consumer.\n\nServed by both `catalogue.py`'s public detail route (`active` only) and\n`catalogue_admin.py`'s admin detail route (any status) - one shape, so\nan edit screen consuming the admin route today gets the exact same\nfields a public consumer of the same entry, once published, would see.\nOne exception: `designations` also carries retired rows on the admin\nroute, because its reader is an editor deciding against editorial\nhistory rather than an implementer who has no use for it - see\n`queries.load_designations`'s own docstring. `bindings` and\n`properties` are identical on both routes."
@@ -7546,6 +7557,36 @@
         ],
         "title": "SessionResponse",
         "description": "What the browser is allowed to know about its own session.\n\n`user` is `nptc.auth.identity.UserRef`, reused rather than redefined:\nit is this codebase's existing NFR-04 serialisation boundary and\nstructurally excludes `app_user.id`. Defining a second response model\nwith the same fields is exactly how that internal id eventually leaks.\n\n`permissions` is present because the shell needs to decide what to\n*render*, and rendering is presentation, not access control (NFR-20) -\nevery one of these permissions is re-checked server-side at the\nendpoint that uses it. `roles` is included for the account screen\n(FR-40), which shows a user their own roles."
+      },
+      "SnomedSynonyms": {
+        "properties": {
+          "status": {
+            "type": "string",
+            "enum": [
+              "available",
+              "unavailable"
+            ],
+            "title": "Status"
+          },
+          "terms": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Terms"
+          },
+          "label_provenance": {
+            "$ref": "#/components/schemas/LabelProvenance"
+          }
+        },
+        "type": "object",
+        "required": [
+          "status",
+          "terms",
+          "label_provenance"
+        ],
+        "title": "SnomedSynonyms",
+        "description": "The active binding's SNOMED CT synonyms, as the terminology server serves them today.\n\nNever stored, so never part of `row_version` or the audit trail. `terms` excludes the FSN\nand the binding's AU preferred term, and is not limited to en-AU: no FHIR operation\nseparates the AU-acceptable synonyms, so US spellings can appear (see\n`nptc.terminology.synonyms`). `status` is `unavailable` when the server could not answer;\n`terms` is then empty, which is not the same as `available` with no terms. A code missing\nfrom the current AU edition is `available` with no terms."
       },
       "TermsAcceptanceRequest": {
         "properties": {
