@@ -607,8 +607,8 @@ export interface paths {
          *     `read_history`, so an editor can read the history of a `draft` entry the public route
          *     404s. The page has the same shape and paging.
          *
-         *     Every caller is authenticated, so `changed_by` is always populated (NFR-26 withholds it
-         *     only from anonymous callers).
+         *     Every caller is authenticated, so NFR-26's anonymous withholding never applies.
+         *     `changed_by` is still `null` for a system change or a pseudonymised account.
          */
         get: operations["read_entry_history_any_status_api_v1_catalogue_admin_entries__business_key__history_get"];
         put?: never;

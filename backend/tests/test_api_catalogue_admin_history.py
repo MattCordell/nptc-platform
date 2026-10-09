@@ -1,5 +1,5 @@
-"""HTTP tests for `GET /catalogue/admin/entries/{business_key}/history` (issue #535, FR-19,
-FR-44, NFR-06).
+"""HTTP tests for `GET /catalogue/admin/entries/{business_key}/history` (FR-19, FR-44,
+NFR-06).
 
 The public history route 404s every entry that is not `active` (FR-20), so an editor could
 not read the history of a draft they had just saved. This route serves the same
@@ -47,7 +47,7 @@ _seed = _load("public_catalogue_support")
 build_api_test_app = _api_support.build_api_test_app
 ApiTestApp = _api_support.ApiTestApp
 
-_REASON = "seeded for the issue #535 admin history test"
+_REASON = "seeded for the admin history route test"
 
 
 @pytest.fixture
@@ -180,7 +180,8 @@ def test_changed_by_carries_the_display_name_for_an_authenticated_editor(
     api: ApiTestApp,
 ) -> None:
     """Every caller of this route is authenticated, so NFR-26's withholding (anonymous
-    callers only) does not apply. A real actor distinguishes "named" from "no actor"."""
+    callers only) does not apply. A system-initiated change still has no one to name, and
+    must stay `null` rather than gain a placeholder."""
     actor = User(username="admin-history-actor", display_name="Admin History Actor")
     api.session.add(actor)
     api.session.flush()
@@ -188,11 +189,23 @@ def test_changed_by_carries_the_display_name_for_an_authenticated_editor(
         actor_user_id=actor.id, actor_ip=None, user_agent=None, correlation_id=uuid.uuid4()
     )
     entry = _new_entry(api, ctx=ctx)
+    save_entry(
+        api.session,
+        AuditContext.system(),
+        business_key=entry.business_key,
+        expected_row_version=entry.row_version,
+        changes=EntryChanges(preferred_term="Admin history fixture renamed by the system"),
+        reason="renamed by a system-initiated change",
+    )
+    api.session.flush()
     token = api.admin_token(subject="sub-admin-history-actor")
 
     items = _history(api, entry.business_key, token).json()["items"]
 
-    assert items[0]["changed_by"] == "Admin History Actor"
+    assert [(item["action"], item["changed_by"]) for item in items] == [
+        ("catalogue_entry.updated", None),
+        ("catalogue_entry.created", "Admin History Actor"),
+    ]
 
 
 @pytest.mark.req("FR-19")

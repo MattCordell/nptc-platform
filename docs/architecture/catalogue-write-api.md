@@ -59,7 +59,8 @@ saved. `GET /catalogue/admin/entries/{business_key}/history` serves the public
 `HistoryPage` (`limit`, `before` and `next_cursor` behave as
 [public-api.md](public-api.md#change-history-fr-19) describes) for an entry of any status. It
 takes the same gate as the entry read. Every caller is authenticated, so `changed_by`
-always carries the display name; NFR-26 withholds it only from anonymous callers. The
+carries the display name when a person made the change, and is `null` for a system
+change or a pseudonymised account; NFR-26's anonymous withholding never applies. The
 route resolves the entry with `load_entry_for_update` and calls the same
 `nptc.catalogue.history.load_history` as the public route, so what an event reveals
 (field names, never values or the internal entry id) is identical. The response models

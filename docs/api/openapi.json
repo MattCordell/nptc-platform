@@ -3206,7 +3206,7 @@
           "catalogue-admin"
         ],
         "summary": "One catalogue entry's change history, any status, most recent first (FR-19)",
-        "description": "The `catalogue.edit_published`-gated counterpart to `catalogue.py`'s public\n`read_history`, so an editor can read the history of a `draft` entry the public route\n404s. The page has the same shape and paging.\n\nEvery caller is authenticated, so `changed_by` is always populated (NFR-26 withholds it\nonly from anonymous callers).",
+        "description": "The `catalogue.edit_published`-gated counterpart to `catalogue.py`'s public\n`read_history`, so an editor can read the history of a `draft` entry the public route\n404s. The page has the same shape and paging.\n\nEvery caller is authenticated, so NFR-26's anonymous withholding never applies.\n`changed_by` is still `null` for a system change or a pseudonymised account.",
         "operationId": "read_entry_history_any_status_api_v1_catalogue_admin_entries__business_key__history_get",
         "parameters": [
           {
