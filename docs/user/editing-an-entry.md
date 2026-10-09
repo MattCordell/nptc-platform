@@ -30,7 +30,9 @@ been published yet can be edited the same way as published ones.
 ## How the form saves
 
 Save sends only the fields you changed, one at a time, in this order: the preferred term,
-the code, the synonyms, then each property. All of them share your changelog note.
+the code, the synonyms, then each property. Within the synonyms, removals go first, then
+edits, then additions, so you can remove a synonym and give its text to another one in the
+same save. All of them share your changelog note.
 
 - **A field the server refuses.** The field is marked with the reason, and it keeps what you
   typed. The fields after it are still saved.

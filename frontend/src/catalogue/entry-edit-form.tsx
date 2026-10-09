@@ -315,10 +315,13 @@ export function EntryEditForm({ entry }: { entry: EntryDetail }) {
       });
     }
     const synonymWork = synonymChanges(synonyms, addText);
-    for (const { change, rowId } of synonymWork.amendments) {
+    // Retirements go first: an editor who removes one synonym and gives its
+    // text to another would otherwise have the rename refused as a duplicate
+    // of a term that is still active.
+    for (const { change, rowId } of synonymWork.retirements) {
       found.push({ change, fieldId: synonymFieldId(rowId), submittedIndexes: [] });
     }
-    for (const { change, rowId } of synonymWork.retirements) {
+    for (const { change, rowId } of synonymWork.amendments) {
       found.push({ change, fieldId: synonymFieldId(rowId), submittedIndexes: [] });
     }
     if (synonymWork.addition !== null) {
@@ -359,6 +362,15 @@ export function EntryEditForm({ entry }: { entry: EntryDetail }) {
   const changed = pendingChanges();
   const hasChanges =
     changed.length > 0 || pickedCode !== null || hasSynonymChanges(synonyms, addText);
+
+  /** Drops the form's own errors for the fields being changed, and no others. */
+  function clearOwnErrors(matches: (fieldId: string) => boolean) {
+    setOwnErrors((current) =>
+      current.some((error) => matches(error.fieldId))
+        ? current.filter((error) => !matches(error.fieldId))
+        : current,
+    );
+  }
   const noteGate = hasChanges && changelogNote.blocked;
   const blocked = !hasChanges || noteGate;
 
@@ -617,7 +629,7 @@ export function EntryEditForm({ entry }: { entry: EntryDetail }) {
               value={term}
               onChange={(event) => {
                 setTerm(event.target.value);
-                setOwnErrors([]);
+                clearOwnErrors((fieldId) => fieldId === TERM_FIELD_ID);
                 clearRefusal(TERM_CHANGE_ID);
               }}
             />
@@ -630,8 +642,10 @@ export function EntryEditForm({ entry }: { entry: EntryDetail }) {
           error={codeError}
           onPick={(code) => {
             clearRefusal(BINDING_CHANGE_ID);
+            clearOwnErrors((fieldId) => fieldId === CODE_FIELD_ID);
             if (code === activeCode) {
-              setOwnErrors([
+              setOwnErrors((current) => [
+                ...current,
                 {
                   fieldId: CODE_FIELD_ID,
                   message: "That code is already bound to this entry.",
@@ -639,12 +653,11 @@ export function EntryEditForm({ entry }: { entry: EntryDetail }) {
               ]);
               return;
             }
-            setOwnErrors([]);
             setPickedCode(code);
           }}
           onClear={() => {
             setPickedCode(null);
-            setOwnErrors([]);
+            clearOwnErrors((fieldId) => fieldId === CODE_FIELD_ID);
             clearRefusal(BINDING_CHANGE_ID);
           }}
           onRetire={(code) => setDialog({ kind: "retire-binding", code })}
@@ -658,13 +671,23 @@ export function EntryEditForm({ entry }: { entry: EntryDetail }) {
           rowErrors={synonymRowErrors}
           addError={addError}
           onRowsChange={(next) => {
+            const edited = next.filter(
+              (row) => synonyms.find((old) => old.id === row.id) !== row,
+            );
+            const editedFieldIds = new Set(edited.map((row) => synonymFieldId(row.id)));
+            const editedChangeIds = new Set(
+              edited.flatMap((row) => [
+                amendChangeId(row.original),
+                retireChangeId(row.original),
+              ]),
+            );
             setSynonyms(next);
-            setOwnErrors([]);
-            clearRefusalsWhere((id) => id.startsWith("synonym:"));
+            clearOwnErrors((fieldId) => editedFieldIds.has(fieldId));
+            clearRefusalsWhere((id) => editedChangeIds.has(id));
           }}
           onAddTextChange={(text) => {
             setAddText(text);
-            setOwnErrors([]);
+            clearOwnErrors((fieldId) => fieldId === ADD_SYNONYMS_FIELD_ID);
             clearRefusal(ADD_CHANGE_ID);
           }}
         />

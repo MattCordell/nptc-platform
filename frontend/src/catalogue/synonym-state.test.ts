@@ -126,4 +126,11 @@ describe("what the editor must fix first", () => {
     expect(hasSynonymChanges([row("FBC", { term: "x" })], "")).toBe(true);
     expect(hasSynonymChanges([row("FBC")], "New")).toBe(true);
   });
+
+  it("agrees with synonymChanges: spacing alone is no change, a blank row still is one", () => {
+    expect(hasSynonymChanges([row("FBC", { term: "FBC " })], "")).toBe(false);
+    expect(hasSynonymChanges([row("FBC", { term: " FBC " })], "")).toBe(false);
+    expect(hasSynonymChanges([row("FBC", { term: " " })], "")).toBe(true);
+    expect(hasSynonymChanges([], ";; ;")).toBe(false);
+  });
 });

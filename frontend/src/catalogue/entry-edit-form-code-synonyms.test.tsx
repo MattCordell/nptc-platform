@@ -652,7 +652,7 @@ describe("one run across the form (FR-36, FR-38)", () => {
         PROCEDURES_OK,
         conceptRoute(),
         bindOk(6),
-        retireOk(8),
+        retireOk(7),
         addOk(9),
         usageOk(10),
       ],
@@ -661,7 +661,7 @@ describe("one run across the form (FR-36, FR-38)", () => {
           call.method === "POST" && call.path.endsWith(AMEND_PATH)
             ? prior === 0
               ? amendOk("Serum ferritin", 5)
-              : amendOk("Full count", 7)
+              : amendOk("Full count", 8)
             : null,
       },
     );
@@ -692,8 +692,8 @@ describe("one run across the form (FR-36, FR-38)", () => {
     ).toEqual([
       ["POST", AMEND_PATH, 4],
       ["POST", BIND_PATH, 5],
-      ["POST", AMEND_PATH, 6],
-      ["POST", RETIRE_PATH, 7],
+      ["POST", RETIRE_PATH, 6],
+      ["POST", AMEND_PATH, 7],
       ["POST", ADD_PATH, 8],
       ["PUT", USAGE_PATH, 9],
     ]);
@@ -1116,5 +1116,150 @@ describe("choosing with the arrow keys", () => {
       calls.filter((call) => call.path.includes("/terminology/concepts/")),
     ).toHaveLength(1);
     expect(writes(calls)).toHaveLength(0);
+  });
+});
+
+describe("what counts as a change to the synonyms", () => {
+  it.each([
+    ["a trailing space", "FBC "],
+    ["a non-breaking space", "FBC "],
+  ])("does not enable Save for %s alone, and sends nothing", async (_name, text) => {
+    const calls = stubApi([entryRoute(), PROPERTIES_OK]);
+    const user = userEvent.setup();
+    await renderLoaded();
+
+    const box = form().getByLabelText("Synonym 1");
+    await user.clear(box);
+    await user.paste(text);
+    await fillNote(user, "Only the spacing changed");
+    await save(user);
+
+    expect(form().getByRole("button", { name: "Save" })).toHaveAttribute(
+      "aria-disabled",
+      "true",
+    );
+    expect(writes(calls)).toHaveLength(0);
+    expect(
+      screen.queryByRole("region", { name: "Changes saved" }),
+    ).not.toBeInTheDocument();
+  });
+});
+
+describe("renaming a synonym to a term that is being removed", () => {
+  it("retires first, so the rename is not refused as a duplicate", async () => {
+    const calls = stubApi([
+      entryRoute(),
+      PROPERTIES_OK,
+      retireOk(5),
+      amendOk("Complete blood count", 6),
+    ]);
+    const user = userEvent.setup();
+    await renderLoaded();
+
+    await user.click(form().getByRole("button", { name: "Remove Complete blood count" }));
+    const box = form().getByLabelText("Synonym 1");
+    await user.clear(box);
+    await user.paste("Complete blood count");
+    await fillNote(user, "Replace the abbreviation");
+    await save(user);
+
+    await form().findByRole("heading", { name: "Changes saved" });
+    expect(
+      writes(calls).map((call) => [
+        call.path.split("/api/v1")[1],
+        (call.body as { expected_row_version: number }).expected_row_version,
+      ]),
+    ).toEqual([
+      [RETIRE_PATH, 4],
+      [AMEND_PATH, 5],
+    ]);
+    expect(bodyOf(calls, RETIRE_PATH)).toMatchObject({ term: "Complete blood count" });
+    expect(bodyOf(calls, AMEND_PATH)).toMatchObject({
+      term: "FBC",
+      new_term: "Complete blood count",
+      target: "synonym",
+    });
+  });
+});
+
+describe("a field's error stays until that field changes", () => {
+  async function blankTermAndSave(user: User) {
+    await user.clear(form().getByLabelText("RCPA Preferred"));
+    await fillNote(user, "Clear the term by mistake");
+    await save(user);
+    expect(await form().findAllByText("Enter the preferred term.")).not.toHaveLength(0);
+  }
+
+  it("keeps the preferred term's error while the editor types in a synonym", async () => {
+    stubApi([entryRoute(), PROPERTIES_OK]);
+    const user = userEvent.setup();
+    await renderLoaded();
+    await blankTermAndSave(user);
+
+    await user.type(form().getByLabelText("Synonym 1"), "x");
+    await user.type(form().getByLabelText("Add synonyms"), "Zovirax");
+
+    expect(form().getAllByText("Enter the preferred term.")).not.toHaveLength(0);
+  });
+
+  it("clears the preferred term's error once that field is typed in", async () => {
+    stubApi([entryRoute(), PROPERTIES_OK]);
+    const user = userEvent.setup();
+    await renderLoaded();
+    await blankTermAndSave(user);
+
+    await user.type(form().getByLabelText("RCPA Preferred"), "Full blood count");
+
+    expect(form().queryByText("Enter the preferred term.")).not.toBeInTheDocument();
+  });
+
+  it("keeps the other errors when the code picked is the one already bound", async () => {
+    stubApi([
+      entryRoute({ ...ENTRY, bindings: [{ ...ACTIVE_BINDING, code: CODE, fsn: FSN }] }),
+      PROPERTIES_OK,
+      PROCEDURES_OK,
+      conceptRoute(),
+    ]);
+    const user = userEvent.setup();
+    await renderLoaded();
+    await blankTermAndSave(user);
+
+    await user.type(form().getByLabelText("Replacement SNOMED CT code"), "micro");
+    await user.click(
+      await screen.findByRole("option", { name: new RegExp(CODE) }, { timeout: 2000 }),
+    );
+
+    expect(
+      (await form().findAllByText("That code is already bound to this entry.")).length,
+    ).toBeGreaterThan(0);
+    expect(form().getAllByText("Enter the preferred term.")).not.toHaveLength(0);
+  });
+
+  it("keeps another synonym's refusal while a different row is edited", async () => {
+    stubApi([
+      entryRoute(),
+      PROPERTIES_OK,
+      {
+        method: "POST",
+        path: AMEND_PATH,
+        status: 409,
+        body: { detail: "This entry already holds that synonym." },
+      },
+    ]);
+    const user = userEvent.setup();
+    await renderLoaded();
+
+    const first = form().getByLabelText("Synonym 1");
+    await user.clear(first);
+    await user.paste("Full count");
+    await fillNote(user, "Reword the first synonym");
+    await save(user);
+    await screen.findByRole("heading", { name: "Some changes were not saved" });
+
+    await user.type(form().getByLabelText("Synonym 2"), "x");
+
+    expect(
+      form().getAllByText("This entry already holds that synonym.").length,
+    ).toBeGreaterThan(0);
   });
 });

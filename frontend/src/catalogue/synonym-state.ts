@@ -50,10 +50,6 @@ export function activeSynonyms(designations: Designation[]): string[] {
     .map((designation) => designation.term);
 }
 
-function touched(row: SynonymRow): boolean {
-  return row.removed || row.term !== row.original;
-}
-
 /**
  * The rows to show once the entry holds `freshTerms`. A row the editor changed
  * keeps their edit while its stored term is still there. An untouched row takes
@@ -163,6 +159,17 @@ export function synonymChanges(rows: SynonymRow[], addText: string): SynonymChan
   };
 }
 
+/**
+ * Whether Save has anything to do for the synonyms. Derived from
+ * `synonymChanges`, so it cannot disagree with what a Save sends. A blank row
+ * counts as well, so Save can be pressed and name it.
+ */
 export function hasSynonymChanges(rows: SynonymRow[], addText: string): boolean {
-  return rows.some(touched) || addedTerms(addText).length > 0;
+  const found = synonymChanges(rows, addText);
+  return (
+    found.amendments.length > 0 ||
+    found.retirements.length > 0 ||
+    found.addition !== null ||
+    blankRows(rows).length > 0
+  );
 }
