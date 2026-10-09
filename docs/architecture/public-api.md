@@ -98,7 +98,8 @@ status. This contract is for an anonymous or under-permissioned caller only - an
 authenticated Administrator loading an entry to edit it, or finding one to edit in the
 first place, uses a separate, permission-gated surface instead, never this one:
 `GET /catalogue/admin/entries/{business_key}` (issue #228),
-`GET /catalogue/admin/entries` and `GET /catalogue/admin/search` (issue #266, every
+`GET /catalogue/admin/entries/{business_key}/history` (issue #535, the history of an
+entry of any status), `GET /catalogue/admin/entries` and `GET /catalogue/admin/search` (issue #266, every
 `CatalogueEntryStatus` rather than `PUBLIC_STATUSES` alone) - see
 [catalogue-write-api.md](catalogue-write-api.md#entry-read-any-status-issue-228) and
 [catalogue-write-api.md](catalogue-write-api.md#all-status-listing-and-search-issue-266).

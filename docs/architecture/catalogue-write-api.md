@@ -1,4 +1,4 @@
-# The catalogue admin API: entry read, all-status listing/search, length distribution, code bindings, designations, property values and entry core columns (issues #219, #224, #228, #266, #152, #227, #248, #249, #265, #313)
+# The catalogue admin API: entry read, all-status listing/search, length distribution, code bindings, designations, property values and entry core columns (issues #219, #224, #228, #266, #152, #227, #248, #249, #265, #313, #535)
 
 The first state-changing HTTP routes in this platform, plus the one authenticated read
 route alongside them. Everything they call already existed and was already tested as a
@@ -18,6 +18,7 @@ onward).
 | Path | Method | Returns |
 |---|---|---|
 | `/catalogue/admin/entries/{business_key}` | `GET` | `200 EntryDetail` |
+| `/catalogue/admin/entries/{business_key}/history` | `GET` | `200 HistoryPage` |
 
 `nptc.api.routers.catalogue_admin` - a router separate from `catalogue.py` (the public
 read surface) for the same reason `catalogue_bindings.py`/`catalogue_designations.py`
@@ -52,6 +53,19 @@ the token `/amendment` requires before it will save the entry's own preferred te
 "`expected_row_version`" below, and [public-api.md](public-api.md) for why the field is
 on `EntryDetail` rather than `EntrySummary`.
 
+**History, any status (issue #535).** The public history route has the same 404 for a
+non-`active` entry, so an editor could not read the history of a draft they had just
+saved. `GET /catalogue/admin/entries/{business_key}/history` serves the public
+`HistoryPage` (`limit`, `before` and `next_cursor` behave as
+[public-api.md](public-api.md#change-history-fr-19) describes) for an entry of any status. It
+takes the same gate as the entry read. Every caller is authenticated, so `changed_by`
+always carries the display name; NFR-26 withholds it only from anonymous callers. The
+route resolves the entry with `load_entry_for_update` and calls the same
+`nptc.catalogue.history.load_history` as the public route, so what an event reveals
+(field names, never values or the internal entry id) is identical. The response models
+live in `catalogue_shared.py`, and the public route still 404s a draft for every caller,
+an Administrator included.
+
 ### Errors (entry read)
 
 | Status | When |
@@ -59,7 +73,7 @@ on `EntryDetail` rather than `EntrySummary`.
 | 401 | No credential, or one that could not be verified. |
 | 403 | Authenticated but missing `catalogue.edit_published`, or holding it without MFA (carries the step-up challenge). |
 | 404 | No catalogue entry, of any status, has this `business_key`. Deliberately the same generic body the public route's 404 carries (they share the same `EntryNotFoundError` handler) - this route exists so an authenticated caller can see a `draft`, not so it can distinguish "never minted" from "exists but hidden". |
-| 422 | The business key is not `NPTC-nnnnnn`. |
+| 422 | The business key is not `NPTC-nnnnnn`. On the history route, also a `limit` outside 1-200 or a `before` that is not a cursor this API issued. |
 | 500 | A published code binding's stored FSN is not in the form the terminology server serves (FR-83), same as the public detail route's own 500. |
 
 ## All-status listing and search (issue #266)

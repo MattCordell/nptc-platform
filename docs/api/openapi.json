@@ -3200,6 +3200,138 @@
         }
       }
     },
+    "/api/v1/catalogue/admin/entries/{business_key}/history": {
+      "get": {
+        "tags": [
+          "catalogue-admin"
+        ],
+        "summary": "One catalogue entry's change history, any status, most recent first (FR-19)",
+        "description": "The `catalogue.edit_published`-gated counterpart to `catalogue.py`'s public\n`read_history`, so an editor can read the history of a `draft` entry the public route\n404s. The page has the same shape and paging.\n\nEvery caller is authenticated, so `changed_by` is always populated (NFR-26 withholds it\nonly from anonymous callers).",
+        "operationId": "read_entry_history_any_status_api_v1_catalogue_admin_entries__business_key__history_get",
+        "parameters": [
+          {
+            "name": "business_key",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^NPTC-([0-9]{6,})$",
+              "description": "The entry's public identifier, e.g. `NPTC-000247` (FR-03).",
+              "examples": [
+                "NPTC-000247"
+              ],
+              "title": "Business Key"
+            },
+            "description": "The entry's public identifier, e.g. `NPTC-000247` (FR-03)."
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 200,
+              "minimum": 1,
+              "description": "Maximum entries in this page.",
+              "default": 50,
+              "title": "Limit"
+            },
+            "description": "Maximum entries in this page."
+          },
+          {
+            "name": "before",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "maxLength": 19,
+                  "pattern": "^[0-9]+$"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "The `next_cursor` from the previous page. Pass it back unmodified, and do not construct one.",
+              "title": "Before"
+            },
+            "description": "The `next_cursor` from the previous page. Pass it back unmodified, and do not construct one."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HistoryPage"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No credential, or one that could not be verified.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The caller is authenticated but does not hold `catalogue.edit_published`, or holds it but has not completed the MFA step-up this permission requires (the response then also carries a `WWW-Authenticate` step-up challenge).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No catalogue entry, of any status, has this business key.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "The business key is not `NPTC-nnnnnn`, `limit` is outside its range, or `before` is not a cursor this API issued.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "An address exceeded its request budget (FR-22): an anonymous caller its anonymous budget, or a caller whose credentials the API kept rejecting its budget for rejected credentials. Wait for the number of seconds in `Retry-After`, then try again. A valid credential is never counted. The body's `bulk_artefacts` names where to fetch the whole catalogue instead.",
+            "headers": {
+              "Retry-After": {
+                "description": "Whole seconds until the caller's request budget is available again.",
+                "schema": {
+                  "type": "integer",
+                  "minimum": 1
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RateLimitedResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/catalogue/admin/preferred-term-length-distribution": {
       "get": {
         "tags": [
