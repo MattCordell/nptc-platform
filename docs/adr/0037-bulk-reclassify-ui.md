@@ -1,7 +1,20 @@
 # ADR-0037: Bulk reclassify UI — read outcomes[] not the status code, two structurally distinct failure presentations, and report conflicts rather than retry them
 
-**Status:** Accepted
+**Status:** Accepted; the UI it describes was removed on 2026-10-09 (see Amendment)
 **Date:** 2026-09-08
+
+## Amendment, 2026-10-09: the UI was removed
+
+The catalogue administration screen was rebuilt as a search that opens one edit form per
+entry. That rebuild removed the selection column, `BulkReclassifyToolbar`,
+`BulkReclassifyDialog`, `BulkOutcomeSummary` and `useBulkSavePropertyValues`. The server
+route (ADR-0035) stays, with its tests. FR-39 is `deferred` in the requirements register
+for the UI half, because a replacement screen needs its own design.
+
+The decisions below describe the removed screen. They remain the record to start from if a
+bulk screen returns: read `outcomes[]` rather than the status code, keep a `200` partial
+success and FR-89's whole-batch `422` as two presentations, and report a conflicted entry
+rather than retry it.
 
 ## Context
 

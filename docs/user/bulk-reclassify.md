@@ -1,75 +1,16 @@
 # Bulk reclassify
 
-**Administration → Catalogue** lets you set one registry property to one value across
-every entry you have selected, in a single step — the tool this platform exists to
-replace hand-editing an Excel workbook for, most often to reclassify discipline across a
-group of entries at once. You need the Administrator role.
+**Bulk reclassify is not available on the screen.** The selection checkboxes, the
+**Reclassify selected** button and the results panel were removed when
+**Administration → Catalogue** was rebuilt as a search that opens one edit form per entry.
 
-## Starting a bulk reclassify
+To change a property on several entries today, open each entry from the
+[catalogue list](finding-entries.md) and use its [editing screen](editing-an-entry.md).
 
-Select the entries you want on the [catalogue list](finding-entries.md) — tick each
-row's checkbox, or the header checkbox to select every row currently on screen. Once at
-least one row is selected, a **Reclassify selected** button appears above the list,
-showing how many entries are currently selected.
+The server still accepts a bulk write, `POST /catalogue/entries/bulk/properties/{key}`, for
+callers that use the API directly. It behaves as it always has: it replaces the property's
+whole value set on every entry you name, and it reports each entry as applied, unchanged,
+conflicted or not found.
 
-Choose **Reclassify selected** to open the dialog. Choose the property you want to set,
-then enter the value or values you want every selected entry to hold. Give a changelog
-note describing the change, and choose **Reclassify**.
-
-## What "reclassify" means
-
-Every value you enter here **replaces** whatever the property currently holds on each
-selected entry — it does not add to what is already there. If an entry currently holds
-more than one value for the property you are changing, all of it is replaced by what you
-enter in this dialog. Check what you are about to set before saving; there is no way to
-recover a replaced value except by reclassifying again with the earlier value.
-
-A batch is limited to 100 entries at a time. If you have selected more than that, the
-dialog tells you so and does not let you save until you reduce your selection.
-
-## What happens after you save
-
-Once the batch completes, the dialog closes and a results panel appears on the list
-screen showing how many entries were applied, left unchanged, conflicted, or were not
-found, plus a table of entries skipped from the batch. If every selected entry was
-updated cleanly, that table says so — "Nothing was skipped."
-
-If any entries were skipped, the table lists each one and why:
-
-- **Someone else changed it first.** Another editor changed that entry after you
-  selected it but before your batch reached it. That one entry keeps their change; every
-  other entry in your batch is still updated. The panel shows what your batch would have
-  set and what the entry holds now, so you can see whether reclassifying it again is
-  still the right thing to do — reopen that entry's own [editing screen](editing-an-entry.md)
-  to make the change there, where you can see the full picture before saving.
-- **It was replaced while your batch was running.** Rare: the entry was deleted and a new
-  one created under the same code while your batch was in progress. It was skipped, and
-  there is nothing further to reconcile against — check whether the new entry under that
-  code still needs the same change.
-- **It no longer exists.** The entry was deleted before your batch reached it.
-
-Your selection is cleared once the batch completes, whether or not everything succeeded
-— the results panel is what tells you what to revisit, not the list's checkboxes.
-
-## If something goes wrong
-
-**A message naming what stopped the whole batch, with the dialog still open.** Some
-checks look only at the values you chose, such as the rule that the specimen root
-(**Specimen**, code `123038009`, meaning any specimen) cannot sit beside another specimen.
-They run before any entry is touched, so if one fails nothing in the batch is saved. Your
-chosen property, values and changelog note are kept exactly as you left them; adjust what
-you are setting and try again.
-
-**Save stays unavailable, with a message under the changelog note.** Same as
-[editing a property directly](editing-registry-properties.md#if-something-goes-wrong) —
-write a real sentence describing the change.
-
-**"Add at least one value before reclassifying."** You chose a property but left every
-value blank. This dialog only ever sets a property to one or more values — it does not
-offer bulk clearing, even though the server accepts an empty set as a whole-set clear on
-a single entry's own editing screen. Enter at least one value, or close the dialog if you
-meant to clear the property on entries one at a time instead.
-
-**"You cannot reclassify entries with your current sign-in."** See the note on
-multi-factor authentication in [Editing an entry](editing-an-entry.md) — the same
-Administrator-only MFA requirement applies here.
+A replacement screen is deferred. It would need its own design, so it is not part of the
+current catalogue maintenance screens.

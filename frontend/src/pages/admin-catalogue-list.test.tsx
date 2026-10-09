@@ -1,4 +1,4 @@
-import { act, screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
@@ -8,12 +8,12 @@ import type { Route } from "../test/stub-api.ts";
 import { stubApi } from "../test/stub-api.ts";
 
 /**
- * The admin catalogue list screen (issue #267; FR-14, FR-15, FR-16, FR-36,
- * NFR-31).
+ * The editor's entry point at `/admin/catalogue/` (FR-14, FR-15, FR-16, FR-36,
+ * NFR-31), driven through the real route, as `admin-catalogue-edit.test.tsx`
+ * is: what is under test is the shipped screen.
  *
- * Driven through the real route, matching `admin-catalogue-edit.test.tsx`'s
- * own convention: what is under test is the shipped screen, not a component
- * mounted in isolation.
+ * Requests are told apart by their query string, never by a call count:
+ * `<StrictMode>` fetches the first page twice.
  */
 
 const LIST_URL = "/admin/catalogue/";
@@ -27,6 +27,8 @@ const SIGNED_IN = {
 
 const DRAFT_KEY = "NPTC-000901";
 const ACTIVE_KEY = "NPTC-000247";
+const DRAFT_TERM = "Ferritin";
+const ACTIVE_TERM = "Full blood count";
 
 function entrySummary(overrides: Record<string, unknown>) {
   return {
@@ -44,27 +46,23 @@ function entrySummary(overrides: Record<string, unknown>) {
   };
 }
 
-const ENTRIES_PAGE = {
-  items: [
-    entrySummary({
-      business_key: DRAFT_KEY,
-      preferred_term: "Ferritin",
-      status: "draft",
-    }),
-    entrySummary({
-      business_key: ACTIVE_KEY,
-      preferred_term: "Full blood count",
-      status: "active",
-    }),
-  ],
-  next_cursor: null,
-};
+const DRAFT_ROW = entrySummary({
+  business_key: DRAFT_KEY,
+  preferred_term: DRAFT_TERM,
+  status: "draft",
+});
+const ACTIVE_ROW = entrySummary({
+  business_key: ACTIVE_KEY,
+  preferred_term: ACTIVE_TERM,
+  status: "active",
+  disciplines: ["Haematology"],
+});
 
 const ENTRIES_OK: Route = {
   method: "GET",
   path: "/catalogue/admin/entries",
   status: 200,
-  body: ENTRIES_PAGE,
+  body: { items: [DRAFT_ROW, ACTIVE_ROW], next_cursor: null },
 };
 
 const SEARCH_OK: Route = {
@@ -72,68 +70,66 @@ const SEARCH_OK: Route = {
   path: "/catalogue/admin/search",
   status: 200,
   body: {
-    items: [{ ...entrySummary({ business_key: ACTIVE_KEY }), score: 0.9 }],
+    items: [{ ...ACTIVE_ROW, score: 0.9 }],
     next_cursor: null,
     facets: [],
   },
 };
 
-// A filterable, active, concept_picker property (issue #267's browse-mode
-// resolution) - matching `properties-panel.test.tsx`'s own `discipline`
-// fixture shape.
-const PROPERTIES_OK: Route = {
-  method: "GET",
-  path: "/registry/properties",
-  status: 200,
-  body: {
-    items: [
-      {
-        key: "discipline",
-        label: "Discipline",
-        datatype: "code",
-        cardinality: "0..*",
-        scope: "both",
-        required_for_submission: false,
-        required_for_publication: false,
-        binding_target: "local_code_system",
-        value_set_uri: null,
-        strength: "required",
-        edition: null,
-        local_code_system_key: "discipline",
-        filterable: true,
-        origin: "system",
-        status: "active",
-        display_order: 10,
-        constraints: {},
-        row_version: 1,
-        form_control: { control: "concept_picker", params: {} },
-      },
-      // Filterable but not a concept_picker - omitted from the browse-mode
-      // panel (issue #267's own open-question resolution).
-      {
-        key: "volume_ml",
-        label: "Volume",
-        datatype: "number",
-        cardinality: "0..1",
-        scope: "both",
-        required_for_submission: false,
-        required_for_publication: false,
-        binding_target: null,
-        value_set_uri: null,
-        strength: null,
-        edition: null,
-        local_code_system_key: null,
-        filterable: true,
-        origin: "system",
-        status: "active",
-        display_order: 20,
-        constraints: {},
-        row_version: 1,
-        form_control: { control: "number", params: {} },
-      },
-    ],
-  },
+function codedDefinition(key: string, label: string, displayOrder: number) {
+  return {
+    key,
+    label,
+    datatype: "code",
+    cardinality: "0..*",
+    scope: "both",
+    required_for_submission: false,
+    required_for_publication: false,
+    binding_target: "local_code_system",
+    value_set_uri: null,
+    strength: "required",
+    edition: null,
+    local_code_system_key: key,
+    filterable: true,
+    origin: "system",
+    status: "active",
+    display_order: displayOrder,
+    constraints: {},
+    row_version: 1,
+    form_control: { control: "concept_picker", params: {} },
+  };
+}
+
+const VOLUME_DEFINITION = {
+  ...codedDefinition("volume_ml", "Volume", 30),
+  datatype: "number",
+  cardinality: "0..1",
+  binding_target: null,
+  strength: null,
+  local_code_system_key: null,
+  form_control: { control: "number", params: {} },
 };
+
+function propertiesRoute(...definitions: unknown[]): Route {
+  return {
+    method: "GET",
+    path: "/registry/properties",
+    status: 200,
+    body: { items: definitions },
+  };
+}
+
+// Filterable, active, coded: gets a combobox. `volume_ml` is filterable but
+// not coded, so it gets none and can only appear as a chip.
+const PROPERTIES_OK = propertiesRoute(
+  codedDefinition("discipline", "Discipline", 10),
+  VOLUME_DEFINITION,
+);
+
+const PROPERTIES_WITH_SPECIMEN = propertiesRoute(
+  codedDefinition("discipline", "Discipline", 10),
+  codedDefinition("specimen", "Specimen", 20),
+);
 
 const DISCIPLINE_VALUES_OK: Route = {
   method: "GET",
@@ -155,9 +151,32 @@ const DISCIPLINE_VALUES_MULTI_OK: Route = {
   },
 };
 
+const SPECIMEN_VALUES_OK: Route = {
+  method: "GET",
+  path: "/registry/properties/specimen/values",
+  status: 200,
+  body: { items: [{ code: "serum", display: "Serum" }], total: 1 },
+};
+
 afterEach(() => {
   vi.unstubAllGlobals();
 });
+
+function calledPath(
+  calls: { path: string; searchParams: URLSearchParams }[],
+  suffix: string,
+) {
+  return calls.filter((call) => call.path.endsWith(suffix));
+}
+
+async function chooseOption(
+  user: ReturnType<typeof userEvent.setup>,
+  comboboxName: string,
+  optionName: string,
+) {
+  await user.click(await screen.findByRole("combobox", { name: comboboxName }));
+  await user.click(await screen.findByRole("option", { name: optionName }));
+}
 
 describe("AdminCatalogueListPage", () => {
   it("browses by default (no q) and lists every status", async () => {
@@ -165,25 +184,27 @@ describe("AdminCatalogueListPage", () => {
 
     await renderRoute(LIST_URL, SIGNED_IN);
 
-    expect(await screen.findByRole("link", { name: DRAFT_KEY })).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: ACTIVE_KEY })).toBeInTheDocument();
-    expect(calls.some((call) => call.path.endsWith("/catalogue/admin/entries"))).toBe(
-      true,
-    );
-    expect(calls.some((call) => call.path.endsWith("/catalogue/admin/search"))).toBe(
-      false,
-    );
+    expect(await screen.findByRole("link", { name: DRAFT_TERM })).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: ACTIVE_TERM })).toBeInTheDocument();
+    expect(calledPath(calls, "/catalogue/admin/entries")).not.toHaveLength(0);
+    expect(calledPath(calls, "/catalogue/admin/search")).toHaveLength(0);
+    // The public routes would hide drafts, so none may be read here.
+    expect(calledPath(calls, "/catalogue/entries")).toHaveLength(0);
   });
 
-  it("shows each status as its label rather than the raw value", async () => {
+  it("shows each status as its label, beside the identifier as plain text", async () => {
     stubApi([ENTRIES_OK, PROPERTIES_OK, DISCIPLINE_VALUES_OK]);
 
     await renderRoute(LIST_URL, SIGNED_IN);
 
-    const draftRow = (await screen.findByRole("link", { name: DRAFT_KEY })).closest("tr");
-    const activeRow = screen.getByRole("link", { name: ACTIVE_KEY }).closest("tr");
+    const draftRow = (await screen.findByRole("link", { name: DRAFT_TERM })).closest(
+      "tr",
+    );
+    const activeRow = screen.getByRole("link", { name: ACTIVE_TERM }).closest("tr");
     expect(within(draftRow as HTMLElement).getByText("Draft")).toBeInTheDocument();
+    expect(within(draftRow as HTMLElement).getByText(DRAFT_KEY)).toBeInTheDocument();
     expect(within(activeRow as HTMLElement).getByText("Active")).toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: DRAFT_KEY })).not.toBeInTheDocument();
   });
 
   it("dispatches to the search route once q is set in the URL", async () => {
@@ -192,18 +213,13 @@ describe("AdminCatalogueListPage", () => {
     await renderRoute(`${LIST_URL}?q=glucose`, SIGNED_IN);
 
     await waitFor(() =>
-      expect(calls.some((call) => call.path.endsWith("/catalogue/admin/search"))).toBe(
-        true,
-      ),
+      expect(calledPath(calls, "/catalogue/admin/search")).not.toHaveLength(0),
     );
-    expect(calls.some((call) => call.path.endsWith("/catalogue/admin/entries"))).toBe(
-      false,
-    );
+    expect(calledPath(calls, "/catalogue/admin/entries")).toHaveLength(0);
+    expect(calledPath(calls, "/catalogue/search")).toHaveLength(0);
   });
 
-  // Acceptance criterion: an administrator can find a draft entry from the
-  // list screen and reach its edit screen without typing a URL.
-  it("finds a draft entry and follows it to its edit screen", async () => {
+  it("finds a draft entry and follows it to its edit form", async () => {
     stubApi([
       ENTRIES_OK,
       PROPERTIES_OK,
@@ -218,80 +234,160 @@ describe("AdminCatalogueListPage", () => {
     const user = userEvent.setup();
 
     const { router } = await renderRoute(LIST_URL, SIGNED_IN);
-    await screen.findByRole("link", { name: DRAFT_KEY });
-
-    await user.click(screen.getByRole("link", { name: DRAFT_KEY }));
+    await user.click(await screen.findByRole("link", { name: DRAFT_TERM }));
 
     await waitFor(() =>
       expect(router.state.location.pathname).toBe(`/admin/catalogue/${DRAFT_KEY}/edit`),
     );
   });
 
-  // Acceptance criterion: filter state survives a page reload and a pasted
-  // link.
-  it("restores filter selections from a pasted link", async () => {
-    stubApi([ENTRIES_OK, PROPERTIES_OK, DISCIPLINE_VALUES_OK]);
-
-    await renderRoute(`${LIST_URL}?filter.status=draft`, SIGNED_IN);
-    await screen.findByRole("link", { name: DRAFT_KEY });
-
-    expect(screen.getByRole("checkbox", { name: "Draft" })).toBeChecked();
-    expect(screen.getByRole("checkbox", { name: "Active" })).not.toBeChecked();
-  });
-
-  it("navigates with the toggled filter value when a facet box is checked", async () => {
-    stubApi([ENTRIES_OK, PROPERTIES_OK, DISCIPLINE_VALUES_OK]);
-    const user = userEvent.setup();
-
-    const { router } = await renderRoute(LIST_URL, SIGNED_IN);
-    await screen.findByRole("link", { name: DRAFT_KEY });
-
-    await user.click(screen.getByRole("checkbox", { name: "Draft" }));
-
-    await waitFor(() =>
-      expect(screen.getByRole("checkbox", { name: "Draft" })).toBeChecked(),
-    );
-    expect(router.state.location.href).toContain("filter.status=draft");
-  });
-
-  it("omits a filterable property with no concept_picker control from the panel", async () => {
+  // The bulk reclassify UI is removed: a row opens its entry, nothing more.
+  it("has no row checkboxes, select-all box or bulk toolbar", async () => {
     stubApi([ENTRIES_OK, PROPERTIES_OK, DISCIPLINE_VALUES_OK]);
 
     await renderRoute(LIST_URL, SIGNED_IN);
-    await screen.findByRole("link", { name: DRAFT_KEY });
+    await screen.findByRole("link", { name: DRAFT_TERM });
 
-    expect(
-      await screen.findByRole("checkbox", { name: "Chemistry" }, { timeout: 2000 }),
-    ).toBeInTheDocument();
-    expect(screen.queryByRole("group", { name: "Volume" })).not.toBeInTheDocument();
-    expect(
-      screen.queryByRole("textbox", { name: "Filter Volume" }),
-    ).not.toBeInTheDocument();
+    expect(screen.queryAllByRole("checkbox")).toHaveLength(0);
+    expect(screen.queryByRole("group", { name: "Bulk reclassify" })).toBeNull();
+    expect(screen.queryByRole("button", { name: /reclassify/i })).toBeNull();
   });
 
-  // PR #285 review finding 1: a `filter.*` the panel renders no control for
-  // (not `concept_picker`, or since dropped from the registry) used to be
-  // unclearable from a bookmarked or shared link - the exact FR-36 scenario
-  // this screen exists for.
+  it("announces the number of results on the page", async () => {
+    stubApi([ENTRIES_OK, PROPERTIES_OK, DISCIPLINE_VALUES_OK]);
+
+    await renderRoute(LIST_URL, SIGNED_IN);
+
+    await waitFor(() =>
+      expect(screen.getByRole("status")).toHaveTextContent("2 results on this page."),
+    );
+  });
+
+  describe("filter comboboxes", () => {
+    it("offers Status and each registry property that has coded values", async () => {
+      stubApi([
+        ENTRIES_OK,
+        PROPERTIES_WITH_SPECIMEN,
+        DISCIPLINE_VALUES_OK,
+        SPECIMEN_VALUES_OK,
+      ]);
+
+      await renderRoute(LIST_URL, SIGNED_IN);
+
+      expect(await screen.findByRole("combobox", { name: "Status" })).toBeVisible();
+      expect(await screen.findByRole("combobox", { name: "Discipline" })).toBeVisible();
+      expect(await screen.findByRole("combobox", { name: "Specimen" })).toBeVisible();
+    });
+
+    it("gives a filterable property with no coded values no control of its own", async () => {
+      stubApi([ENTRIES_OK, PROPERTIES_OK, DISCIPLINE_VALUES_OK]);
+
+      await renderRoute(LIST_URL, SIGNED_IN);
+      await screen.findByRole("combobox", { name: "Discipline" });
+
+      expect(screen.queryByRole("combobox", { name: "Volume" })).not.toBeInTheDocument();
+      expect(
+        screen.queryByRole("combobox", { name: "Specimen" }),
+      ).not.toBeInTheDocument();
+    });
+
+    it("lists registry values with no counts, as admin browse has none", async () => {
+      stubApi([ENTRIES_OK, PROPERTIES_OK, DISCIPLINE_VALUES_MULTI_OK]);
+      const user = userEvent.setup();
+
+      await renderRoute(LIST_URL, SIGNED_IN);
+      await screen.findByRole("link", { name: DRAFT_TERM });
+      await user.click(await screen.findByRole("combobox", { name: "Discipline" }));
+
+      expect(
+        (await screen.findAllByRole("option")).map((option) => option.textContent),
+      ).toEqual(["Chemistry", "Haematology"]);
+    });
+
+    it("asks for the largest page of values the route allows", async () => {
+      const calls = stubApi([ENTRIES_OK, PROPERTIES_OK, DISCIPLINE_VALUES_OK]);
+
+      await renderRoute(LIST_URL, SIGNED_IN);
+      await screen.findByRole("combobox", { name: "Discipline" });
+
+      await waitFor(() =>
+        expect(
+          calledPath(calls, "/registry/properties/discipline/values").every(
+            (call) => call.searchParams.get("count") === "200",
+          ),
+        ).toBe(true),
+      );
+    });
+
+    it("restores selections from a pasted link", async () => {
+      stubApi([ENTRIES_OK, PROPERTIES_OK, DISCIPLINE_VALUES_OK]);
+
+      await renderRoute(`${LIST_URL}?filter.status=draft`, SIGNED_IN);
+      await screen.findByRole("link", { name: DRAFT_TERM });
+
+      expect(screen.getByRole("combobox", { name: "Status" })).toHaveAttribute(
+        "placeholder",
+        "1 selected",
+      );
+    });
+
+    it("navigates with the chosen value and sends it to the API", async () => {
+      const calls = stubApi([ENTRIES_OK, PROPERTIES_OK, DISCIPLINE_VALUES_OK]);
+      const user = userEvent.setup();
+
+      const { router } = await renderRoute(LIST_URL, SIGNED_IN);
+      await screen.findByRole("link", { name: DRAFT_TERM });
+
+      await chooseOption(user, "Status", "Draft");
+
+      await waitFor(() =>
+        expect(router.state.location.href).toContain("filter.status=draft"),
+      );
+      await waitFor(() =>
+        expect(
+          calledPath(calls, "/catalogue/admin/entries").some(
+            (call) => call.searchParams.get("filter.status") === "draft",
+          ),
+        ).toBe(true),
+      );
+    });
+
+    it("keeps the search box and results working when the options cannot be loaded", async () => {
+      stubApi([
+        ENTRIES_OK,
+        PROPERTIES_OK,
+        {
+          method: "GET",
+          path: "/registry/properties/discipline/values",
+          status: 502,
+          body: { detail: "upstream" },
+        },
+      ]);
+
+      await renderRoute(LIST_URL, SIGNED_IN);
+
+      expect(await screen.findByRole("link", { name: DRAFT_TERM })).toBeInTheDocument();
+      expect(
+        await screen.findByText(/Some filter options could not be loaded/),
+      ).toBeInTheDocument();
+      expect(screen.getByRole("searchbox")).toBeEnabled();
+    });
+  });
+
+  // A `filter.*` with no combobox of its own (not offered here, or since
+  // dropped from the registry) must still be visible and clearable from a
+  // bookmarked or shared link.
   describe("active filters escape hatch", () => {
-    it("shows a removable chip for a filter the panel has no control for, and clears it", async () => {
+    it("shows a removable chip for a filter with no control, and clears it", async () => {
       stubApi([ENTRIES_OK, PROPERTIES_OK, DISCIPLINE_VALUES_OK]);
       const user = userEvent.setup();
 
       const { router } = await renderRoute(`${LIST_URL}?filter.volume_ml=5`, SIGNED_IN);
-      await screen.findByRole("link", { name: DRAFT_KEY });
+      await screen.findByRole("link", { name: DRAFT_TERM });
 
-      // `volume_ml` is filterable but not `concept_picker` - the panel
-      // renders no checkbox or text box for it (see the test above), so the
-      // chip is the only control that names it at all. The facet key still
-      // resolves to its registry label ("Volume"), since `volume_ml` is a
-      // known property - only the value stays raw, as there is no
-      // value-options source to resolve a `number` datatype against (issue
-      // #289's own acceptance criterion).
-      expect(screen.queryByRole("checkbox", { name: /volume/i })).not.toBeInTheDocument();
+      // The key resolves to its registry label; the value stays raw, since a
+      // number has no value-options source to resolve against.
       const chip = screen.getByRole("button", { name: "Remove filter Volume: 5" });
-      expect(chip).toBeInTheDocument();
-
       await user.click(chip);
 
       await waitFor(() =>
@@ -302,56 +398,37 @@ describe("AdminCatalogueListPage", () => {
       ).not.toBeInTheDocument();
     });
 
-    // The true escape hatch (issue #289): a `filter.*` key with no
-    // `PropertyDefinition` at all - not merely one the panel offers no
-    // control for - stays fully raw on both key and value.
     it("keeps a chip fully raw for a facet key absent from the registry entirely", async () => {
       stubApi([ENTRIES_OK, PROPERTIES_OK, DISCIPLINE_VALUES_OK]);
 
       await renderRoute(`${LIST_URL}?filter.mystery_facet=raw_value`, SIGNED_IN);
-      await screen.findByRole("link", { name: DRAFT_KEY });
+      await screen.findByRole("link", { name: DRAFT_TERM });
 
       expect(
         screen.getByRole("button", { name: "Remove filter mystery_facet: raw_value" }),
       ).toBeInTheDocument();
     });
 
-    // Issue #289: a coded (`concept_picker`) property's chip resolves both
-    // the facet key and the selected value to the same labels the filter
-    // panel shows for the identical selection.
     it("resolves a coded property's chip to its registry label and display value", async () => {
       const calls = stubApi([ENTRIES_OK, PROPERTIES_OK, DISCIPLINE_VALUES_OK]);
 
       await renderRoute(`${LIST_URL}?filter.discipline=chemistry`, SIGNED_IN);
-      await screen.findByRole("link", { name: DRAFT_KEY });
+      await screen.findByRole("link", { name: DRAFT_TERM });
 
       expect(
         await screen.findByRole("button", {
           name: "Remove filter Discipline: Chemistry",
         }),
       ).toBeInTheDocument();
-      // Issue #306 acceptance criterion: a value the unfiltered page already
-      // answers must not also trigger a resolve-by-code request - one call
-      // to this path total, from the shared paged fetch alone.
-      expect(
-        calls.filter((call) =>
-          call.path.endsWith("/registry/properties/discipline/values"),
-        ).length,
-      ).toBe(1);
+      // The page answers the value, so no resolve-by-code request follows.
+      expect(calledPath(calls, "/registry/properties/discipline/values")).toHaveLength(1);
     });
 
-    // Issue #289: a coded value not present in the fetched value-options page
-    // (filtered out, a retired code, or the fetch erroring) falls back to the
-    // raw code as its own label - mirroring `PropertyFacetGroup`'s
-    // `carriedOptions` fallback - rather than showing blank or "undefined".
-    // Issue #306's own resolve-by-code lookup is exercised here too (both
-    // stub responses below omit `retired_code`), so this is also the
-    // "neither side can resolve" case for that lookup.
     it("falls back to the raw code for a coded value absent from the fetched page", async () => {
       stubApi([ENTRIES_OK, PROPERTIES_OK, DISCIPLINE_VALUES_OK]);
 
       await renderRoute(`${LIST_URL}?filter.discipline=retired_code`, SIGNED_IN);
-      await screen.findByRole("link", { name: DRAFT_KEY });
+      await screen.findByRole("link", { name: DRAFT_TERM });
 
       expect(
         await screen.findByRole("button", {
@@ -360,12 +437,7 @@ describe("AdminCatalogueListPage", () => {
       ).toBeInTheDocument();
     });
 
-    // Issue #306, ADR-0038: a selected value beyond the unfiltered page's own
-    // `DEFAULT_PAGE_SIZE` (or absent for any other reason) resolves directly
-    // by code instead of falling back to the raw code - both the chip
-    // (`admin-catalogue-list.tsx`) and the filter panel's own carried
-    // checkbox (`PropertyFacetGroup`) share this fix.
-    it("resolves a chip and a carried checkbox beyond the fetched page via the code query parameter", async () => {
+    it("resolves a value beyond the fetched page by code, for its chip and its combobox", async () => {
       stubApi([ENTRIES_OK, PROPERTIES_OK], {
         vary: (call) => {
           if (!call.path.endsWith("/registry/properties/discipline/values")) {
@@ -385,26 +457,24 @@ describe("AdminCatalogueListPage", () => {
           return DISCIPLINE_VALUES_OK;
         },
       });
+      const user = userEvent.setup();
 
       await renderRoute(`${LIST_URL}?filter.discipline=endocrinology`, SIGNED_IN);
-      await screen.findByRole("link", { name: DRAFT_KEY });
+      await screen.findByRole("link", { name: DRAFT_TERM });
 
       expect(
         await screen.findByRole("button", {
           name: "Remove filter Discipline: Endocrinology",
         }),
       ).toBeInTheDocument();
+      await user.click(await screen.findByRole("combobox", { name: "Discipline" }));
       expect(
-        await screen.findByRole("checkbox", { name: "Endocrinology" }),
-      ).toBeChecked();
+        await screen.findByRole("option", { name: "Endocrinology" }),
+      ).toHaveAttribute("aria-selected", "true");
     });
 
-    // Review round 1, PR #307: a facet with more unresolved values than the
-    // route's own 200-code ceiling still resolves its first 200 rather than
-    // 422ing the whole batch and losing every chip in the facet to the raw
-    // code fallback. The chip resolver (`admin-catalogue-list.tsx`) and the
-    // panel's carried checkboxes (`admin-catalogue-filter-panel.tsx`) share
-    // the identical cap, so both still read from one shared fetch.
+    // Past the route's own `code` ceiling the request would 422 and lose every
+    // label in the facet, so the batch is cut to the ceiling instead.
     it("caps a facet's resolve-by-code batch at the route's 200-code ceiling", async () => {
       const codes = Array.from({ length: 201 }, (_, i) => `code_${i}`);
       const resolvedBatches: string[][] = [];
@@ -432,96 +502,32 @@ describe("AdminCatalogueListPage", () => {
 
       const query = codes.map((code) => `filter.discipline=${code}`).join("&");
       await renderRoute(`${LIST_URL}?${query}`, SIGNED_IN);
-      await screen.findByRole("link", { name: DRAFT_KEY });
+      await screen.findByRole("link", { name: DRAFT_TERM });
 
       await waitFor(() => expect(resolvedBatches.length).toBeGreaterThan(0));
-      // One batch, not two: the chip resolver and the panel's carried
-      // checkboxes derive their own capped code list from the same
-      // `filterSelections`-derived order, so both land on the identical
-      // first-200 subset and share one cache entry (review round 2, PR
-      // #307) - the same claim `resolves both chips...from one fetch`
-      // above pins for the two-value case.
       expect(resolvedBatches).toHaveLength(1);
       expect(resolvedBatches[0]).toHaveLength(200);
     });
 
-    // Review round 1, PR #307: before this fix, `PropertyFacetGroup` decided
-    // "carried" against its own *filtered* page, so typing a filter that no
-    // longer matches a selected value made it look unresolved even though
-    // the unfiltered page (already fetched, and cached under the same
-    // `filter: ""` key the chip resolver reads) already knows its label -
-    // firing a redundant resolve-by-code request the cache could have
-    // answered for free.
-    it("keeps a carried checkbox's known label without a resolve-by-code call while filtering", async () => {
-      const user = userEvent.setup();
-      const codeCalls: string[] = [];
-      stubApi([ENTRIES_OK, PROPERTIES_OK], {
-        vary: (call) => {
-          if (!call.path.endsWith("/registry/properties/discipline/values")) {
-            return null;
-          }
-          if (call.searchParams.has("code")) {
-            codeCalls.push(...call.searchParams.getAll("code"));
-            return {
-              method: "GET",
-              path: "/registry/properties/discipline/values",
-              status: 200,
-              body: { items: [], total: 0 },
-            };
-          }
-          if (call.searchParams.has("filter")) {
-            return {
-              method: "GET",
-              path: "/registry/properties/discipline/values",
-              status: 200,
-              body: {
-                items: [{ code: "haematology", display: "Haematology" }],
-                total: 1,
-              },
-            };
-          }
-          return DISCIPLINE_VALUES_OK;
-        },
-      });
-
-      await renderRoute(`${LIST_URL}?filter.discipline=chemistry`, SIGNED_IN);
-      await screen.findByRole("link", { name: DRAFT_KEY });
-
-      await user.type(screen.getByLabelText("Filter Discipline"), "haema");
-
-      expect(
-        await screen.findByRole("checkbox", { name: "Haematology" }, { timeout: 2000 }),
-      ).toBeInTheDocument();
-      expect(screen.getByRole("checkbox", { name: "Chemistry" })).toBeChecked();
-      expect(codeCalls).toHaveLength(0);
-    });
-
-    // Issue #289: the `status` facet resolves against the same
-    // `STATUS_OPTIONS` labels the filter panel itself renders.
-    it("resolves the status facet's chip via STATUS_OPTIONS", async () => {
+    it("resolves the status facet's chip to its label", async () => {
       stubApi([ENTRIES_OK, PROPERTIES_OK, DISCIPLINE_VALUES_OK]);
 
       await renderRoute(`${LIST_URL}?filter.status=active`, SIGNED_IN);
-      await screen.findByRole("link", { name: DRAFT_KEY });
+      await screen.findByRole("link", { name: DRAFT_TERM });
 
       expect(
         screen.getByRole("button", { name: "Remove filter Status: Active" }),
       ).toBeInTheDocument();
     });
 
-    // Issue #289 review: `codedActiveFacetKeys` dedups by facet key so two
-    // selected values on the same coded facet share one value-options fetch
-    // rather than one per value - this is the principal failure mode of that
-    // dedup, and the `calls.filter(...).toBe(1)` assertion below is what
-    // actually catches a regression to one fetch per value.
-    it("resolves both chips for two selected values on the same coded facet from one fetch", async () => {
+    it("resolves two selected values on the same coded facet from one fetch", async () => {
       const calls = stubApi([ENTRIES_OK, PROPERTIES_OK, DISCIPLINE_VALUES_MULTI_OK]);
 
       await renderRoute(
         `${LIST_URL}?filter.discipline=chemistry&filter.discipline=haematology`,
         SIGNED_IN,
       );
-      await screen.findByRole("link", { name: DRAFT_KEY });
+      await screen.findByRole("link", { name: DRAFT_TERM });
 
       expect(
         await screen.findByRole("button", {
@@ -531,15 +537,8 @@ describe("AdminCatalogueListPage", () => {
       expect(
         screen.getByRole("button", { name: "Remove filter Discipline: Haematology" }),
       ).toBeInTheDocument();
-      // One fetch, not two - `PropertyFacetGroup`'s own value-options query
-      // (fired for the same unfiltered discipline facet, matching cache key)
-      // is the only other legitimate source of a call to this path, so more
-      // than one indicates the dedup did not hold.
-      expect(
-        calls.filter((call) =>
-          call.path.endsWith("/registry/properties/discipline/values"),
-        ).length,
-      ).toBe(1);
+      // The combobox and both chips share one request per property.
+      expect(calledPath(calls, "/registry/properties/discipline/values")).toHaveLength(1);
     });
 
     it("clears every active filter at once via Clear all filters", async () => {
@@ -550,7 +549,7 @@ describe("AdminCatalogueListPage", () => {
         `${LIST_URL}?filter.status=draft&filter.volume_ml=5`,
         SIGNED_IN,
       );
-      await screen.findByRole("link", { name: DRAFT_KEY });
+      await screen.findByRole("link", { name: DRAFT_TERM });
 
       await user.click(screen.getByRole("button", { name: "Clear all filters" }));
 
@@ -558,16 +557,13 @@ describe("AdminCatalogueListPage", () => {
         expect(router.state.location.href).not.toContain("filter.status");
         expect(router.state.location.href).not.toContain("filter.volume_ml");
       });
-      expect(screen.getByRole("checkbox", { name: "Draft" })).not.toBeChecked();
       expect(
         screen.queryByRole("button", { name: "Clear all filters" }),
       ).not.toBeInTheDocument();
     });
 
-    // Scenario 2 from the review: a filter the server refuses (deprecated
-    // or un-filterable since the link was shared) leaves the whole screen on
-    // a refusal message - the chip/Clear all controls must stay reachable,
-    // since they are the only way out of that state.
+    // A filter the server refuses leaves the screen on a refusal message, so
+    // the chip and Clear all must stay reachable: they are the way out.
     it("keeps the filter controls reachable even while the listing itself is refused", async () => {
       stubApi([
         {
@@ -593,11 +589,11 @@ describe("AdminCatalogueListPage", () => {
       ).toBeInTheDocument();
     });
 
-    it("has no chip and no Clear all filters control when nothing is selected", async () => {
+    it("has no Clear all filters control when nothing is selected", async () => {
       stubApi([ENTRIES_OK, PROPERTIES_OK, DISCIPLINE_VALUES_OK]);
 
       await renderRoute(LIST_URL, SIGNED_IN);
-      await screen.findByRole("link", { name: DRAFT_KEY });
+      await screen.findByRole("link", { name: DRAFT_TERM });
 
       expect(
         screen.queryByRole("button", { name: "Clear all filters" }),
@@ -605,11 +601,10 @@ describe("AdminCatalogueListPage", () => {
     });
   });
 
-  // Issue #287: filter *and* sort state must survive a reload and a pasted
-  // link (FR-16's second acceptance criterion). Only the browse route is
-  // sortable - `GET /catalogue/admin/search` stays relevance-ranked.
+  // Only the browse route is sortable: `GET /catalogue/admin/search` stays
+  // relevance-ranked.
   describe("sort", () => {
-    it("defaults to Code (business_key) with no sort in the URL", async () => {
+    it("defaults to Identifier (business_key) with no sort in the URL", async () => {
       const sentSorts: (string | null)[] = [];
       stubApi([PROPERTIES_OK, DISCIPLINE_VALUES_OK], {
         vary: (call) => {
@@ -622,7 +617,7 @@ describe("AdminCatalogueListPage", () => {
       });
 
       await renderRoute(LIST_URL, SIGNED_IN);
-      await screen.findByRole("link", { name: DRAFT_KEY });
+      await screen.findByRole("link", { name: DRAFT_TERM });
 
       expect(screen.getByRole("combobox", { name: "Sort by" })).toHaveValue(
         "business_key",
@@ -635,7 +630,7 @@ describe("AdminCatalogueListPage", () => {
       stubApi([ENTRIES_OK, PROPERTIES_OK, DISCIPLINE_VALUES_OK]);
 
       await renderRoute(`${LIST_URL}?sort=updated_at`, SIGNED_IN);
-      await screen.findByRole("link", { name: DRAFT_KEY });
+      await screen.findByRole("link", { name: DRAFT_TERM });
 
       expect(screen.getByRole("combobox", { name: "Sort by" })).toHaveValue("updated_at");
     });
@@ -654,7 +649,7 @@ describe("AdminCatalogueListPage", () => {
       const user = userEvent.setup();
 
       const { router } = await renderRoute(LIST_URL, SIGNED_IN);
-      await screen.findByRole("link", { name: DRAFT_KEY });
+      await screen.findByRole("link", { name: DRAFT_TERM });
 
       await user.selectOptions(
         screen.getByRole("combobox", { name: "Sort by" }),
@@ -663,7 +658,32 @@ describe("AdminCatalogueListPage", () => {
 
       await waitFor(() => expect(router.state.location.href).toContain("sort=status"));
       await waitFor(() => expect(sentSorts).toContain("status"));
-      expect(await screen.findByRole("status")).toHaveTextContent("Sorted by Status.");
+      await waitFor(() =>
+        expect(screen.getByRole("status")).toHaveTextContent(
+          "Sorted by Status. 2 results on this page.",
+        ),
+      );
+    });
+
+    // The note describes a browsed, re-sorted page. A search submitted before
+    // that page arrives is relevance-ranked, so it must not carry the note.
+    it("does not attach the sort note to a search submitted before the re-sorted page arrives", async () => {
+      stubApi([ENTRIES_OK, SEARCH_OK, PROPERTIES_OK, DISCIPLINE_VALUES_OK]);
+
+      const { router } = await renderRoute(LIST_URL, SIGNED_IN);
+      await screen.findByRole("link", { name: DRAFT_TERM });
+
+      await act(async () => {
+        fireEvent.change(screen.getByRole("combobox", { name: "Sort by" }), {
+          target: { value: "status" },
+        });
+        await router.navigate({ to: "/admin/catalogue", search: { q: "glucose" } });
+      });
+
+      await waitFor(() =>
+        expect(screen.getByRole("status")).toHaveTextContent("1 result on this page."),
+      );
+      expect(screen.getByRole("status")).not.toHaveTextContent("Sorted by");
     });
 
     it("drops the after cursor once sort is changed from a later page", async () => {
@@ -671,7 +691,7 @@ describe("AdminCatalogueListPage", () => {
       const user = userEvent.setup();
 
       const { router } = await renderRoute(`${LIST_URL}?after=${DRAFT_KEY}`, SIGNED_IN);
-      await screen.findByRole("link", { name: DRAFT_KEY });
+      await screen.findByRole("link", { name: DRAFT_TERM });
       expect(router.state.location.href).toContain(`after=${DRAFT_KEY}`);
 
       await user.selectOptions(
@@ -685,125 +705,26 @@ describe("AdminCatalogueListPage", () => {
       expect(router.state.location.href).not.toContain(`after=${DRAFT_KEY}`);
     });
 
-    it("disables the sort control while in search mode, showing Relevance rather than a stale ordering", async () => {
+    it("disables the sort control while searching, showing Relevance rather than a stale ordering", async () => {
       stubApi([ENTRIES_OK, SEARCH_OK, PROPERTIES_OK, DISCIPLINE_VALUES_OK]);
 
       await renderRoute(`${LIST_URL}?q=glucose&sort=updated_at`, SIGNED_IN);
-      await screen.findByRole("link", { name: ACTIVE_KEY });
+      await screen.findByRole("link", { name: ACTIVE_TERM });
 
       const control = screen.getByRole("combobox", { name: "Sort by" });
       expect(control).toBeDisabled();
-      // Review finding: showing "Last changed" (the `sort` still in the URL
-      // from browse mode) here would claim an ordering the relevance-ranked
-      // search results are not actually in.
       expect(control).toHaveValue("relevance");
       expect(screen.getByRole("option", { name: "Relevance" })).toBeInTheDocument();
     });
   });
 
-  // Acceptance criterion: rows can be selected individually and all at
-  // once, and the selection is announced accessibly.
-  describe("row selection", () => {
-    it("selects one row, then all rows, announcing the count each time", async () => {
-      stubApi([ENTRIES_OK, PROPERTIES_OK, DISCIPLINE_VALUES_OK]);
-      const user = userEvent.setup();
-
-      await renderRoute(LIST_URL, SIGNED_IN);
-      await screen.findByRole("link", { name: DRAFT_KEY });
-
-      await user.click(screen.getByRole("checkbox", { name: `Select ${DRAFT_KEY}` }));
-      expect(await screen.findByRole("status")).toHaveTextContent("1 row selected.");
-
-      await user.click(
-        screen.getByRole("checkbox", { name: "Select all rows on this page" }),
-      );
-      expect(await screen.findByRole("status")).toHaveTextContent("2 rows selected.");
-
-      await user.click(
-        screen.getByRole("checkbox", { name: "Select all rows on this page" }),
-      );
-      expect(await screen.findByRole("status")).toHaveTextContent("No rows selected.");
-    });
-
-    it("clears the selection once the search query changes the population", async () => {
-      stubApi([ENTRIES_OK, SEARCH_OK, PROPERTIES_OK, DISCIPLINE_VALUES_OK]);
-      const user = userEvent.setup();
-
-      await renderRoute(LIST_URL, SIGNED_IN);
-      await screen.findByRole("link", { name: DRAFT_KEY });
-      await user.click(screen.getByRole("checkbox", { name: `Select ${DRAFT_KEY}` }));
-      expect(screen.getByRole("checkbox", { name: `Select ${DRAFT_KEY}` })).toBeChecked();
-
-      const searchBox = screen.getByRole("searchbox", {
-        name: "Search term or SNOMED CT code",
-      });
-      await user.type(searchBox, "glucose");
-      await user.click(screen.getByRole("button", { name: "Search" }));
-      await screen.findByRole("link", { name: ACTIVE_KEY });
-
-      // Clearing q returns to browse mode and re-renders the very same
-      // DRAFT_KEY row - if the selection had merely been hidden rather than
-      // actually cleared, its checkbox would still read checked here.
-      await user.clear(searchBox);
-      await user.click(screen.getByRole("button", { name: "Search" }));
-      await screen.findByRole("link", { name: DRAFT_KEY });
-
-      expect(
-        screen.getByRole("checkbox", { name: `Select ${DRAFT_KEY}` }),
-      ).not.toBeChecked();
-    });
-
-    it("is operable by keyboard alone", async () => {
-      stubApi([ENTRIES_OK, PROPERTIES_OK, DISCIPLINE_VALUES_OK]);
-      const user = userEvent.setup();
-
-      await renderRoute(LIST_URL, SIGNED_IN);
-      await screen.findByRole("link", { name: DRAFT_KEY });
-
-      const rowCheckbox = screen.getByRole("checkbox", { name: `Select ${DRAFT_KEY}` });
-      rowCheckbox.focus();
-      await user.keyboard("{ }");
-
-      expect(rowCheckbox).toBeChecked();
-    });
-  });
-
-  // PR #285 review finding 2: every fixture elsewhere in this file has
-  // `next_cursor: null`, so paging itself, selection surviving a page
-  // change, and `after` being dropped once a filter is then toggled had no
-  // coverage at all.
   describe("paging", () => {
-    const PAGE_1 = {
-      items: [
-        entrySummary({
-          business_key: DRAFT_KEY,
-          preferred_term: "Ferritin",
-          status: "draft",
-        }),
-      ],
-      next_cursor: DRAFT_KEY,
-    };
-    const PAGE_2 = {
-      items: [
-        entrySummary({
-          business_key: ACTIVE_KEY,
-          preferred_term: "Full blood count",
-          status: "active",
-        }),
-      ],
-      next_cursor: null,
-    };
+    const PAGE_1 = { items: [DRAFT_ROW], next_cursor: DRAFT_KEY };
+    const PAGE_2 = { items: [ACTIVE_ROW], next_cursor: null };
 
-    // Keyed on `after` itself, not a call count (PR #285 review round 2):
-    // `path` alone can't tell a first-page request from a second's - both hit
-    // the identical path, and only the query string differs - and a
-    // call-count-based `vary` is flaky by construction under this app's own
-    // `<StrictMode>` (`render-route.tsx`): the initial mount's own query
-    // fetches `/catalogue/admin/entries` twice (matching
-    // `admin-catalogue-edit.test.tsx`'s documented "two reads under
-    // StrictMode"), so a counter would reach 2 - "page two" - before the
-    // test ever clicks "Next page". Both duplicate initial reads carry no
-    // `after` and get the identical first page.
+    // Keyed on `after` itself, not a call count: both pages hit the same path,
+    // and `<StrictMode>` fetches the first page twice, so a counter would
+    // reach "page two" before the test clicks Next.
     function stubTwoPages() {
       return stubApi([PROPERTIES_OK, DISCIPLINE_VALUES_OK], {
         vary: (call) => {
@@ -816,26 +737,26 @@ describe("AdminCatalogueListPage", () => {
       });
     }
 
-    it("(a) pushes the cursor into the URL and shows the next page's entries", async () => {
+    it("pushes the cursor into the URL and shows the next page's entries", async () => {
       stubTwoPages();
       const user = userEvent.setup();
 
       const { router } = await renderRoute(LIST_URL, SIGNED_IN);
-      await screen.findByRole("link", { name: DRAFT_KEY });
+      await screen.findByRole("link", { name: DRAFT_TERM });
 
       await user.click(screen.getByRole("button", { name: "Next page" }));
 
-      await screen.findByRole("link", { name: ACTIVE_KEY });
+      await screen.findByRole("link", { name: ACTIVE_TERM });
       expect(router.state.location.href).toContain(`after=${DRAFT_KEY}`);
-      expect(screen.queryByRole("link", { name: DRAFT_KEY })).not.toBeInTheDocument();
+      expect(screen.queryByRole("link", { name: DRAFT_TERM })).not.toBeInTheDocument();
     });
 
-    it("(d) says there are no more results on the last page, and disables Previous on the first", async () => {
+    it("says there are no more results on the last page, and disables Previous on the first", async () => {
       stubTwoPages();
       const user = userEvent.setup();
 
       await renderRoute(LIST_URL, SIGNED_IN);
-      await screen.findByRole("link", { name: DRAFT_KEY });
+      await screen.findByRole("link", { name: DRAFT_TERM });
 
       expect(screen.getByRole("button", { name: "Previous page" })).toHaveAttribute(
         "aria-disabled",
@@ -844,7 +765,7 @@ describe("AdminCatalogueListPage", () => {
       expect(screen.queryByText("No more results")).not.toBeInTheDocument();
 
       await user.click(screen.getByRole("button", { name: "Next page" }));
-      await screen.findByRole("link", { name: ACTIVE_KEY });
+      await screen.findByRole("link", { name: ACTIVE_TERM });
 
       expect(screen.getByText("No more results")).toBeVisible();
       expect(screen.getByRole("button", { name: "Next page" })).toHaveAttribute(
@@ -853,18 +774,18 @@ describe("AdminCatalogueListPage", () => {
       );
     });
 
-    it("(e) returns to the first page from Previous, dropping the cursor from the URL", async () => {
+    it("returns to the first page from Previous, dropping the cursor from the URL", async () => {
       stubTwoPages();
       const user = userEvent.setup();
 
       const { router } = await renderRoute(LIST_URL, SIGNED_IN);
-      await screen.findByRole("link", { name: DRAFT_KEY });
+      await screen.findByRole("link", { name: DRAFT_TERM });
       await user.click(screen.getByRole("button", { name: "Next page" }));
-      await screen.findByRole("link", { name: ACTIVE_KEY });
+      await screen.findByRole("link", { name: ACTIVE_TERM });
 
       await user.click(screen.getByRole("button", { name: "Previous page" }));
 
-      await screen.findByRole("link", { name: DRAFT_KEY });
+      await screen.findByRole("link", { name: DRAFT_TERM });
       expect(router.state.location.href).not.toContain("after=");
       expect(screen.getByRole("button", { name: "Previous page" })).toHaveAttribute(
         "aria-disabled",
@@ -872,8 +793,8 @@ describe("AdminCatalogueListPage", () => {
       );
     });
 
-    it("(f) walks back through every page visited, in reverse order", async () => {
-      const THIRD_KEY = "NPTC-000500";
+    it("walks back through every page visited, in reverse order", async () => {
+      const THIRD_TERM = "Urea";
       stubApi([PROPERTIES_OK, DISCIPLINE_VALUES_OK], {
         vary: (call) => {
           if (call.method === "GET" && call.path.endsWith("/catalogue/admin/entries")) {
@@ -882,7 +803,12 @@ describe("AdminCatalogueListPage", () => {
               "": { ...PAGE_1, next_cursor: "cursor-1" },
               "cursor-1": { ...PAGE_2, next_cursor: "cursor-2" },
               "cursor-2": {
-                items: [entrySummary({ business_key: THIRD_KEY })],
+                items: [
+                  entrySummary({
+                    business_key: "NPTC-000500",
+                    preferred_term: THIRD_TERM,
+                  }),
+                ],
                 next_cursor: null,
               },
             };
@@ -899,51 +825,54 @@ describe("AdminCatalogueListPage", () => {
       const user = userEvent.setup();
 
       const { router } = await renderRoute(LIST_URL, SIGNED_IN);
-      await screen.findByRole("link", { name: DRAFT_KEY });
+      await screen.findByRole("link", { name: DRAFT_TERM });
       await user.click(screen.getByRole("button", { name: "Next page" }));
-      await screen.findByRole("link", { name: ACTIVE_KEY });
+      await screen.findByRole("link", { name: ACTIVE_TERM });
       await user.click(screen.getByRole("button", { name: "Next page" }));
-      await screen.findByRole("link", { name: THIRD_KEY });
+      await screen.findByRole("link", { name: THIRD_TERM });
 
       await user.click(screen.getByRole("button", { name: "Previous page" }));
-      await screen.findByRole("link", { name: ACTIVE_KEY });
+      await screen.findByRole("link", { name: ACTIVE_TERM });
       expect(router.state.location.href).toContain("after=cursor-1");
 
       await user.click(screen.getByRole("button", { name: "Previous page" }));
-      await screen.findByRole("link", { name: DRAFT_KEY });
+      await screen.findByRole("link", { name: DRAFT_TERM });
       expect(router.state.location.href).not.toContain("after=");
     });
 
-    it("(g) empties the Previous history once a filter is toggled from a later page", async () => {
+    it("empties the Previous history and drops the cursor once a filter is chosen from a later page", async () => {
       stubTwoPages();
       const user = userEvent.setup();
 
       const { router } = await renderRoute(LIST_URL, SIGNED_IN);
-      await screen.findByRole("link", { name: DRAFT_KEY });
+      await screen.findByRole("link", { name: DRAFT_TERM });
       await user.click(screen.getByRole("button", { name: "Next page" }));
-      await screen.findByRole("link", { name: ACTIVE_KEY });
+      await screen.findByRole("link", { name: ACTIVE_TERM });
       expect(screen.getByRole("button", { name: "Previous page" })).toHaveAttribute(
         "aria-disabled",
         "false",
       );
 
-      await user.click(screen.getByRole("checkbox", { name: "Active" }));
+      await chooseOption(user, "Status", "Active");
       await waitFor(() =>
         expect(router.state.location.href).toContain("filter.status=active"),
       );
+      // The popup stays open after a pick and makes the page behind it inert.
+      await user.keyboard("{Escape}");
 
-      await screen.findByRole("link", { name: DRAFT_KEY });
+      await screen.findByRole("link", { name: DRAFT_TERM });
+      expect(router.state.location.href).not.toContain("after=");
       expect(screen.getByRole("button", { name: "Previous page" })).toHaveAttribute(
         "aria-disabled",
         "true",
       );
     });
 
-    it("(h) disables Previous on a page opened straight from a link", async () => {
+    it("disables Previous on a page opened straight from a link", async () => {
       stubTwoPages();
 
       await renderRoute(`${LIST_URL}?after=${DRAFT_KEY}`, SIGNED_IN);
-      await screen.findByRole("link", { name: ACTIVE_KEY });
+      await screen.findByRole("link", { name: ACTIVE_TERM });
 
       expect(screen.getByRole("button", { name: "Previous page" })).toHaveAttribute(
         "aria-disabled",
@@ -951,7 +880,7 @@ describe("AdminCatalogueListPage", () => {
       );
     });
 
-    it("(j) keeps Previous when a later page comes back empty", async () => {
+    it("keeps Previous when a later page comes back empty", async () => {
       stubApi([PROPERTIES_OK, DISCIPLINE_VALUES_OK], {
         vary: (call) => {
           if (call.method === "GET" && call.path.endsWith("/catalogue/admin/entries")) {
@@ -967,65 +896,24 @@ describe("AdminCatalogueListPage", () => {
       const user = userEvent.setup();
 
       await renderRoute(LIST_URL, SIGNED_IN);
-      await screen.findByRole("link", { name: DRAFT_KEY });
+      await screen.findByRole("link", { name: DRAFT_TERM });
       await user.click(screen.getByRole("button", { name: "Next page" }));
 
-      expect(
-        await screen.findByText("No catalogue entries match this filter."),
-      ).toBeVisible();
+      expect(await screen.findByText("No more catalogue entries.")).toBeVisible();
       await user.click(screen.getByRole("button", { name: "Previous page" }));
-      expect(await screen.findByRole("link", { name: DRAFT_KEY })).toBeVisible();
+      expect(await screen.findByRole("link", { name: DRAFT_TERM })).toBeVisible();
     });
 
-    it("(i) has no automated accessibility violations with the paging controls shown", async () => {
+    it("has no automated accessibility violations with the paging controls shown", async () => {
       stubTwoPages();
       const user = userEvent.setup();
 
       const { container } = await renderRoute(LIST_URL, SIGNED_IN);
-      await screen.findByRole("link", { name: DRAFT_KEY });
+      await screen.findByRole("link", { name: DRAFT_TERM });
       await user.click(screen.getByRole("button", { name: "Next page" }));
-      await screen.findByRole("link", { name: ACTIVE_KEY });
+      await screen.findByRole("link", { name: ACTIVE_TERM });
 
       await expectNoA11yViolations(container);
-    });
-
-    it("(b) keeps a row checked on an earlier page selected after paging forward", async () => {
-      stubTwoPages();
-      const user = userEvent.setup();
-
-      await renderRoute(LIST_URL, SIGNED_IN);
-      await screen.findByRole("link", { name: DRAFT_KEY });
-
-      await user.click(screen.getByRole("checkbox", { name: `Select ${DRAFT_KEY}` }));
-      expect(await screen.findByRole("status")).toHaveTextContent("1 row selected.");
-
-      await user.click(screen.getByRole("button", { name: "Next page" }));
-      await screen.findByRole("link", { name: ACTIVE_KEY });
-
-      // Selecting this page's own row on top of the still-checked prior
-      // one proves the earlier selection survived the page change - if it
-      // had been cleared, this announcement would read "1 row selected."
-      await user.click(screen.getByRole("checkbox", { name: `Select ${ACTIVE_KEY}` }));
-      expect(await screen.findByRole("status")).toHaveTextContent("2 rows selected.");
-    });
-
-    it("(c) drops the after cursor once a filter is toggled from a later page", async () => {
-      stubTwoPages();
-      const user = userEvent.setup();
-
-      const { router } = await renderRoute(LIST_URL, SIGNED_IN);
-      await screen.findByRole("link", { name: DRAFT_KEY });
-
-      await user.click(screen.getByRole("button", { name: "Next page" }));
-      await screen.findByRole("link", { name: ACTIVE_KEY });
-      expect(router.state.location.href).toContain("after=");
-
-      await user.click(screen.getByRole("checkbox", { name: "Active" }));
-
-      await waitFor(() =>
-        expect(router.state.location.href).toContain("filter.status=active"),
-      );
-      expect(router.state.location.href).not.toContain("after=");
     });
   });
 
@@ -1046,8 +934,6 @@ describe("AdminCatalogueListPage", () => {
     expect(await screen.findByText("boom")).toBeInTheDocument();
   });
 
-  // PR #285 review finding 3: the hard-failure paragraph used to be
-  // rendered but never announced - silence for a screen-reader user.
   it("announces a refusal message when the listing cannot be loaded", async () => {
     stubApi([
       {
@@ -1062,26 +948,14 @@ describe("AdminCatalogueListPage", () => {
 
     await renderRoute(LIST_URL, SIGNED_IN);
 
-    // `waitFor`, not `findByRole` then a separate assertion: the live
-    // region is present (and empty) from first render (`LiveRegion`'s own
-    // docstring - a screen reader needs it mounted before the text change,
-    // not created and filled in the same tick), so `findByRole("status")`
-    // alone resolves the instant it exists, racing `useAnnounce`'s
-    // `setTimeout(0)` that actually fills it in.
+    // `waitFor`, not `findByRole`: the live region exists (empty) from first
+    // render, and `useAnnounce` fills it a tick later.
     await waitFor(() => expect(screen.getByRole("status")).toHaveTextContent("boom"));
   });
 
-  // PR #285 review finding 2: this branch (a fetch that fails while a
-  // *previous* successful fetch's data is still on screen) had no coverage
-  // at all - only the initial-load failure above did. `queryClient` is
-  // driven directly because nothing in this page's own UI otherwise
-  // triggers a background refetch of the identical query on demand.
   it("shows a stale-data warning, not a blank screen, when a refresh fails over data already shown", async () => {
-    // A flag the test itself flips, not a call count: the initial mount's
-    // own query fetches this path twice under `<StrictMode>` (see the
-    // "paging" describe block's own comment on this), so a counter reaching
-    // 2 would already misfire the initial load rather than only the
-    // deliberate refetch below.
+    // A flag the test flips, not a call count: `<StrictMode>` fetches the
+    // first page twice.
     let shouldFail = false;
     stubApi([PROPERTIES_OK, DISCIPLINE_VALUES_OK], {
       vary: (call) => {
@@ -1095,7 +969,7 @@ describe("AdminCatalogueListPage", () => {
     });
 
     const { queryClient } = await renderRoute(LIST_URL, SIGNED_IN);
-    await screen.findByRole("link", { name: DRAFT_KEY });
+    await screen.findByRole("link", { name: DRAFT_TERM });
 
     shouldFail = true;
     await act(async () => {
@@ -1104,17 +978,14 @@ describe("AdminCatalogueListPage", () => {
       });
     });
 
-    // Two elements carry this text on purpose - the visible warning
-    // paragraph and the live region announcing it (`STALE_DATA_WARNING`'s
-    // own docstring: "one string ... so the two cannot drift apart").
+    // Two elements carry this text on purpose: the visible warning and the
+    // live region announcing it.
     expect(
       await screen.findAllByText(
         "Catalogue entries could not be refreshed just now, so what follows may be out of date.",
       ),
     ).toHaveLength(2);
-    // The previously-loaded row is still shown - a refresh failure does not
-    // blank out data already on screen.
-    expect(screen.getByRole("link", { name: DRAFT_KEY })).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: DRAFT_TERM })).toBeInTheDocument();
   });
 
   it("shows the empty state, not a headers-only table, when there are no entries", async () => {
@@ -1131,181 +1002,37 @@ describe("AdminCatalogueListPage", () => {
 
     await renderRoute(LIST_URL, SIGNED_IN);
 
+    expect(await screen.findByText("The catalogue has no entries yet.")).toBeVisible();
+  });
+
+  it("offers Clear all filters from the empty state when filters hide every entry", async () => {
+    stubApi([
+      {
+        method: "GET",
+        path: "/catalogue/admin/entries",
+        status: 200,
+        body: { items: [], next_cursor: null },
+      },
+      PROPERTIES_OK,
+      DISCIPLINE_VALUES_OK,
+    ]);
+
+    await renderRoute(`${LIST_URL}?filter.status=withdrawn`, SIGNED_IN);
+
     expect(
-      await screen.findByText("No catalogue entries match this filter."),
-    ).toBeInTheDocument();
+      await screen.findByText("No catalogue entries match these filters."),
+    ).toBeVisible();
+    expect(screen.getAllByRole("button", { name: "Clear all filters" })).not.toHaveLength(
+      0,
+    );
   });
 
   it("has no automated accessibility violations", async () => {
     stubApi([ENTRIES_OK, PROPERTIES_OK, DISCIPLINE_VALUES_OK]);
 
     const { container } = await renderRoute(LIST_URL, SIGNED_IN);
-    await screen.findByRole("link", { name: DRAFT_KEY });
+    await screen.findByRole("link", { name: DRAFT_TERM });
 
     await expectNoA11yViolations(container);
-  });
-
-  // Issue #63's bulk reclassify, driven end to end from this screen -
-  // `bulk-reclassify-dialog.test.tsx` covers the dialog's own gates and
-  // submit behaviour in isolation; this is the dedicated coverage that test
-  // file's own "PUTs the whole selection..." test points readers at, for
-  // what happens on *this* screen once that dialog completes (PR #290
-  // review).
-  describe("bulk reclassify", () => {
-    // A text-valued active property, matching `bulk-reclassify-dialog.test
-    // .tsx`'s own `usage_guidance` fixture, so a value can be typed with no
-    // extra concept-picker network round trip.
-    const PROPERTIES_WITH_USAGE_GUIDANCE: Route = {
-      method: "GET",
-      path: "/registry/properties",
-      status: 200,
-      body: {
-        items: [
-          ...(PROPERTIES_OK.body as { items: unknown[] }).items,
-          {
-            key: "usage_guidance",
-            label: "Usage guidance",
-            datatype: "string",
-            cardinality: "0..1",
-            scope: "maintenance",
-            required_for_submission: false,
-            required_for_publication: false,
-            binding_target: null,
-            value_set_uri: null,
-            strength: null,
-            edition: null,
-            local_code_system_key: null,
-            filterable: false,
-            origin: "system",
-            status: "active",
-            display_order: 40,
-            constraints: {},
-            row_version: 1,
-            form_control: { control: "textarea", params: {} },
-          },
-        ],
-      },
-    };
-
-    function bulkWriteOk(): Route {
-      return {
-        method: "POST",
-        path: "/catalogue/entries/bulk/properties/usage_guidance",
-        status: 200,
-        body: {
-          outcomes: [
-            { business_key: DRAFT_KEY, status: "applied", row_version: 4 },
-            { business_key: ACTIVE_KEY, status: "applied", row_version: 8 },
-          ],
-          applied: 2,
-          unchanged: 0,
-          conflict: 0,
-          not_found: 0,
-        },
-      };
-    }
-
-    async function runBulkReclassify(user: ReturnType<typeof userEvent.setup>) {
-      await user.click(
-        screen.getByRole("checkbox", { name: "Select all rows on this page" }),
-      );
-      await user.click(screen.getByRole("button", { name: "Reclassify selected" }));
-      const dialog = within(await screen.findByRole("dialog"));
-      await user.selectOptions(dialog.getByLabelText("Property"), "usage_guidance");
-      await user.type(dialog.getByLabelText("Usage guidance"), "Fasting required");
-      await user.type(dialog.getByLabelText("Changelog note"), "Reclassify both");
-      await user.click(dialog.getByRole("button", { name: "Reclassify" }));
-      await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
-    }
-
-    it("clears the selection, shows a durable results panel, and moves focus to it", async () => {
-      stubApi([
-        ENTRIES_OK,
-        PROPERTIES_WITH_USAGE_GUIDANCE,
-        DISCIPLINE_VALUES_OK,
-        bulkWriteOk(),
-      ]);
-      const user = userEvent.setup();
-
-      await renderRoute(LIST_URL, SIGNED_IN);
-      await screen.findByRole("link", { name: DRAFT_KEY });
-
-      await runBulkReclassify(user);
-
-      // Selection cleared: the toolbar (only rendered while something is
-      // selected) is gone, and both row checkboxes are unchecked.
-      expect(
-        screen.queryByRole("button", { name: "Reclassify selected" }),
-      ).not.toBeInTheDocument();
-      expect(
-        screen.getByRole("checkbox", { name: `Select ${DRAFT_KEY}` }),
-      ).not.toBeChecked();
-
-      // A durable results panel - present after the dialog that produced it
-      // has closed, not tied to the dialog's own lifetime.
-      const results = screen.getByRole("region", {
-        name: "Reclassify Usage guidance: results",
-      });
-      expect(results).toHaveTextContent(
-        "2 applied, 0 unchanged, 0 conflicts, 0 not found.",
-      );
-
-      // Focus lands on the results section itself, not on <body> - `Dialog`'s
-      // own focus-restore targets the "Reclassify selected" button, which no
-      // longer exists once the selection it completed against is cleared
-      // (PR #290 review).
-      expect(document.activeElement).toBe(results);
-    });
-
-    it("announces the results outcome, not a stale 'no rows selected'", async () => {
-      stubApi([
-        ENTRIES_OK,
-        PROPERTIES_WITH_USAGE_GUIDANCE,
-        DISCIPLINE_VALUES_OK,
-        bulkWriteOk(),
-      ]);
-      const user = userEvent.setup();
-
-      await renderRoute(LIST_URL, SIGNED_IN);
-      await screen.findByRole("link", { name: DRAFT_KEY });
-
-      await runBulkReclassify(user);
-
-      await waitFor(() =>
-        expect(screen.getByRole("status")).toHaveTextContent(
-          "Reclassify Usage guidance: 2 applied, 0 unchanged, 0 conflicts, 0 not found.",
-        ),
-      );
-    });
-
-    it("clears the previous batch's results panel as soon as a new one is launched", async () => {
-      stubApi([
-        ENTRIES_OK,
-        PROPERTIES_WITH_USAGE_GUIDANCE,
-        DISCIPLINE_VALUES_OK,
-        bulkWriteOk(),
-      ]);
-      const user = userEvent.setup();
-
-      await renderRoute(LIST_URL, SIGNED_IN);
-      await screen.findByRole("link", { name: DRAFT_KEY });
-      await runBulkReclassify(user);
-      expect(
-        screen.getByRole("region", { name: "Reclassify Usage guidance: results" }),
-      ).toBeInTheDocument();
-
-      // A second batch is launched but not yet submitted - the first
-      // batch's tallies must not still be on screen behind the dialog,
-      // where they would read as this batch's own outcome (PR #290 review).
-      await user.click(
-        screen.getByRole("checkbox", { name: "Select all rows on this page" }),
-      );
-      await user.click(screen.getByRole("button", { name: "Reclassify selected" }));
-      await screen.findByRole("dialog");
-
-      expect(
-        screen.queryByRole("region", { name: "Reclassify Usage guidance: results" }),
-      ).not.toBeInTheDocument();
-    });
   });
 });

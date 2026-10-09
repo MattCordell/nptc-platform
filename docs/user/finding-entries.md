@@ -20,41 +20,41 @@ button to return from there.
 
 ## Filtering
 
-The filter panel narrows the list to entries matching everything you tick — ticking a
-second value within one filter (for example, two disciplines) broadens that filter, while
-ticking a value in a different filter narrows the result further. **Status** is always
-available; which other properties appear depends on what an administrator has marked
-filterable in the property registry, so the panel can change over time with no update to
-this page.
+**Administration → Catalogue** has the same search box and filters as the public
+[catalogue search](searching-the-catalogue.md). Three filters sit under the search box:
+**Status**, **Discipline** and **Specimen**. Open one, type to narrow its list, and pick
+as many values as you want. Picking a second value within one filter broadens that
+filter, while picking a value in a different filter narrows the result further.
 
-Filtering while searching also gives you result counts per value, showing how many entries
-each option would leave if you selected it — browsing does not, since counting the whole
-catalogue on every keystroke is not something a plain list needs to pay for.
+Each filter lists the values the property registry offers, with no counts. The
+administration list does not count entries per value, because counting the whole
+catalogue on every change is not something a plain list needs to pay for. The Discipline
+and Specimen filters appear only while the property registry holds that property as
+active, filterable and coded, so a deprecated property loses its filter.
 
-**Your filters, search term and page position are all part of the page's link** — copy it
-from your browser's address bar and it takes you (or anyone else with access) straight back
-to the same filtered view, on reload or on a different day.
+Every active filter also shows as a chip under the filters. Choose a chip to remove its
+filter, or **Clear all filters** to remove them all. A filter in a link that has no control
+here, such as a property an administrator has since removed, still applies and still shows
+as a chip, so you can always clear it.
+
+**Sort by** orders a browsed list by identifier, requesting term, last change or status.
+While you search it shows **Relevance** and is unavailable, because a search ranks its own
+results.
+
+**Your filters, search term, sort and page position are all part of the page's link** — copy
+it from your browser's address bar and it takes you (or anyone else with access) straight
+back to the same view, on reload or on a different day.
 
 ## Finding an entry to edit
 
-Each row's code is a link straight to that entry's [editing screen](editing-an-entry.md) —
-there is no need to know or type its URL. The row also shows its status, so you can tell a
-draft from a published entry before you open it.
+Each row's requesting term is a link straight to that entry's
+[editing screen](editing-an-entry.md) — there is no need to know or type its URL. The row
+also shows the entry's identifier, its status and its disciplines, so you can tell a draft
+from a published entry before you open it. A row marked **Open finding** has a validation
+finding that still needs attention.
 
-## Selecting rows
-
-Tick a row's checkbox to select it, or the checkbox in the column header to select every
-row currently on screen. The number of rows selected is announced as you change it, for
-anyone using a screen reader to follow along.
-
-Once at least one row is selected, a **Reclassify selected** button appears above the
-list — see [Bulk reclassify](bulk-reclassify.md) for setting one property to one value
-across everything you have selected in a single step.
-
-Your selection carries across pages as you page forward, but starting a new search or
-changing a filter clears it: at that point you are choosing from a different set of
-entries, and keeping the old selection would risk acting on rows you never actually looked
-at.
+The list has no checkboxes. Bulk reclassify is not available on this screen; see
+[Bulk reclassify](bulk-reclassify.md).
 
 ## If something goes wrong
 

@@ -12,14 +12,25 @@ import {
   usePropertyValueResolveQueries,
 } from "../api/queries.ts";
 import type { components } from "../api/schema.ts";
-import { AdminCatalogueFilterPanel } from "../catalogue/admin-catalogue-filter-panel.tsx";
-import { BulkOutcomeSummary, tallyText } from "../catalogue/bulk-outcome-summary.tsx";
-import { BulkReclassifyDialog } from "../catalogue/bulk-reclassify-dialog.tsx";
-import { BulkReclassifyToolbar } from "../catalogue/bulk-reclassify-toolbar.tsx";
-import { statusLabelFor, statusToneFor } from "../catalogue/status-options.ts";
+import {
+  MAX_VALUES_PER_FILTER,
+  emptyStateText,
+  resultAnnouncement,
+  useCurrentPage,
+} from "../catalogue/list-screen.ts";
+import {
+  STATUS_OPTIONS,
+  statusLabelFor,
+  statusToneFor,
+} from "../catalogue/status-options.ts";
+import { Button } from "../components/button.tsx";
 import { DataTable } from "../components/data-table.tsx";
 import { FilterBar } from "../components/filter-bar.tsx";
+import type { ActiveFilter } from "../components/filter-bar.tsx";
+import { FindingIndicator } from "../components/finding-indicator.tsx";
 import { LiveRegion } from "../components/live-region.tsx";
+import { MultiSelectCombobox } from "../components/multi-select-combobox.tsx";
+import type { MultiSelectOption } from "../components/multi-select-combobox.tsx";
 import { PageContainer } from "../components/page-container.tsx";
 import { PageHeader } from "../components/page-header.tsx";
 import { Pagination } from "../components/pagination.tsx";
@@ -27,6 +38,7 @@ import { SearchInput } from "../components/search-input.tsx";
 import { Select } from "../components/select.tsx";
 import { StatusBadge } from "../components/status-badge.tsx";
 import { useAnnounce } from "../components/use-announce.ts";
+import { useKeysetPaging } from "../components/use-keyset-paging.ts";
 import {
   activeFilterEntries,
   changeSort,
@@ -37,142 +49,72 @@ import {
 import type { AdminListingSort } from "../router/search-params.ts";
 
 /**
- * The admin catalogue list screen (issue #267; FR-14, FR-15, FR-16, FR-36,
- * NFR-31) - the landing page for `/admin/catalogue/`, replacing the
- * placeholder that named no owning issue. Finds a draft, active, deprecated
- * or withdrawn entry and links to its existing edit screen (#61); selects
- * rows, carrying each one's `row_version`, for #63's bulk reclassify to act
- * on later.
+ * The editor's entry point at `/admin/catalogue/` (FR-14, FR-15, FR-16,
+ * FR-36, NFR-31): the layout and behaviour of `/catalogue`, read from the
+ * admin routes so drafts, deprecated and withdrawn entries are listed with
+ * their status. Selecting a row opens that entry's edit form.
  *
- * **Dual-surface dispatch** (ADR-0032): an empty `q` browses
- * `GET /catalogue/admin/entries` (no facet counts); a non-empty `q` searches
- * `GET /catalogue/admin/search` (facets with counts) instead. Both routes
- * accept the identical `filter.*` parameters, so the filter panel does not
- * branch on which surface is active - only the two query hooks below do.
+ * An empty `q` browses `GET /catalogue/admin/entries`; a non-empty one
+ * searches `GET /catalogue/admin/search`. Both take the same `filter.*`
+ * parameters (ADR-0032). Status, Discipline and Specimen are comboboxes. Any
+ * other filter in the URL still applies and shows as a removable chip. Admin
+ * browse has no facet counts, so the options come from the property registry
+ * and carry none.
  *
- * **No page number, a forward-only cursor** (ADR-0024): both admin
- * collection routes are keyset-paginated, so there is no "page 3" to
- * restore, only "the cursor from the last page seen". "Next page" pushes a
- * new `after` into the URL. The server returns no previous cursor, so
- * "Previous page" is driven by a stack of the cursors this screen has
- * visited; it is empty after a reload or a pasted link, where the browser
- * Back button is the way back.
- *
- * **Selection persists across a page change but not across a new
- * population** (issue #267 plan, open question 1): paging forward keeps
- * whatever was already checked, but a new `q` or filter set clears it - the
- * population an administrator was choosing from no longer exists, and
- * carrying a stale selection across that boundary would silently point
- * #63's bulk route at rows nobody actually saw checked.
+ * Paging is keyset (ADR-0024): no page number and no total exist.
  */
 
-// TanStack Router keys `useSearch`/`useParams`' own `from` off the route's
-// internal id, which includes a pathless layout segment like `authenticated`
-// - matching `admin-catalogue-edit.tsx`'s own `from`. `useNavigate`/`Link`'s
-// `from`/`to`, by contrast, are keyed off the resolved URL path, which never
-// includes a pathless segment - hence the two different constants below,
-// confirmed against the router's own registered route ids rather than
-// assumed from the URL alone.
+// TanStack Router keys `useSearch`'s `from` off the route's internal id, which
+// includes the pathless `authenticated` layout, while `useNavigate`'s `from`
+// is the resolved URL path.
 const ROUTE_ID = "/authenticated/admin/catalogue/" as const;
 const ROUTE_PATH = "/admin/catalogue/" as const;
 
 type Row =
   components["schemas"]["AdminEntrySummary"] | components["schemas"]["AdminSearchHit"];
-
-function emptyStateText(mode: "browse" | "search", q: string): string {
-  return mode === "search"
-    ? `No catalogue entries match "${q}".`
-    : "No catalogue entries match this filter.";
-}
-
-function selectionAnnouncement(count: number): string {
-  if (count === 0) {
-    return "No rows selected.";
-  }
-  return `${count} row${count === 1 ? "" : "s"} selected.`;
-}
-
 type PropertyDefinition = components["schemas"]["PropertyDefinitionResponse"];
 
-/**
- * The `sort` control's own options (issue #287), labelled to match the
- * `DataTable` column headers below rather than the raw parameter names -
- * `business_key`'s column is headed "Code", not "Business key".
- */
+const PAGE_SIZE = 50;
+
+/** The coded properties with a combobox, in the order they appear. */
+const COMBOBOX_PROPERTY_KEYS = ["discipline", "specimen"] as const;
+
+/** The most values the options route returns in one page (`count` ceiling). A
+ * larger page than its default so a multi-hundred-value set stays pickable. */
+const OPTIONS_PAGE_SIZE = 200;
+
 const SORT_OPTIONS: { value: AdminListingSort; label: string }[] = [
-  { value: "business_key", label: "Code" },
+  { value: "business_key", label: "Identifier" },
   { value: "preferred_term", label: "Requesting term" },
   { value: "updated_at", label: "Last changed" },
   { value: "status", label: "Status" },
 ];
 
+/** Shown while searching: search results are relevance-ranked, so none of
+ * `SORT_OPTIONS` describes their order. Never sent to the API. */
+const SEARCH_MODE_SORT_VALUE = "relevance";
+
+const STALE_DATA_WARNING =
+  "Catalogue entries could not be refreshed just now, so what follows may be out of date.";
+
+const LOAD_FAILURE =
+  "Catalogue entries could not be loaded. Try again, or contact an administrator if the problem persists.";
+
+const OPTIONS_UNAVAILABLE =
+  "Some filter options could not be loaded just now. You can still search, and the results are not affected.";
+
 function sortLabel(sort: AdminListingSort): string {
   return SORT_OPTIONS.find((option) => option.value === sort)?.label ?? sort;
 }
 
-/**
- * A sentinel `<select>` value shown only while `mode === "search"` (review
- * finding) - not an `AdminListingSort`, and never sent anywhere: `GET
- * /catalogue/admin/search` stays relevance-ranked, so none of `SORT_OPTIONS`
- * describes the order search results are actually in. Showing the last
- * browse-mode `sort` (or "Code") there instead would claim an ordering the
- * results are not actually in; a distinct, disabled "Relevance" option
- * says what is true without adding a fifth real sort value anywhere.
- */
-const SEARCH_MODE_SORT_VALUE = "relevance";
-
-/**
- * A facet's display name for the active-filter chip row (issue #289). `status`
- * is special-cased the same way `AdminCatalogueFilterPanel` special-cases it
- * (a core column, not a registry property); every other key resolves against
- * the registry's own label when one exists, keyed on the **unfiltered**
- * definitions map so a deprecated or non-`concept_picker` property still
- * resolves - only a key genuinely absent from the registry (the true escape
- * hatch, PR #285 review finding 1) falls back to the raw key.
- */
-function resolveFacetLabel(
-  facetKey: string,
-  definitionByKey: Map<string, PropertyDefinition>,
-): string {
-  if (facetKey === "status") {
-    return "Status";
-  }
-  return definitionByKey.get(facetKey)?.label ?? facetKey;
+function isOfferedProperty(definition: PropertyDefinition | undefined): boolean {
+  return (
+    definition !== undefined &&
+    definition.filterable &&
+    definition.status === "active" &&
+    definition.form_control.control === "concept_picker"
+  );
 }
-
-/**
- * A facet value's display string for the active-filter chip row (issue #289,
- * #306). `status` resolves against `STATUS_OPTIONS`; a `concept_picker`
- * property resolves against `valueLabelByFacetKey`, which merges its
- * unfiltered value-options page with the resolve-by-code lookup for whatever
- * that page did not answer (issue #306, ADR-0038) - so a selected value
- * beyond `DEFAULT_PAGE_SIZE`, or one the RCPA has since removed from the
- * value set, still resolves. Only a code neither side can resolve at all
- * (never existed, or the fetch is still pending/erroring) falls back to the
- * raw code, mirroring `PropertyFacetGroup`'s own `carriedOptions` fallback.
- * Every other case (an unrecognised key, or a registry property with no
- * value-options source, e.g. `volume_ml`) has nothing to resolve the value
- * against, so it stays raw.
- */
-function resolveValueLabel(
-  facetKey: string,
-  value: string,
-  definitionByKey: Map<string, PropertyDefinition>,
-  valueLabelByFacetKey: Map<string, Map<string, string>>,
-): string {
-  if (facetKey === "status") {
-    return statusLabelFor(value);
-  }
-  if (definitionByKey.get(facetKey)?.form_control.control === "concept_picker") {
-    return valueLabelByFacetKey.get(facetKey)?.get(value) ?? value;
-  }
-  return value;
-}
-
-/** Matching `admin-catalogue-edit.tsx`'s own `staleWarning` - one string,
- * both shown and announced, so the two cannot drift apart. */
-const STALE_DATA_WARNING =
-  "Catalogue entries could not be refreshed just now, so what follows may be out of date.";
 
 export function AdminCatalogueListPage() {
   const search = useSearch({ from: ROUTE_ID });
@@ -181,21 +123,15 @@ export function AdminCatalogueListPage() {
 
   const filters = useMemo(() => filterSelections(search), [search]);
   const mode: "browse" | "search" = search.q.trim().length > 0 ? "search" : "browse";
+  const { sort } = search;
 
-  // Every active `filter.*` selection, flattened - deliberately not derived
-  // from `filters` (the panel's own recognised-facet shape): a facet the
-  // panel does not render a control for (not `concept_picker`, or dropped
-  // from the registry since the link was shared) still needs a way to be
-  // seen and cleared (PR #285 review finding 1).
+  // Flattened from the URL rather than from `filters`, so a filter with no
+  // control of its own (not offered here, or since dropped from the registry)
+  // can still be seen and cleared.
   const activeFilters = useMemo(() => activeFilterEntries(search), [search]);
 
-  // A second `usePropertyDefinitions()` call (issue #289) - same query key as
-  // `AdminCatalogueFilterPanel`'s own, so this is a cache read, not a second
-  // network request. Keyed by the **unfiltered** `.data.items`, unlike the
-  // panel's own `codedFilterableProperties`: a chip must still resolve a
-  // label for a deprecated or non-`concept_picker` property, since neither of
-  // those reasons for the panel omitting a control makes the property's own
-  // name unknown.
+  // Keyed by every definition, not only the offered ones: a chip must still
+  // resolve the label of a deprecated or non-coded property.
   const definitions = usePropertyDefinitions();
   const definitionByKey = useMemo(() => {
     const map = new Map<string, PropertyDefinition>();
@@ -205,25 +141,30 @@ export function AdminCatalogueListPage() {
     return map;
   }, [definitions.data]);
 
-  // The active facets worth a value-options fetch - a `concept_picker`
-  // property's stored value is a code, uninterpretable without the page
-  // `PropertyFacetGroup` itself fetches (issue #289). Deduplicated by facet
-  // key: several selected values on the same coded facet share one fetch.
-  const codedActiveFacetKeys = useMemo(() => {
-    const keys = new Set<string>();
+  const comboboxPropertyKeys = useMemo(
+    () =>
+      COMBOBOX_PROPERTY_KEYS.filter((key) => isOfferedProperty(definitionByKey.get(key))),
+    [definitionByKey],
+  );
+
+  // Coded properties whose values must be fetched: the ones with a combobox,
+  // and any other coded property holding a selection, so its chip can show a
+  // label in place of a code. One request per property, shared by both uses.
+  const valueKeys = useMemo(() => {
+    const keys = new Set<string>(comboboxPropertyKeys);
     for (const { facetKey } of activeFilters) {
       if (definitionByKey.get(facetKey)?.form_control.control === "concept_picker") {
         keys.add(facetKey);
       }
     }
     return Array.from(keys);
-  }, [activeFilters, definitionByKey]);
+  }, [comboboxPropertyKeys, activeFilters, definitionByKey]);
   const valueOptionsQueries = usePropertyValueOptionsQueries(
-    codedActiveFacetKeys.map((key) => ({ key, filter: "" })),
+    valueKeys.map((key) => ({ key, filter: "", count: OPTIONS_PAGE_SIZE })),
   );
   const pagedValueLabelByFacetKey = useMemo(() => {
     const map = new Map<string, Map<string, string>>();
-    codedActiveFacetKeys.forEach((key, index) => {
+    valueKeys.forEach((key, index) => {
       const codeToDisplay = new Map<string, string>();
       for (const item of valueOptionsQueries[index]?.data?.items ?? []) {
         codeToDisplay.set(item.code, item.display ?? item.code);
@@ -231,26 +172,20 @@ export function AdminCatalogueListPage() {
       map.set(key, codeToDisplay);
     });
     return map;
-  }, [codedActiveFacetKeys, valueOptionsQueries]);
-  // Whether each facet's own unfiltered page (above) has settled - success
-  // or error, either way. Read below to hold off resolving by code until a
-  // facet's own page has actually had its chance to answer first: without
-  // this, every active value looks "not yet answered" on the render before
-  // the page query returns, firing a resolve request the page itself would
-  // have answered a moment later (a real, avoidable extra fetch, not just an
-  // extra cache read).
+  }, [valueKeys, valueOptionsQueries]);
+  // A value is only looked up by code once its property's page has settled:
+  // before that every value looks unanswered, and the page itself would have
+  // answered most of them a moment later.
   const pagedIsSettledByFacetKey = useMemo(() => {
     const map = new Map<string, boolean>();
-    codedActiveFacetKeys.forEach((key, index) => {
+    valueKeys.forEach((key, index) => {
       map.set(key, !(valueOptionsQueries[index]?.isPending ?? true));
     });
     return map;
-  }, [codedActiveFacetKeys, valueOptionsQueries]);
+  }, [valueKeys, valueOptionsQueries]);
 
-  // A selected value the unfiltered page above did not answer - beyond its
-  // `DEFAULT_PAGE_SIZE`, or since removed from the property's bound value
-  // set - resolved directly by code instead (issue #306, ADR-0038), rather
-  // than left to fall back to the raw code the way #289 originally left it.
+  // A selected value the page did not answer (past its size, or since removed
+  // from the property's value set) is resolved by code instead (ADR-0038).
   const unresolvedCodesByFacetKey = useMemo(() => {
     const map = new Map<string, string[]>();
     for (const { facetKey, value } of activeFilters) {
@@ -262,11 +197,8 @@ export function AdminCatalogueListPage() {
         continue;
       }
       const codes = map.get(facetKey) ?? [];
-      // Capped at MAX_RESOLVE_CODES (review round 1/2, PR #307): past that,
-      // the request itself would 422 and every chip for this facet would
-      // fall back to its raw code, including the ones already within the
-      // ceiling - a graceful truncation here is strictly better than that
-      // all-or-nothing loss.
+      // Past the route's ceiling the request would 422 and lose every label in
+      // the facet, so the batch is cut to it instead.
       if (!codes.includes(value) && codes.length < MAX_RESOLVE_CODES) {
         codes.push(value);
       }
@@ -304,121 +236,82 @@ export function AdminCatalogueListPage() {
     return map;
   }, [pagedValueLabelByFacetKey, unresolvedFacetKeys, resolveQueries]);
 
-  // The chip key only has to be unique; `handleFilterChipRemove` maps it back
-  // to the filter through `activeFilterByChipKey`, not by parsing it.
-  const { activeFilterChips, activeFilterByChipKey } = useMemo(() => {
+  const comboboxes = useMemo(() => {
+    const built: {
+      key: string;
+      label: string;
+      options: MultiSelectOption[];
+    }[] = [
+      {
+        key: "status",
+        label: "Status",
+        options: STATUS_OPTIONS.map(({ value, label }) => ({ value, label })),
+      },
+    ];
+    for (const key of comboboxPropertyKeys) {
+      built.push({
+        key,
+        label: definitionByKey.get(key)?.label ?? key,
+        options: Array.from(valueLabelByFacetKey.get(key) ?? [], ([value, label]) => ({
+          value,
+          label,
+        })),
+      });
+    }
+    return built;
+  }, [comboboxPropertyKeys, definitionByKey, valueLabelByFacetKey]);
+
+  const optionsFailed = valueOptionsQueries.some((query) => query.isError);
+
+  const { chips, filterByChipKey } = useMemo(() => {
     const byKey = new Map<string, { facetKey: string; value: string }>();
-    const chips = activeFilters.map(({ facetKey, value }) => {
+    const built: ActiveFilter[] = activeFilters.map(({ facetKey, value }) => {
       const key = JSON.stringify([facetKey, value]);
       byKey.set(key, { facetKey, value });
+      const isCoded =
+        definitionByKey.get(facetKey)?.form_control.control === "concept_picker";
       return {
         key,
-        facetLabel: resolveFacetLabel(facetKey, definitionByKey),
-        valueLabel: resolveValueLabel(
-          facetKey,
-          value,
-          definitionByKey,
-          valueLabelByFacetKey,
-        ),
+        facetLabel:
+          facetKey === "status"
+            ? "Status"
+            : (definitionByKey.get(facetKey)?.label ?? facetKey),
+        valueLabel:
+          facetKey === "status"
+            ? statusLabelFor(value)
+            : isCoded
+              ? (valueLabelByFacetKey.get(facetKey)?.get(value) ?? value)
+              : value,
       };
     });
-    return { activeFilterChips: chips, activeFilterByChipKey: byKey };
+    return { chips: built, filterByChipKey: byKey };
   }, [activeFilters, definitionByKey, valueLabelByFacetKey]);
 
   const listQuery = useAdminEntriesList({
-    limit: 50,
+    limit: PAGE_SIZE,
     after: search.after,
-    sort: search.sort,
+    sort,
     filters,
     enabled: mode === "browse",
+    keepPreviousPage: true,
   });
   const searchQuery = useAdminSearch({
     q: search.q,
-    limit: 50,
+    limit: PAGE_SIZE,
     after: search.after,
     filters,
     enabled: mode === "search",
+    keepPreviousPage: true,
   });
   const active = mode === "browse" ? listQuery : searchQuery;
-  const items: Row[] = active.data?.items ?? [];
-  const nextCursor = active.data?.next_cursor ?? null;
 
-  // business_key -> row_version, so a selected row carries FR-38's token
-  // without #63's bulk route re-reading it (issue #267's own acceptance
-  // criterion). A page's rows are the only place this value can come from -
-  // it is set at the moment a row is checked, from whatever `items` holds
-  // then, and is not refreshed just because the underlying page reloads.
-  const [selected, setSelected] = useState<Map<string, number>>(new Map());
+  const data = useCurrentPage(active, `${mode}:${search.q}`);
 
-  // Reset during render, not in an effect (React's own "adjusting state when
-  // a prop changes" pattern) - `populationKey` changing *is* the signal that
-  // the previous selection no longer names a population that still exists,
-  // so there is nothing to synchronise with an external system here, only
-  // React state to keep consistent with itself before this render commits.
-  const populationKey = useMemo(
-    () => JSON.stringify({ q: search.q, filters }),
-    [search.q, filters],
-  );
-  const [committedPopulationKey, setCommittedPopulationKey] = useState(populationKey);
-  if (populationKey !== committedPopulationKey) {
-    setCommittedPopulationKey(populationKey);
-    setSelected(new Map());
-  }
+  const items: Row[] = data?.items ?? [];
+  const nextCursor = data?.next_cursor ?? null;
 
-  const hasAnnouncedRef = useRef(false);
-  // Set from the bulk-reclassify completion handler right before it clears
-  // the selection (below), so that clearing's own "No rows selected." does
-  // not overwrite the more informative reclassify-outcome announcement
-  // racing it - both go through `useAnnounce`'s identical `setTimeout(0)`,
-  // and the selection effect below runs after the completion handler's own
-  // render, so without this guard its announcement is the one left
-  // standing. Reset by the `bulkResult` effect further down, not by this
-  // one: tying the reset to `bulkResult` (set in the exact same handler that
-  // sets this flag) rather than to `selected.size` (which the flag's own
-  // setter also happens to change) keeps the two independent, so a future
-  // change to either effect's trigger can't strand the flag set (PR #290
-  // review).
-  const suppressSelectionAnnouncementRef = useRef(false);
-  useEffect(() => {
-    if (!hasAnnouncedRef.current) {
-      hasAnnouncedRef.current = true;
-      return;
-    }
-    if (suppressSelectionAnnouncementRef.current) {
-      return;
-    }
-    announce(selectionAnnouncement(selected.size));
-  }, [selected.size, announce]);
-
-  // Issue #63's bulk reclassify. `bulkResult` is a durable record shown on
-  // this screen after the dialog closes, not tied to the dialog's own
-  // lifetime - an operator who scrolls away and back still sees what the
-  // last batch did, until the next one replaces it.
-  const [bulkDialogOpen, setBulkDialogOpen] = useState(false);
-  const [bulkResult, setBulkResult] = useState<{
-    result: components["schemas"]["BulkSavePropertyValuesResult"];
-    propertyLabel: string;
-  } | null>(null);
-  const bulkResultsSectionRef = useRef<HTMLElement>(null);
-
-  useEffect(() => {
-    suppressSelectionAnnouncementRef.current = false;
-    // Moves focus to the results section once it exists, since `Dialog`'s
-    // own focus-restore (`dialog.tsx`) targets whatever triggered it - the
-    // "Reclassify selected" toolbar button - and that button unmounts the
-    // moment the selection it completed against is cleared, dropping focus
-    // to `<body>` for a keyboard or screen-reader operator right as this
-    // section appears (PR #290 review).
-    if (bulkResult) {
-      bulkResultsSectionRef.current?.focus();
-    }
-  }, [bulkResult]);
-
-  // Same render-time-adjustment pattern as the selection reset above: the
-  // draft mirrors `search.q` (so Back/Forward or a pasted link's `q` shows
-  // in the box) but must still be freely editable between keystrokes and
-  // the eventual submit, which is exactly what a plain `useState` plus this
-  // one-render correction gives without an effect re-render on every value.
+  // The draft mirrors `search.q`, so Back, Forward or a pasted link shows its
+  // query in the box, yet stays editable between keystrokes.
   const [queryDraft, setQueryDraft] = useState(search.q);
   const [committedQ, setCommittedQ] = useState(search.q);
   if (search.q !== committedQ) {
@@ -426,56 +319,34 @@ export function AdminCatalogueListPage() {
     setQueryDraft(search.q);
   }
 
-  // The cursors of the pages already visited, so "Previous page" can return
-  // to one. `target` is the `after` a Next or Previous click is about to
-  // navigate to: when `search.after` changes, the stack survives only if it
-  // changed to that target. Any other change (a new query, filter or sort
-  // drops `after`; Back or Forward moves it) makes the stack describe a
-  // route this screen no longer holds, so it is emptied.
-  const [paging, setPaging] = useState<{
-    stack: (string | undefined)[];
-    seen: string | undefined;
-    target: { after: string | undefined } | null;
-  }>({ stack: [], seen: search.after, target: null });
-  if (search.after !== paging.seen) {
-    setPaging({
-      stack:
-        paging.target !== null && paging.target.after === search.after
-          ? paging.stack
-          : [],
-      seen: search.after,
-      target: null,
-    });
-  }
+  const paging = useKeysetPaging(search.after);
 
-  // `SearchInput` hands over the trimmed value: a whitespace-only value must
-  // not land in `q` untrimmed while `mode` (and `useAdminSearch`'s own guard)
-  // is computed with `.trim()`, or a stray `q=%20` would sit in the address
-  // bar claiming a search.
   function handleSearchSubmit(trimmed: string) {
     void navigate({ search: (prev) => ({ ...prev, q: trimmed, after: undefined }) });
   }
 
-  // Also the chip row's remove handler below - toggling off an
-  // already-selected value is exactly "remove it" (`toggleFilterValue`
-  // add/removes by whether `value` is already present).
   function handleFilterToggle(facetKey: string, value: string) {
     void navigate({ search: (prev) => toggleFilterValue(prev, facetKey, value) });
   }
 
-  function handleFilterChipRemove(chipKey: string) {
-    const filter = activeFilterByChipKey.get(chipKey);
+  function handleChipRemove(chipKey: string) {
+    const filter = filterByChipKey.get(chipKey);
     if (filter) {
       handleFilterToggle(filter.facetKey, filter.value);
     }
   }
 
-  // Issue #287. Only meaningful in browse mode - the `<select>` itself is
-  // disabled while `mode === "search"`, so this cannot fire from there.
+  // Held until the re-sorted page arrives and spoken with its result count: an
+  // announcement made now would be replaced by that one within moments. It is
+  // keyed to the sort it describes, so a result for anything else (a search
+  // submitted before the page arrived, a refused request) never carries it.
+  const sortNoteRef = useRef<{ sort: AdminListingSort; text: string } | null>(null);
+
+  // Only reachable in browse mode: the control is disabled while searching.
   function handleSortChange(event: ChangeEvent<HTMLSelectElement>) {
     const sort = event.target.value as AdminListingSort;
+    sortNoteRef.current = { sort, text: `Sorted by ${sortLabel(sort)}.` };
     void navigate({ search: (prev) => changeSort(prev, sort) });
-    announce(`Sorted by ${sortLabel(sort)}.`);
   }
 
   function handleClearAllFilters() {
@@ -483,53 +354,77 @@ export function AdminCatalogueListPage() {
   }
 
   function handleNextPage() {
-    if (nextCursor !== null) {
-      setPaging({
-        ...paging,
-        stack: [...paging.stack, search.after],
-        target: { after: nextCursor },
-      });
+    // A placeholder's `next_cursor` points at the page already loading, so
+    // acting on it would push a duplicate onto the Previous stack.
+    if (nextCursor !== null && !active.isPlaceholderData) {
+      paging.next(nextCursor);
       void navigate({ search: (prev) => ({ ...prev, after: nextCursor }) });
     }
   }
 
   function handlePreviousPage() {
-    const previousAfter = paging.stack[paging.stack.length - 1];
-    setPaging({
-      ...paging,
-      stack: paging.stack.slice(0, -1),
-      target: { after: previousAfter },
-    });
+    const previousAfter = paging.previous();
     void navigate({ search: (prev) => ({ ...prev, after: previousAfter }) });
   }
 
-  const staleData = active.isError && active.data !== undefined;
+  const staleData = active.isError && data !== undefined;
+  const hardFailure = active.isError && data === undefined;
+  const hardFailureMessage = refusalDetail(active.error) ?? LOAD_FAILURE;
+
+  // `data` keeps its identity across a refetch that returns the same page, so
+  // this speaks once per new result set. A placeholder is never announced.
+  const resultMessage =
+    data && !active.isError && !active.isPlaceholderData
+      ? resultAnnouncement(data.items.length, data.next_cursor !== null)
+      : null;
+  useEffect(() => {
+    if (resultMessage !== null) {
+      const note = sortNoteRef.current;
+      const describesThisPage =
+        note !== null && mode === "browse" && note.sort === (sort ?? "business_key");
+      announce(describesThisPage ? `${note.text} ${resultMessage}` : resultMessage);
+      sortNoteRef.current = null;
+    }
+  }, [data, resultMessage, announce, mode, sort]);
+
   useEffect(() => {
     if (staleData) {
+      sortNoteRef.current = null;
       announce(STALE_DATA_WARNING);
     }
   }, [staleData, announce]);
 
-  // A hard failure (no prior data to fall back on) was rendered but never
-  // announced (PR #285 review finding 3) - a screen-reader user who submits
-  // a search or filter selection that 4xxs (a realistic path once finding 1's
-  // unrecognised `filter.*` reaches the server) got silence. The message text
-  // is derived the same way it is rendered below, so the two cannot drift.
-  const hardFailure = active.isError && active.data === undefined;
-  const hardFailureMessage =
-    refusalDetail(active.error) ??
-    "Catalogue entries could not be loaded. Try again, or contact an administrator if the problem persists.";
   useEffect(() => {
     if (hardFailure) {
+      sortNoteRef.current = null;
       announce(hardFailureMessage);
     }
   }, [hardFailure, hardFailureMessage, announce]);
+
+  const emptyState = (
+    <div className="flex flex-col items-start gap-2">
+      <p className="m-0">
+        {emptyStateText({
+          mode,
+          q: search.q,
+          hasFilters: activeFilters.length > 0,
+          hasCursor: search.after !== undefined,
+          nothingYet: "The catalogue has no entries yet.",
+        })}
+      </p>
+      {activeFilters.length > 0 ? (
+        <Button type="button" variant="secondary" onClick={handleClearAllFilters}>
+          Clear all filters
+        </Button>
+      ) : null}
+    </div>
+  );
 
   return (
     <section aria-labelledby="catalogue-list-heading">
       <LiveRegion message={message} politeness={politeness} />
 
-      <PageContainer className="py-6">
+      <PageContainer className="flex flex-col gap-4 py-6">
         <PageHeader id="catalogue-list-heading" title="Catalogue administration" />
 
         <div className="flex flex-wrap items-end gap-4">
@@ -542,16 +437,10 @@ export function AdminCatalogueListPage() {
             className="min-w-64 flex-1"
           />
 
-          {/* Issue #287. Disabled in search mode: `GET /catalogue/admin/search`
-              stays relevance-ranked, matching the backend's own scope for this
-              issue, so there is nothing here to send a `sort` to while a query
-              is active. */}
           <Select
             id="catalogue-list-sort"
             label="Sort by"
-            value={
-              mode === "search" ? SEARCH_MODE_SORT_VALUE : (search.sort ?? "business_key")
-            }
+            value={mode === "search" ? SEARCH_MODE_SORT_VALUE : (sort ?? "business_key")}
             onChange={handleSortChange}
             disabled={mode === "search"}
             options={[
@@ -564,159 +453,124 @@ export function AdminCatalogueListPage() {
           />
         </div>
 
-        <AdminCatalogueFilterPanel selections={filters} onToggle={handleFilterToggle} />
+        <div className="flex flex-wrap items-start gap-4">
+          {comboboxes.map((combobox) => (
+            <MultiSelectCombobox
+              key={combobox.key}
+              id={`catalogue-list-facet-${combobox.key}`}
+              label={combobox.label}
+              options={combobox.options}
+              selected={filters[combobox.key] ?? []}
+              onToggle={(value) => handleFilterToggle(combobox.key, value)}
+              maxSelected={MAX_VALUES_PER_FILTER}
+            />
+          ))}
+        </div>
 
-        {/* Kept outside the `active.data &&` gate below, deliberately: this is
-            the one control that must stay reachable even while the listing
-            itself is refused (e.g. a filter the server no longer recognises),
-            since it is the only way out of that state (PR #285 review
-            finding 1). */}
+        {optionsFailed ? (
+          <p className="m-0 text-sm text-[var(--color-text-muted)]">
+            {OPTIONS_UNAVAILABLE}
+          </p>
+        ) : null}
+
+        {/* Outside the `data` gate: removing a filter is the way out of a
+            refused request, so it stays reachable on failure. */}
         <FilterBar
-          activeFilters={activeFilterChips}
-          onRemove={handleFilterChipRemove}
+          activeFilters={chips}
+          onRemove={handleChipRemove}
           onClearAll={handleClearAllFilters}
         />
 
-        {active.isPending && <p>Loading catalogue entries…</p>}
+        {(active.isPending || active.isPlaceholderData) && (
+          <p className="m-0">Loading catalogue entries…</p>
+        )}
 
-        {hardFailure && <p>{hardFailureMessage}</p>}
+        {hardFailure && (
+          <p className="m-0 text-[var(--color-danger)]">{hardFailureMessage}</p>
+        )}
 
-        {staleData && <p>{STALE_DATA_WARNING}</p>}
+        {staleData && <p className="m-0">{STALE_DATA_WARNING}</p>}
 
-        {active.data && (
+        {data && (
           <>
-            <BulkReclassifyToolbar
-              selectedCount={selected.size}
-              onLaunch={() => {
-                // Cleared here, not left to `onComplete`'s next call: a batch
-                // that aborts whole (FR-89's 422) leaves the dialog open with
-                // nothing applied, and without this the *previous* batch's
-                // tallies would still be showing behind it, reading as this
-                // batch's own outcome (PR #290 review).
-                setBulkResult(null);
-                setBulkDialogOpen(true);
-              }}
-            />
-
-            {bulkResult && (
-              <BulkOutcomeSummary
-                ref={bulkResultsSectionRef}
-                result={bulkResult.result}
-                propertyLabel={bulkResult.propertyLabel}
+            {/* Scrolls on its own at narrow widths rather than widening the
+                page. Its row links are what a keyboard user scrolls it by. */}
+            <div data-testid="results-scroll" className="overflow-x-auto">
+              <DataTable
+                caption={mode === "search" ? "Search results" : "Catalogue entries"}
+                columns={[
+                  {
+                    key: "preferred_term",
+                    header: "Requesting term",
+                    isRowHeader: true,
+                    render: (row: Row) => (
+                      <span className="inline-flex flex-wrap items-center gap-2">
+                        <Link
+                          to="/admin/catalogue/$businessKey/edit"
+                          params={{ businessKey: row.business_key }}
+                          className="text-[var(--color-accent)] hover:underline"
+                        >
+                          {row.preferred_term}
+                        </Link>
+                        {row.has_open_finding ? <FindingIndicator /> : null}
+                      </span>
+                    ),
+                  },
+                  {
+                    key: "business_key",
+                    header: "Identifier",
+                    render: (row: Row) => (
+                      <span className="font-mono">{row.business_key}</span>
+                    ),
+                  },
+                  {
+                    key: "status",
+                    header: "Status",
+                    render: (row: Row) => (
+                      <StatusBadge
+                        tone={statusToneFor(row.status)}
+                        label={statusLabelFor(row.status)}
+                      />
+                    ),
+                  },
+                  {
+                    key: "disciplines",
+                    header: "Discipline",
+                    render: (row: Row) =>
+                      row.disciplines.length > 0 ? (
+                        row.disciplines.join(", ")
+                      ) : (
+                        <span className="text-[var(--color-text-muted)]">
+                          None recorded
+                        </span>
+                      ),
+                  },
+                  {
+                    key: "updated_at",
+                    header: "Last changed",
+                    align: "right",
+                    render: (row: Row) => (
+                      <span className="tabular-nums">
+                        {new Date(row.updated_at).toLocaleString()}
+                      </span>
+                    ),
+                  },
+                ]}
+                rows={items}
+                getRowKey={(row) => row.business_key}
+                emptyState={emptyState}
               />
-            )}
+            </div>
 
-            <DataTable
-              caption="Catalogue entries"
-              columns={[
-                {
-                  key: "business_key",
-                  header: "Code",
-                  isRowHeader: true,
-                  render: (row: Row) => (
-                    <Link
-                      to="/admin/catalogue/$businessKey/edit"
-                      params={{ businessKey: row.business_key }}
-                      className="font-mono"
-                    >
-                      {row.business_key}
-                    </Link>
-                  ),
-                },
-                {
-                  key: "preferred_term",
-                  header: "Requesting term",
-                  render: (row: Row) => row.preferred_term,
-                },
-                {
-                  key: "status",
-                  header: "Status",
-                  render: (row: Row) => (
-                    <StatusBadge
-                      tone={statusToneFor(row.status)}
-                      label={statusLabelFor(row.status)}
-                    />
-                  ),
-                },
-                {
-                  key: "updated_at",
-                  header: "Last changed",
-                  align: "right",
-                  render: (row: Row) => (
-                    <span className="tabular-nums">
-                      {new Date(row.updated_at).toLocaleString()}
-                    </span>
-                  ),
-                },
-              ]}
-              rows={items}
-              getRowKey={(row) => row.business_key}
-              emptyState={emptyStateText(mode, search.q)}
-              selection={{
-                selectedKeys: new Set(selected.keys()),
-                selectAllLabel: "Select all rows on this page",
-                getRowLabel: (row) => `Select ${row.business_key}`,
-                onSelectRow: (key, isSelected) => {
-                  setSelected((current) => {
-                    const next = new Map(current);
-                    if (isSelected) {
-                      const row = items.find((item) => item.business_key === key);
-                      if (row) {
-                        next.set(key, row.row_version);
-                      }
-                    } else {
-                      next.delete(key);
-                    }
-                    return next;
-                  });
-                },
-                onSelectAll: (isSelected) => {
-                  setSelected((current) => {
-                    const next = new Map(current);
-                    for (const row of items) {
-                      if (isSelected) {
-                        next.set(row.business_key, row.row_version);
-                      } else {
-                        next.delete(row.business_key);
-                      }
-                    }
-                    return next;
-                  });
-                },
-              }}
-            />
-
-            {(items.length > 0 || paging.stack.length > 0) && (
+            {(items.length > 0 || paging.hasPrevious) && (
               <Pagination
                 hasNext={nextCursor !== null}
                 onNext={handleNextPage}
-                onPrevious={paging.stack.length > 0 ? handlePreviousPage : undefined}
+                onPrevious={paging.hasPrevious ? handlePreviousPage : undefined}
                 className="self-start"
               />
             )}
           </>
-        )}
-
-        {bulkDialogOpen && (
-          <BulkReclassifyDialog
-            entries={Array.from(selected, ([business_key, expected_row_version]) => ({
-              business_key,
-              expected_row_version,
-            }))}
-            onClose={() => setBulkDialogOpen(false)}
-            onComplete={(result, propertyLabel) => {
-              setBulkDialogOpen(false);
-              // Every captured `expected_row_version` is stale the moment
-              // anything applied - refreshing them from the outcome list
-              // instead would let a second submit blind-overwrite whatever a
-              // concurrent editor did in between (issue #63 plan). The results
-              // panel below is the durable record of what to revisit.
-              suppressSelectionAnnouncementRef.current = true;
-              setSelected(new Map());
-              setBulkResult({ result, propertyLabel });
-              announce(`Reclassify ${propertyLabel}: ${tallyText(result)}`);
-            }}
-          />
         )}
       </PageContainer>
     </section>
