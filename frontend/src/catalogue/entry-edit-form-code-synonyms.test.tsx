@@ -1086,3 +1086,35 @@ describe("a reinstated synonym that duplicates another entry's (FR-05)", () => {
     ).toBeVisible();
   });
 });
+
+describe("choosing with the arrow keys", () => {
+  it("chooses the highlighted result once, and does not submit the form", async () => {
+    const calls = stubApi([
+      entryRoute(),
+      PROPERTIES_OK,
+      {
+        ...PROCEDURES_OK,
+        body: {
+          items: [
+            { code: CODE, au_preferred_term: AU_PT, label_provenance: {} },
+            { code: "122192001", au_preferred_term: "Other", label_provenance: {} },
+          ],
+          total: 2,
+        },
+      },
+      conceptRoute(),
+    ]);
+    const user = userEvent.setup();
+    await renderLoaded();
+
+    await user.type(form().getByLabelText("SNOMED CT code"), "micro");
+    await screen.findByRole("option", { name: new RegExp(CODE) }, { timeout: 2000 });
+    await user.keyboard("{ArrowDown}{Enter}");
+
+    expect(await form().findByText(FSN, {}, { timeout: 2000 })).toBeVisible();
+    expect(
+      calls.filter((call) => call.path.includes("/terminology/concepts/")),
+    ).toHaveLength(1);
+    expect(writes(calls)).toHaveLength(0);
+  });
+});

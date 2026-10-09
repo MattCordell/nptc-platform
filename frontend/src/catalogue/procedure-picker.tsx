@@ -1,5 +1,5 @@
 import { Combobox } from "@base-ui/react/combobox";
-import { useState } from "react";
+import { useRef, useState } from "react";
 
 import { refusalDetail } from "../api/conflicts.ts";
 import { useProcedureSearch } from "../api/queries.ts";
@@ -49,6 +49,7 @@ export function ProcedurePicker({
   const [open, setOpen] = useState(false);
   const query = useDebouncedValue(text.trim(), SEARCH_DEBOUNCE_MS);
   const search = useProcedureSearch(query);
+  const highlighted = useRef(false);
 
   const options: Option[] =
     query === text.trim() && search.data
@@ -93,9 +94,9 @@ export function ProcedurePicker({
         <Combobox.Root<Option, false>
           items={options}
           filter={null}
-          // Enter chooses the first result. With nothing highlighted it would
-          // submit the whole form instead.
-          autoHighlight="always"
+          onItemHighlighted={(value) => {
+            highlighted.current = value !== undefined;
+          }}
           value={null}
           inputValue={text}
           open={open && typed}
@@ -123,6 +124,20 @@ export function ProcedurePicker({
             className={INPUT_CLASSES}
             inputMode="search"
             maxLength={MAX_SEARCH_LENGTH}
+            onKeyDown={(event) => {
+              // Enter in a form's text box would submit the whole form. Here it
+              // chooses the highlighted result, or the first when none is.
+              if (event.key !== "Enter") {
+                return;
+              }
+              event.preventDefault();
+              const first = options[0];
+              if (open && typed && !highlighted.current && first !== undefined) {
+                onPick(first.value);
+                setText("");
+                setOpen(false);
+              }
+            }}
             autoComplete="off"
           />
           <Combobox.Portal>
