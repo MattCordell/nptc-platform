@@ -37,11 +37,12 @@ a scan of everything the page did not serve, and that ADR-0024 does without
 because keyset paging has no use for it. A facet count is the opposite on
 every point. It is the answer to the question: a facet with no count is a list
 of words, not a filter, and FR-16 asks for counts by name. It is bounded, to
-`FACET_BUCKET_CAP` buckets per facet. And it reads one property's rows through
-that property's index rather than the whole table; `test_db_property_index_plan.py`
-`EXPLAIN`s the plan, and ADR-0032 records which parts of the query the index
-serves. `list_entries` below runs no count of any kind: it accepts filters and
-returns no facets.
+`FACET_BUCKET_CAP` buckets per facet, except the two in `UNCAPPED_FACET_KEYS`. And
+it reads one property's rows through that property's index rather than the whole
+table; `test_db_property_index_plan.py` `EXPLAIN`s the plan, and ADR-0032 records
+which parts of the query the index serves. `list_entries` below runs no count of
+any kind: it accepts filters and returns no facets. A browse that wants them calls
+`browse_facets`, a separate statement.
 """
 
 from __future__ import annotations
@@ -55,7 +56,15 @@ from sqlalchemy import Select, func, select
 from sqlalchemy.orm import Session, aliased
 
 from nptc.catalogue.errors import CodeLookupNotFoundError, EntryNotFoundError
-from nptc.catalogue.facets import FilterSelection, filter_predicates
+from nptc.catalogue.facets import (
+    DISCIPLINE_PROPERTY_KEY,
+    SPECIMEN_PROPERTY_KEY,
+    Facet,
+    FacetContext,
+    FilterSelection,
+    compute_facets,
+    filter_predicates,
+)
 from nptc.db.models.catalogue_entry import CatalogueEntry, CatalogueEntryStatus
 from nptc.db.models.code_binding import SNOMED_CT_SYSTEM, CodeBinding, CodeBindingStatus
 from nptc.db.models.designation import Designation, DesignationStatus
@@ -70,6 +79,7 @@ __all__ = [
     "EntryPage",
     "PropertyValueRow",
     "RowFacts",
+    "browse_facets",
     "get_entry",
     "get_entry_by_code",
     "list_entries",
@@ -86,10 +96,6 @@ __all__ = [
 #: The one status filter every public read applies (module docstring). A tuple
 #: rather than a set, so the SQL parameter order is stable.
 PUBLIC_STATUSES: Final[tuple[str, ...]] = (CatalogueEntryStatus.ACTIVE.value,)
-
-#: The system properties `nptc.db.bootstrap` seeds, which `row_facts` shows on every row.
-DISCIPLINE_PROPERTY_KEY: Final = "discipline"
-SPECIMEN_PROPERTY_KEY: Final = "specimen"
 
 
 @dataclass(frozen=True, slots=True)
@@ -215,6 +221,31 @@ def list_entries(
         page = rows[:limit]
         return EntryPage(entries=page, next_cursor=page[-1].business_key)
     return EntryPage(entries=rows, next_cursor=None)
+
+
+def browse_facets(
+    session: Session,
+    *,
+    context: FacetContext,
+    filters: Sequence[FilterSelection] = (),
+) -> tuple[Facet, ...]:
+    """Every facet's buckets, counted over the active entries `filters` leave.
+
+    The browse counterpart of `nptc.catalogue.search.search_facets`, over
+    `catalogue_entry` directly because a browse has no scored CTE. It counts the
+    whole filtered set, not the page `list_entries` serves, so a client that
+    pages does not need it again (FR-16, ADR-0032).
+    """
+    return compute_facets(
+        session,
+        context=context,
+        selections=filters,
+        base_entry_ids=lambda predicates: (
+            select(CatalogueEntry.id)
+            .where(CatalogueEntry.status.in_(PUBLIC_STATUSES))
+            .where(*predicates)
+        ),
+    )
 
 
 def get_entry(session: Session, business_key: str) -> CatalogueEntry:

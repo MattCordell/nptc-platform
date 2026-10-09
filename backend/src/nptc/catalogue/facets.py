@@ -81,10 +81,13 @@ from nptc.registry.handlers import (
 
 __all__ = [
     "CORE_FACET_KEYS",
+    "DISCIPLINE_PROPERTY_KEY",
     "FACET_BUCKET_CAP",
     "FILTER_OP_SEPARATOR",
     "FILTER_PARAM_PREFIX",
     "FILTER_VALUE_CAP",
+    "SPECIMEN_PROPERTY_KEY",
+    "UNCAPPED_FACET_KEYS",
     "ConflictingFilterOperatorError",
     "Facet",
     "FacetBucket",
@@ -105,10 +108,21 @@ __all__ = [
     "parse_filters",
 ]
 
+#: The system properties `nptc.db.bootstrap` seeds.
+DISCIPLINE_PROPERTY_KEY: Final = "discipline"
+SPECIMEN_PROPERTY_KEY: Final = "specimen"
+
 #: At most this many buckets per facet, by count descending. An invented number,
 #: argued in ADR-0032. `Facet.truncated` says when it bit, so a client is never
 #: shown a partial list it cannot tell from a whole one.
 FACET_BUCKET_CAP: Final[int] = 20
+
+#: Facets that list every bucket and never report `truncated`: a value cut from a
+#: type-to-narrow combobox is a filter nobody can reach (FR-16). By key, not a
+#: registry flag, because it describes one screen's use of a facet (ADR-0032).
+UNCAPPED_FACET_KEYS: Final[frozenset[str]] = frozenset(
+    {DISCIPLINE_PROPERTY_KEY, SPECIMEN_PROPERTY_KEY}
+)
 
 #: At most this many values in one facet's selection (a repeated
 #: `?filter.discipline=` or an `:in` list). `FACET_BUCKET_CAP` bounds the
@@ -705,7 +719,7 @@ def build_facet_count_statement(
     # `bucket_count`, not `count`: a SQLAlchemy `Row` inherits `tuple.count`, so
     # `row.count` would silently yield the bound method.
     count = func.count(distinct(subquery.c.entry_id)).label("bucket_count")
-    return (
+    statement = (
         sa_select(
             subquery.c.value.label("value"),
             func.max(subquery.c.label).label("label"),
@@ -719,10 +733,11 @@ def build_facet_count_statement(
         # Count, then value: ties would otherwise come back in plan order, and a
         # panel that reshuffles between identical requests looks broken.
         .order_by(count.desc(), subquery.c.value.asc())
-        # One more than the cap, as every keyset page asks for one more row than
-        # it serves: its existence answers "was this truncated".
-        .limit(FACET_BUCKET_CAP + 1)
     )
+    if descriptor.key in UNCAPPED_FACET_KEYS:
+        return statement
+    # One more than the cap: its existence answers "was this truncated".
+    return statement.limit(FACET_BUCKET_CAP + 1)
 
 
 def build_facet_counts_statement(
@@ -829,14 +844,19 @@ def compute_facets(
             )
             continue
         rows = rows_by_key.get(descriptor.key, [])
-        truncated = len(rows) > FACET_BUCKET_CAP
+        if descriptor.key in UNCAPPED_FACET_KEYS:
+            truncated = False
+            kept = rows
+        else:
+            truncated = len(rows) > FACET_BUCKET_CAP
+            kept = rows[:FACET_BUCKET_CAP]
         buckets = tuple(
             FacetBucket(
                 value=str(row.value),
                 label=row.label if row.label is not None else str(row.value),
                 count=int(row.bucket_count),
             )
-            for row in rows[:FACET_BUCKET_CAP]
+            for row in kept
         )
         facets.append(
             Facet(

@@ -35,22 +35,35 @@ workbook show the SNOMED CT-AU preferred term.
 
 ## Filtering
 
-Filters appear while you search. Each filter shows its values with a count of how many
-results each value gives you.
+The page offers two filters, **Discipline** and **Specimen**, as soon as it opens. You do
+not need to search first.
 
-- Choose a value to apply it. Choose it again to remove it.
+Each filter is a box you can type in. Choose the box, or press the down arrow, to see every
+value with a count of how many results it gives you. The most common values come first.
+Type to narrow the list to the values that contain your text.
+
+- Choose a value to apply it. The list stays open, so you can choose more values.
+  Applied values show a tick.
 - Choosing two values in one filter, such as two disciplines, gives you tests with either.
 - Choosing values in two different filters gives you only tests that match both.
-- A filter with many values is a drop-down list. Pick a value from it to apply it.
+- You can choose at most 50 values in one filter. At that point the list says so. Remove
+  a value to choose another.
 
-Each filter you apply appears below the filters as a button with a cross. Choose it to
-remove that filter, or choose **Clear all filters** to remove them all.
+You can use the keyboard alone. Press Tab to reach a filter, type, press the down arrow to
+move through the list, press Enter to choose a value, and press Escape to close the list.
 
-Some filters have too many values to list. The page then says the filter shows only its
-most common values. Narrow your search to see the others.
+Each value you apply appears below the filters as a button with a cross. Choose it to
+remove that value, or choose **Clear all filters** to remove them all. A value from a
+shared link that the page no longer offers still appears here, so you can remove it.
 
-While you browse, the page offers no filters. A filter already in the page's link still
-applies, and appears as a removable button showing its raw name and value.
+The counts follow your search and your other filters. They do not change when you move to
+the next page.
+
+If the page cannot load the filter values, it says that filters are unavailable. Searching
+and the results still work.
+
+Other properties can still filter the list through the page's link. Those filters apply and
+appear as removable buttons, but the page has no box for them.
 
 ## Moving between pages
 

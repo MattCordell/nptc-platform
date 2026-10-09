@@ -314,12 +314,23 @@ the value, the selection and the cursor, usually in the URL.
   a `role="search"` form, so it is a landmark. Controlled: it takes `value` and
   `onValueChange`, and calls `onSubmit` with the trimmed value from the button or Enter.
   The input is `type="search"`, so its role is `searchbox`.
-- **`filter-bar.tsx` — `FilterBar`.** Pill toggles (`aria-pressed`, 20px radius) in named
-  groups, labelled dropdowns, and one removable chip per active filter with a "Clear all
-  filters" button. Each option takes an optional result count (FR-16), shown in the name
-  as "Label (n)". A pressed toggle adds a check mark and a heavier weight, so the state
-  never rests on colour alone. Each part renders only when given something, so a screen
-  with its own facet panel can use the chip row alone, as the admin list does.
+- **`filter-bar.tsx` — `FilterBar`.** One removable chip per active filter, in a group named
+  "Active filters", with a "Clear all filters" button (FR-16). It draws no controls: the
+  caller picks values with its own, `MultiSelectCombobox` on the public catalogue page and a
+  facet panel on the admin list, and passes the selection here. Chips are pills (20px radius,
+  at least 32px high).
+- **`multi-select-combobox.tsx` — `MultiSelectCombobox`.** A labelled, type-to-narrow
+  combobox that picks several values, built on Base UI's `Combobox` (the trial passed under
+  jsdom and axe; Headless UI and React Aria Components were not tried). It lists every option
+  as "Label (n)", narrows the list in the browser as the user types, and stays open after a
+  pick so several values come from one query. A selected option carries a check mark as well
+  as its fill (NFR-31). It holds no selection and draws no chips: the caller owns `selected`
+  and is told each change through `onToggle`, and shows the selection with `FilterBar`'s chip
+  row, so a selection is removable from both. A selected value missing from `options` stays selected, but the popup cannot list it, so the chip is then the only way to remove it. With no `options` at all the popup says "No other values match this search." instead of blaming the typed text. At `maxSelected` it refuses a
+  further pick with a message inside the popup, because Base UI marks everything outside the
+  popup inert while it is open, so a live region outside would not be read. For the same
+  reason it names the input with `aria-label`, since the visible label is hidden from
+  assistive technology while the popup is open.
 - **`pagination.tsx` — `Pagination`.** Previous and Next for keyset paging: no page
   numbers and no total, because the API returns neither (ADR-0024). It takes `hasNext`,
   `onNext` and an optional `onPrevious`, and names no URL parameter, so a screen paging by

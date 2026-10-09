@@ -796,12 +796,13 @@ def test_a_cursor_replayed_under_a_different_filter_set_is_refused(
 
 @pytest.mark.req("FR-16")
 @pytest.mark.integration
-def test_the_browse_listing_filters_but_returns_no_facets(
+def test_the_browse_listing_filters_but_returns_no_facets_unless_asked(
     api: ApiTestApp, seeded: SeededCatalogue
 ) -> None:
     """ADR-0032's split: `/catalogue/entries` accepts the same filters and
-    computes no counts, because counting on every page of a browse costs
-    something no caller has asked for."""
+    computes counts only for `facets=true`, because counting on every page of a
+    browse costs something a paging client has no use for. The asked-for case
+    is `test_api_catalogue_browse_facets.py`."""
     key = seeded.discipline_property_key
     response = api.get(
         "/catalogue/entries",
@@ -809,7 +810,7 @@ def test_the_browse_listing_filters_but_returns_no_facets(
     )
     assert response.status_code == 200, response.text
     body = response.json()
-    assert "facets" not in body
+    assert body["facets"] is None
     # In `business_key` order, and only the two entries holding that value -
     # `before_all` excludes everything this fixture did not seed.
     assert [item["business_key"] for item in body["items"]] == [

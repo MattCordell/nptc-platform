@@ -16,6 +16,7 @@ import {
   useAdminSearch,
   useAmendDesignation,
   useAmendProperty,
+  useCatalogueFacets,
   useCatalogueSearch,
   useCreateProperty,
   useDatatypes,
@@ -1211,6 +1212,88 @@ describe("useCatalogueSearch", () => {
 
     await waitFor(() => expect(result.current.isError).toBe(true));
     expect(result.current.isSuccess).toBe(false);
+  });
+});
+
+describe("useCatalogueFacets", () => {
+  const SEARCH = "/api/v1/catalogue/search";
+  const FACETS = [
+    {
+      key: "discipline",
+      label: "Discipline",
+      facetable: true,
+      truncated: false,
+      buckets: [],
+    },
+  ];
+
+  it("browses with facets=true and one row, and returns just the facet list", async () => {
+    const calls = stubApi([
+      {
+        method: "GET",
+        path: ENTRIES,
+        status: 200,
+        body: { items: [], next_cursor: null, facets: FACETS },
+      },
+    ]);
+
+    const { result } = renderHook(
+      () => useCatalogueFacets({ q: "", filters: { specimen: ["serum", "urine"] } }),
+      { wrapper },
+    );
+
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+    expect(result.current.data).toEqual(FACETS);
+    const { searchParams } = calls[0]!;
+    expect(searchParams.get("facets")).toBe("true");
+    expect(searchParams.get("limit")).toBe("1");
+    expect(searchParams.getAll("filter.specimen")).toEqual(["serum", "urine"]);
+    expect(searchParams.has("after")).toBe(false);
+  });
+
+  it("searches, instead of browsing, once q is not blank", async () => {
+    const calls = stubApi([
+      {
+        method: "GET",
+        path: SEARCH,
+        status: 200,
+        body: { items: [], next_cursor: null, facets: FACETS },
+      },
+    ]);
+
+    const { result } = renderHook(() => useCatalogueFacets({ q: "glucose" }), {
+      wrapper,
+    });
+
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+    expect(calls[0]!.path).toBe(SEARCH);
+    expect(calls[0]!.searchParams.get("q")).toBe("glucose");
+    expect(calls[0]!.searchParams.get("limit")).toBe("1");
+  });
+
+  it("answers an entries response with no facets as an empty list", async () => {
+    stubApi([
+      {
+        method: "GET",
+        path: ENTRIES,
+        status: 200,
+        body: { items: [], next_cursor: null },
+      },
+    ]);
+
+    const { result } = renderHook(() => useCatalogueFacets({ q: "" }), { wrapper });
+
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+    expect(result.current.data).toEqual([]);
+  });
+
+  it("surfaces a refusal as a query error", async () => {
+    stubApi([{ method: "GET", path: ENTRIES, status: 422, body: { detail: "no" } }]);
+
+    const { result } = renderHook(() => useCatalogueFacets({ q: "" }), { wrapper });
+
+    await waitFor(() => expect(result.current.isError).toBe(true));
+    expect((result.current.error as ApiError).status).toBe(422);
   });
 });
 

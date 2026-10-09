@@ -301,7 +301,12 @@ silent truncation.
 GET /api/v1/catalogue/search?q=glucose&filter.discipline=Chemistry&filter.specimen=119297000
 ```
 
-`GET /catalogue/search` also returns the facets themselves, with counts:
+`GET /catalogue/search` also returns the facets themselves, with counts.
+`GET /catalogue/entries` returns them when asked: add `facets=true`, and the response
+carries the same `facets` array, counted over every published entry the filters leave
+rather than over the page. Without `facets=true`, the field is `null` and no counts are
+computed. A client that pages sends `facets=true` once, with `limit=1`, and reads the
+counts from that:
 
 ```jsonc
 {
@@ -337,7 +342,10 @@ Four things a client must build for, none of them optional:
   with no buckets rather than omitted, so you can tell it apart from one whose values
   match nothing.
 - **`truncated: true` means the cap bit.** At most 20 buckets are returned, most common
-  first. There is no way to page through the rest; narrow the search.
+  first. There is no way to page through the rest; narrow the search. The `discipline`
+  and `specimen` facets are the exception: they return every value, in the same order, and
+  `truncated` is always `false`. A client that builds a type-to-narrow list from them can
+  rely on that.
 
 A `filter.` parameter this API cannot use is a **422**, never a silently ignored
 parameter: an unknown key, a property that is not filterable, an operator the property
@@ -347,7 +355,8 @@ is bound to the filter set as well as to `q`, so replaying it with the filters c
 also a 422 - a relevance score means nothing against a different request. On
 `/catalogue/entries` the cursor is a business key and is unaffected by the filters.
 
-`/catalogue/entries` accepts the same filters and returns **no** `facets` array.
+`/catalogue/entries` accepts the same filters, and `facets=true` does not soften them: a
+filter it cannot use is still a 422.
 See [ADR-0032](../adr/0032-faceted-filter-query-surface.md).
 
 ### Change history (FR-19)

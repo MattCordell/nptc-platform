@@ -187,8 +187,9 @@ class AdminEntrySummary(EntryCore):
 
 
 class AdminEntryPage(BaseModel):
-    """The admin counterpart to `catalogue_shared.EntryPage` - same shape,
-    rows that additionally carry `row_version`. A standalone model rather
+    """The admin counterpart to `catalogue_shared.EntryPage` - rows that
+    additionally carry `row_version`, and no `facets`: the admin list asks
+    `GET /catalogue/admin/search` for those. A standalone model rather
     than a subclass of `EntryPage`: overriding `items`' element type in a
     subclass is the field-covariance trap `mypy --strict` (and Liskov
     substitution generally) flags on a model a caller might still pass
