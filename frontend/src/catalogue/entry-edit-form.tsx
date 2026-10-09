@@ -13,6 +13,7 @@ import { LiveRegion } from "../components/live-region.tsx";
 import { StatusBadge } from "../components/status-badge.tsx";
 import { useAnnounce } from "../components/use-announce.ts";
 import { ChangelogNoteField, useChangelogNote } from "./changelog-note-field.tsx";
+import { CODE_FIELD_ID, CodeField } from "./code-field.tsx";
 import { RefusalNotice } from "./collision-notice.tsx";
 import { formatPropertyValue } from "./format-property-value.ts";
 import { propertyValidationFieldErrors } from "./property-form-errors.ts";
@@ -29,16 +30,35 @@ import { describeRun } from "./run-save.ts";
 import type { FieldChange, SaveRun } from "./run-save.ts";
 import { SaveSummary } from "./save-summary.tsx";
 import { statusLabelFor, statusToneFor } from "./status-options.ts";
+import { SynonymFields } from "./synonym-fields.tsx";
+import {
+  ADD_CHANGE_ID,
+  ADD_SYNONYMS_FIELD_ID,
+  activeSynonyms,
+  addTextError,
+  addedTerms,
+  amendChangeId,
+  blankRows,
+  hasSynonymChanges,
+  initialSynonymRows,
+  mergeSynonymRows,
+  retireChangeId,
+  synonymChanges,
+  synonymFieldId,
+} from "./synonym-state.ts";
+import type { SynonymRow } from "./synonym-state.ts";
 import { termLength } from "./term-length.ts";
+import { useCodeSelection } from "./use-code-selection.ts";
 import { useEntrySave } from "./use-entry-save.ts";
 
 /**
- * The catalogue entry edit form (FR-09, FR-24, FR-36, FR-37,
- * FR-38, FR-77, FR-85, FR-89).
+ * The catalogue entry edit form (FR-04, FR-08, FR-09, FR-24, FR-26, FR-36,
+ * FR-37, FR-38, FR-77, FR-85, FR-89).
  *
  * One form, one changelog note and one Save for the entry's RCPA Preferred
- * term and every registry property. Only the fields the editor changed are
- * sent, one request each (`useEntrySave`).
+ * term, its SNOMED CT code, its RCPA Synonyms and every registry property.
+ * Only the fields the editor changed are sent, one request each, in that
+ * order (`useEntrySave`).
  *
  * **Generated, not hand-written.** Each property row comes from
  * `usePropertyDefinitions`, and `CONTROLS` picks its input from
@@ -54,6 +74,7 @@ const SPECIMEN_KEY = "specimen";
 const TERM_FIELD_ID = "entry-preferred-term";
 const NOTE_FIELD_ID = "entry-edit-note";
 const TERM_CHANGE_ID = "preferred_term";
+const BINDING_CHANGE_ID = "binding";
 
 type EntryDetail = components["schemas"]["EntryDetail"];
 type PropertyDefinitionResponse = components["schemas"]["PropertyDefinitionResponse"];
@@ -76,9 +97,13 @@ interface Baseline {
   values: Record<string, ValueItem[]>;
 }
 
-/** What `pendingChanges` found, with the render index of each value it will send. */
+/**
+ * What `pendingChanges` found: the field to mark if the server refuses it, and
+ * the render index of each property value it will send.
+ */
 interface PendingChange {
   change: FieldChange;
+  fieldId: string | null;
   submittedIndexes: number[];
 }
 
@@ -108,6 +133,10 @@ function buildRows(
       }
       return [{ definition, values: rowValues, editable }];
     });
+}
+
+function activeCodeOf(entry: EntryDetail): string | null {
+  return entry.bindings.find((binding) => binding.status === "active")?.code ?? null;
 }
 
 function toItem(value: PropertyValue): ValueItem {
@@ -168,6 +197,11 @@ export function EntryEditForm({ entry }: { entry: EntryDetail }) {
   const [baseline, setBaseline] = useState<Baseline>(initial.baseline);
   const [term, setTerm] = useState(entry.preferred_term);
   const [slots, setSlots] = useState(initial.slots);
+  const [synonyms, setSynonyms] = useState<SynonymRow[]>(() =>
+    initialSynonymRows(activeSynonyms(entry.designations), newSlotId),
+  );
+  const [addText, setAddText] = useState("");
+  const [pickedCode, setPickedCode] = useState<string | null>(null);
   const [seenEntry, setSeenEntry] = useState(entry);
   if (entry !== seenEntry) {
     // The entry was refetched: after this form's own save, or after a version
@@ -198,6 +232,12 @@ export function EntryEditForm({ entry }: { entry: EntryDetail }) {
       setTerm(entry.preferred_term);
     }
     setBaseline(next.baseline);
+    setSynonyms(
+      mergeSynonymRows(synonyms, activeSynonyms(entry.designations), newSlotId),
+    );
+    if (pickedCode !== null && activeCodeOf(entry) === pickedCode) {
+      setPickedCode(null);
+    }
   }
   const [serverLength, setServerLength] = useState<number | null>(null);
   const [refusals, setRefusals] = useState<Record<string, FormError[]>>({});
@@ -209,6 +249,8 @@ export function EntryEditForm({ entry }: { entry: EntryDetail }) {
   const changelogNote = useChangelogNote(NOTE_FIELD_ID);
   const { message, politeness, announce } = useAnnounce();
   const entrySave = useEntrySave(entry.business_key);
+  const selection = useCodeSelection(pickedCode);
+  const activeCode = activeCodeOf(entry);
 
   useEffect(() => {
     if (focusSummary > 0) {
@@ -227,6 +269,34 @@ export function EntryEditForm({ entry }: { entry: EntryDetail }) {
           currentTerm: baseline.term,
           newTerm: term,
         },
+        fieldId: TERM_FIELD_ID,
+        submittedIndexes: [],
+      });
+    }
+    if (selection.status === "ready" && selection.concept.code !== activeCode) {
+      found.push({
+        change: {
+          kind: "binding",
+          id: BINDING_CHANGE_ID,
+          label: "SNOMED CT code",
+          currentCode: activeCode,
+          concept: selection.concept,
+        },
+        fieldId: CODE_FIELD_ID,
+        submittedIndexes: [],
+      });
+    }
+    const synonymWork = synonymChanges(synonyms, addText);
+    for (const { change, rowId } of synonymWork.amendments) {
+      found.push({ change, fieldId: synonymFieldId(rowId), submittedIndexes: [] });
+    }
+    for (const { change, rowId } of synonymWork.retirements) {
+      found.push({ change, fieldId: synonymFieldId(rowId), submittedIndexes: [] });
+    }
+    if (synonymWork.addition !== null) {
+      found.push({
+        change: synonymWork.addition,
+        fieldId: ADD_SYNONYMS_FIELD_ID,
         submittedIndexes: [],
       });
     }
@@ -250,6 +320,7 @@ export function EntryEditForm({ entry }: { entry: EntryDetail }) {
             key,
             values,
           },
+          fieldId: null,
           submittedIndexes,
         });
       }
@@ -258,29 +329,55 @@ export function EntryEditForm({ entry }: { entry: EntryDetail }) {
   }
 
   const changed = pendingChanges();
-  const hasChanges = changed.length > 0;
+  const hasChanges =
+    changed.length > 0 || pickedCode !== null || hasSynonymChanges(synonyms, addText);
   const noteGate = hasChanges && changelogNote.blocked;
   const blocked = !hasChanges || noteGate;
 
-  function clearRefusal(id: string) {
+  function clearRefusalsWhere(matches: (id: string) => boolean) {
     setRefusals((current) => {
-      if (!(id in current)) {
+      if (!Object.keys(current).some(matches)) {
         return current;
       }
-      return Object.fromEntries(Object.entries(current).filter(([key]) => key !== id));
+      return Object.fromEntries(Object.entries(current).filter(([key]) => !matches(key)));
     });
   }
 
+  function clearRefusal(id: string) {
+    clearRefusalsWhere((key) => key === id);
+  }
+
   function validateOwnFields(): FormError[] {
-    return normaliseForComparison(term) === ""
-      ? [{ fieldId: TERM_FIELD_ID, message: "Enter the preferred term." }]
-      : [];
+    const found: FormError[] = [];
+    if (normaliseForComparison(term) === "") {
+      found.push({ fieldId: TERM_FIELD_ID, message: "Enter the preferred term." });
+    }
+    if (selection.status === "checking") {
+      found.push({
+        fieldId: CODE_FIELD_ID,
+        message: "Wait for the code to finish checking before saving.",
+      });
+    } else if (selection.status === "unresolved") {
+      found.push({ fieldId: CODE_FIELD_ID, message: selection.message });
+    }
+    for (const row of blankRows(synonyms)) {
+      found.push({
+        fieldId: synonymFieldId(row.id),
+        message: "Enter the synonym, or remove it.",
+      });
+    }
+    const tooMany = addTextError(addText);
+    if (tooMany !== null) {
+      found.push({ fieldId: ADD_SYNONYMS_FIELD_ID, message: tooMany });
+    }
+    return found;
   }
 
   function applyRun(result: SaveRun, sent: PendingChange[]) {
     const nextRefusals: Record<string, FormError[]> = {};
     let savedTermBaseline: string | null = null;
     const savedValues: Record<string, ValueItem[]> = {};
+    const settled: { change: FieldChange; savedTerm: string | null }[] = [];
     let storedTerm: { sent: string; saved: string } | null = null;
     for (const outcome of result.outcomes) {
       const { change } = outcome;
@@ -293,8 +390,10 @@ export function EntryEditForm({ entry }: { entry: EntryDetail }) {
           if (outcome.savedTerm !== null) {
             storedTerm = { sent: change.newTerm, saved: outcome.savedTerm };
           }
-        } else {
+        } else if (change.kind === "property") {
           savedValues[change.key] = change.values;
+        } else {
+          settled.push({ change, savedTerm: outcome.savedTerm });
         }
         continue;
       }
@@ -305,8 +404,11 @@ export function EntryEditForm({ entry }: { entry: EntryDetail }) {
         outcome.status === "failed"
           ? "Not saved. See the summary below."
           : outcome.message;
-      if (change.kind === "preferred_term") {
-        nextRefusals[change.id] = [{ fieldId: TERM_FIELD_ID, message: reason }];
+      if (change.kind !== "property") {
+        const fieldId = sent.find((item) => item.change.id === change.id)?.fieldId;
+        nextRefusals[change.id] = [
+          { fieldId: fieldId ?? TERM_FIELD_ID, message: reason },
+        ];
       } else {
         const indexes =
           sent.find((item) => item.change.id === change.id)?.submittedIndexes ?? [];
@@ -328,8 +430,41 @@ export function EntryEditForm({ entry }: { entry: EntryDetail }) {
       const { sent, saved } = storedTerm;
       setTerm((current) => (current === sent ? saved : current));
     }
+    applySettled(settled);
     setRefusals(nextRefusals);
     setRun(result);
+  }
+
+  /**
+   * Makes the code and synonym fields match what the run saved, so a second
+   * Save before the entry is refetched does not send the same change twice.
+   */
+  function applySettled(settled: { change: FieldChange; savedTerm: string | null }[]) {
+    for (const { change, savedTerm } of settled) {
+      if (change.kind === "binding") {
+        setPickedCode(null);
+      } else if (change.kind === "synonym_amend") {
+        setSynonyms((current) =>
+          current.map((row) =>
+            row.original === change.currentTerm
+              ? {
+                  ...row,
+                  original: savedTerm ?? change.newTerm,
+                  term: row.term === change.newTerm ? (savedTerm ?? row.term) : row.term,
+                }
+              : row,
+          ),
+        );
+      } else if (change.kind === "synonym_retire") {
+        setSynonyms((current) => current.filter((row) => row.original !== change.term));
+      } else if (change.kind === "synonyms_add") {
+        setAddText((current) =>
+          JSON.stringify(addedTerms(current)) === JSON.stringify(change.terms)
+            ? ""
+            : current,
+        );
+      }
+    }
   }
 
   async function submit(): Promise<SubmitOutcome> {
@@ -371,7 +506,29 @@ export function EntryEditForm({ entry }: { entry: EntryDetail }) {
     return { ok: true };
   }
 
-  const termErrors = [...ownErrors, ...(refusals[TERM_CHANGE_ID] ?? [])];
+  const termErrors = [
+    ...ownErrors.filter((error) => error.fieldId === TERM_FIELD_ID),
+    ...(refusals[TERM_CHANGE_ID] ?? []),
+  ];
+  const codeError = [
+    ...ownErrors.filter((error) => error.fieldId === CODE_FIELD_ID),
+    ...(refusals[BINDING_CHANGE_ID] ?? []),
+  ][0]?.message;
+  const addError = [
+    ...ownErrors.filter((error) => error.fieldId === ADD_SYNONYMS_FIELD_ID),
+    ...(refusals[ADD_CHANGE_ID] ?? []),
+  ][0]?.message;
+  const synonymRowErrors: Record<string, string> = {};
+  for (const row of synonyms) {
+    const message = [
+      ...ownErrors.filter((error) => error.fieldId === synonymFieldId(row.id)),
+      ...(refusals[amendChangeId(row.original)] ?? []),
+      ...(refusals[retireChangeId(row.original)] ?? []),
+    ][0]?.message;
+    if (message !== undefined) {
+      synonymRowErrors[row.id] = message;
+    }
+  }
   const liveLength = termLength(term);
 
   return (
@@ -441,6 +598,41 @@ export function EntryEditForm({ entry }: { entry: EntryDetail }) {
             />
           )}
         </Field>
+
+        <CodeField
+          bindings={entry.bindings}
+          selection={selection}
+          error={codeError}
+          onPick={(code) => {
+            if (code !== activeCode) {
+              setPickedCode(code);
+            }
+            setOwnErrors([]);
+            clearRefusal(BINDING_CHANGE_ID);
+          }}
+          onClear={() => {
+            setPickedCode(null);
+            setOwnErrors([]);
+            clearRefusal(BINDING_CHANGE_ID);
+          }}
+        />
+
+        <SynonymFields
+          rows={synonyms}
+          addText={addText}
+          rowErrors={synonymRowErrors}
+          addError={addError}
+          onRowsChange={(next) => {
+            setSynonyms(next);
+            setOwnErrors([]);
+            clearRefusalsWhere((id) => id.startsWith("synonym:"));
+          }}
+          onAddTextChange={(text) => {
+            setAddText(text);
+            setOwnErrors([]);
+            clearRefusal(ADD_CHANGE_ID);
+          }}
+        />
 
         <h3>Registry properties</h3>
         {definitions.isPending && <p>Loading registry properties…</p>}

@@ -815,6 +815,32 @@ export function useConceptLookup(code: string) {
 }
 
 /**
+ * The SNOMED CT code picker's search (FR-26): active concepts under
+ * `71388002 |Procedure|` that match a term, or a code typed in full.
+ *
+ * The scope is fixed on the server, so this hook has no way to widen it. A
+ * typed code that is not a procedure comes back empty, which is how the
+ * picker refuses it even though `useConceptLookup` would accept the code. The
+ * caller debounces keystrokes; `retry` stays off so a 503 or 502 shows as the
+ * server's own sentence.
+ */
+export function useProcedureSearch(q: string) {
+  const client = useApiClient();
+  return useQuery({
+    queryKey: ["api", "/api/v1/terminology/procedures", q],
+    queryFn: async ({ signal }) =>
+      unwrap(
+        await client.GET("/api/v1/terminology/procedures", {
+          params: { query: { q } },
+          signal,
+        }),
+      ),
+    enabled: q.length > 0,
+    staleTime: 5 * 60 * 1000,
+  });
+}
+
+/**
  * Bind a SNOMED CT code to an entry (FR-08, FR-26, FR-82; issue #150).
  *
  * `fsn`/`au_preferred_term` in the body come from `useConceptLookup`'s
