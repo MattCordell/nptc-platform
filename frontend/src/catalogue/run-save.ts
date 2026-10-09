@@ -162,3 +162,32 @@ export async function runSave(
 
   return { outcomes, rowVersion, stopped: stoppedBy !== null };
 }
+
+/**
+ * One announcement for the whole run, built from the same outcomes the
+ * on-screen summary lists, so the spoken and written accounts cannot differ.
+ */
+export function describeRun(run: SaveRun): string {
+  const saved = run.outcomes.filter((outcome) => outcome.status === "saved");
+  const notSaved = run.outcomes.filter((outcome) => outcome.status !== "saved");
+  const parts: string[] = [];
+  if (saved.length > 0) {
+    parts.push(`Saved: ${saved.map((outcome) => outcome.change.label).join(", ")}.`);
+  }
+  if (notSaved.length > 0) {
+    parts.push(
+      `Not saved: ${notSaved
+        .map((outcome) => `${outcome.change.label}. ${outcome.message}`)
+        .join(" ")}`,
+    );
+  }
+  const warnings = saved.reduce(
+    (count, outcome) =>
+      count + (outcome.status === "saved" ? outcome.warnings.length : 0),
+    0,
+  );
+  if (warnings > 0) {
+    parts.push(`${warnings} ${warnings === 1 ? "warning" : "warnings"} to review.`);
+  }
+  return parts.join(" ");
+}

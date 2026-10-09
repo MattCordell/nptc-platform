@@ -14,7 +14,11 @@
  * it is still rejected server-side.
  */
 
-import { PYTHON_SPACE_CHARS, PYTHON_SPACE_CLASS, normaliseForComparison } from "./python-text.ts";
+import {
+  PYTHON_SPACE_CHARS,
+  PYTHON_SPACE_CLASS,
+  normaliseForComparison,
+} from "./python-text.ts";
 
 //: Mirrors `MINIMUM_NOTE_LENGTH` in `changelog.py`.
 export const MINIMUM_NOTE_LENGTH = 10;

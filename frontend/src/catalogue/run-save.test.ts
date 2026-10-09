@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 
 import { ApiError } from "../api/unwrap.ts";
-import { endsRun, failureMessage, runSave } from "./run-save.ts";
+import { describeRun, endsRun, failureMessage, runSave } from "./run-save.ts";
 import type { FieldChange, SendChange } from "./run-save.ts";
 
 /**
@@ -104,7 +104,9 @@ describe("runSave", () => {
       "refused",
       "saved",
     ]);
-    expect(run.outcomes[1]).toMatchObject({ message: "XX is not an allowed Discipline." });
+    expect(run.outcomes[1]).toMatchObject({
+      message: "XX is not an allowed Discipline.",
+    });
     // The refusal changed nothing, so the next request carries the version after the first save.
     expect(send.mock.calls[2][1]).toBe(4);
     expect(run.rowVersion).toBe(5);
@@ -157,7 +159,9 @@ describe("runSave", () => {
       "not-sent",
     ]);
     expect(run.outcomes[2]).toMatchObject({
-      message: expect.stringContaining("This entry changed after you opened it.") as string,
+      message: expect.stringContaining(
+        "This entry changed after you opened it.",
+      ) as string,
     });
     expect(run.stopped).toBe(true);
   });
@@ -202,9 +206,9 @@ describe("failureMessage", () => {
   });
 
   it("prefers the server's own sentence", () => {
-    expect(failureMessage(new ApiError(403, { detail: "Multi-factor sign-in needed." }))).toBe(
-      "Multi-factor sign-in needed.",
-    );
+    expect(
+      failureMessage(new ApiError(403, { detail: "Multi-factor sign-in needed." })),
+    ).toBe("Multi-factor sign-in needed.");
   });
 
   it("does not render a FastAPI validation array as text", () => {
@@ -222,5 +226,28 @@ describe("endsRun", () => {
 
   it("ends the run for a 409 that is a version conflict", () => {
     expect(endsRun(versionConflict)).toBe(true);
+  });
+});
+
+describe("describeRun", () => {
+  it("names what saved, what did not and why, and counts warnings", async () => {
+    const run = await runSave(
+      [TERM, DISCIPLINE],
+      async (change, version) => {
+        if (change.kind === "property") {
+          throw propertyRefusal;
+        }
+        return {
+          rowVersion: version + 1,
+          warnings: [{ kind: "length" as const, length: 80, max_length: 60 }],
+        };
+      },
+      3,
+    );
+
+    expect(describeRun(run)).toBe(
+      "Saved: RCPA Preferred. Not saved: Discipline. XX is not an allowed Discipline. " +
+        "1 warning to review.",
+    );
   });
 });

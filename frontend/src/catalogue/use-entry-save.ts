@@ -62,14 +62,17 @@ export function useEntrySave(businessKey: string) {
             };
           }
           const result = unwrap(
-            await client.PUT("/api/v1/catalogue/entries/{business_key}/properties/{key}", {
-              params: { path: { business_key: businessKey, key: change.key } },
-              body: {
-                values: change.values,
-                reason: note,
-                expected_row_version: version,
+            await client.PUT(
+              "/api/v1/catalogue/entries/{business_key}/properties/{key}",
+              {
+                params: { path: { business_key: businessKey, key: change.key } },
+                body: {
+                  values: change.values,
+                  reason: note,
+                  expected_row_version: version,
+                },
               },
-            }),
+            ),
           );
           return { rowVersion: result.row_version };
         },
