@@ -24,6 +24,8 @@ const AMEND_PATH = `/catalogue/entries/${BUSINESS_KEY}/designations/amendment`;
 const RETIRE_PATH = `/catalogue/entries/${BUSINESS_KEY}/designations/retirement`;
 const ADD_PATH = `/catalogue/entries/${BUSINESS_KEY}/designations`;
 const BIND_PATH = `/catalogue/entries/${BUSINESS_KEY}/bindings`;
+const REINSTATE_PATH = `/catalogue/entries/${BUSINESS_KEY}/designations/reinstatement`;
+const ACK_PATH = `/catalogue/entries/${BUSINESS_KEY}/designations/acknowledgement`;
 const USAGE_PATH = `/catalogue/entries/${BUSINESS_KEY}/properties/usage_guidance`;
 
 // The PRD's FR-83 regression fixture: a double-parenthesis FSN a careless
@@ -760,6 +762,251 @@ describe("one run across the form (FR-36, FR-38)", () => {
     await user.click(form().getByRole("button", { name: "Remove FBC" }));
 
     await waitFor(() => expect(form().getByText(FSN)).toBeInTheDocument());
+    await expectNoA11yViolations(container);
+  });
+});
+
+function inDialog() {
+  return within(screen.getByRole("dialog"));
+}
+
+const COLLISION_WARNING = {
+  kind: "collision",
+  severity: "warning",
+  term: "Zovirax",
+  business_key: "NPTC-000900",
+  preferred_term: "Aciclovir",
+};
+
+describe("reinstating a retired synonym (FR-04)", () => {
+  it("lists a retired synonym with a Reinstate button, and not as a text box", async () => {
+    stubApi([entryRoute(), PROPERTIES_OK]);
+    await renderLoaded();
+
+    expect(form().getByRole("heading", { name: "Retired synonyms" })).toBeVisible();
+    expect(form().getByText("Old note")).toBeVisible();
+    expect(form().getByRole("button", { name: "Reinstate Old note" })).toBeVisible();
+  });
+
+  it("posts the term with its reason and the entry's row version, then announces it", async () => {
+    const calls = stubApi([
+      entryRoute(),
+      PROPERTIES_OK,
+      {
+        method: "POST",
+        path: REINSTATE_PATH,
+        status: 200,
+        body: {
+          designation: { term: "Old note", status: "active", length: 8 },
+          warnings: [],
+          row_version: 5,
+        },
+      },
+    ]);
+    const user = userEvent.setup();
+    await renderLoaded();
+
+    await user.click(form().getByRole("button", { name: "Reinstate Old note" }));
+    await user.type(inDialog().getByLabelText("Changelog note"), "Still in use");
+    await user.click(inDialog().getByRole("button", { name: "Reinstate term" }));
+
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+    expect(bodyOf(calls, REINSTATE_PATH)).toEqual({
+      term: "Old note",
+      reason: "Still in use",
+      expected_row_version: 4,
+    });
+    expect(
+      screen
+        .getAllByRole("status")
+        .some((region) => /Term reinstated/.test(region.textContent ?? "")),
+    ).toBe(true);
+  });
+
+  it("refuses without a changelog note, and sends nothing", async () => {
+    const calls = stubApi([entryRoute(), PROPERTIES_OK]);
+    const user = userEvent.setup();
+    await renderLoaded();
+
+    await user.click(form().getByRole("button", { name: "Reinstate Old note" }));
+    await user.click(inDialog().getByRole("button", { name: "Reinstate term" }));
+
+    expect(
+      inDialog().getAllByText(/A changelog note is required\./).length,
+    ).toBeGreaterThan(0);
+    expect(writes(calls)).toHaveLength(0);
+  });
+
+  it("shows the server's own sentence when it refuses, and keeps the dialog open", async () => {
+    stubApi([
+      entryRoute(),
+      PROPERTIES_OK,
+      {
+        method: "POST",
+        path: REINSTATE_PATH,
+        status: 409,
+        body: { detail: "An active synonym with this term already exists." },
+      },
+    ]);
+    const user = userEvent.setup();
+    await renderLoaded();
+
+    await user.click(form().getByRole("button", { name: "Reinstate Old note" }));
+    await user.type(inDialog().getByLabelText("Changelog note"), "Still in use");
+    await user.click(inDialog().getByRole("button", { name: "Reinstate term" }));
+
+    expect(
+      await inDialog().findByText("An active synonym with this term already exists."),
+    ).toBeVisible();
+  });
+});
+
+describe("acknowledging a duplicate (FR-05)", () => {
+  async function addZovirax(user: User) {
+    await user.click(form().getByLabelText("Add synonyms"));
+    await user.paste("Zovirax");
+    await fillNote(user, "Add a trade name");
+    await save(user);
+    await screen.findByRole("region", { name: "Changes saved" });
+  }
+
+  it("posts the term with its reason, then stops listing the warning", async () => {
+    const calls = stubApi([
+      entryRoute(),
+      PROPERTIES_OK,
+      addOk(5, [COLLISION_WARNING]),
+      {
+        method: "POST",
+        path: ACK_PATH,
+        status: 201,
+        body: { term: "Zovirax", created: true },
+      },
+    ]);
+    const user = userEvent.setup();
+    await renderLoaded();
+    await addZovirax(user);
+
+    await user.click(screen.getByRole("button", { name: "Acknowledge Zovirax" }));
+    await user.type(inDialog().getByLabelText("Changelog note"), "Two entries share it");
+    await user.click(inDialog().getByRole("button", { name: "Acknowledge" }));
+
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+    expect(bodyOf(calls, ACK_PATH)).toEqual({
+      term: "Zovirax",
+      reason: "Two entries share it",
+    });
+    expect(
+      screen.queryByRole("button", { name: "Acknowledge Zovirax" }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("refuses without a changelog note, and sends nothing to acknowledge", async () => {
+    const calls = stubApi([entryRoute(), PROPERTIES_OK, addOk(5, [COLLISION_WARNING])]);
+    const user = userEvent.setup();
+    await renderLoaded();
+    await addZovirax(user);
+
+    await user.click(screen.getByRole("button", { name: "Acknowledge Zovirax" }));
+    await user.click(inDialog().getByRole("button", { name: "Acknowledge" }));
+
+    expect(
+      inDialog().getAllByText(/A changelog note is required\./).length,
+    ).toBeGreaterThan(0);
+    expect(calls.some((call) => call.path.endsWith(ACK_PATH))).toBe(false);
+  });
+});
+
+describe("retiring the code with no replacement (FR-08)", () => {
+  const RETIRE_CODE_PATH = `${BIND_PATH}/${OLD_CODE}/retirement`;
+  const RETIRE_BUTTON = `Retire ${OLD_CODE} without a replacement`;
+
+  it("posts the reason and the row version, addressed by the active code", async () => {
+    const calls = stubApi([
+      entryRoute(ENTRY_WITH_CODE),
+      PROPERTIES_OK,
+      {
+        method: "POST",
+        path: RETIRE_CODE_PATH,
+        status: 200,
+        body: {
+          binding: { ...ACTIVE_BINDING, status: "retired" },
+          row_version: 5,
+        },
+      },
+    ]);
+    const user = userEvent.setup();
+    await renderLoaded();
+
+    await user.click(form().getByRole("button", { name: RETIRE_BUTTON }));
+    await user.type(inDialog().getByLabelText("Changelog note"), "No longer a procedure");
+    await user.click(inDialog().getByRole("button", { name: "Retire code" }));
+
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+    expect(bodyOf(calls, RETIRE_CODE_PATH)).toEqual({
+      reason: "No longer a procedure",
+      expected_row_version: 4,
+    });
+  });
+
+  it("offers no retire button when the entry has no active code", async () => {
+    stubApi([entryRoute(), PROPERTIES_OK]);
+    await renderLoaded();
+
+    expect(
+      form().queryByRole("button", { name: /without a replacement/ }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("refuses without a changelog note, and sends nothing", async () => {
+    const calls = stubApi([entryRoute(ENTRY_WITH_CODE), PROPERTIES_OK]);
+    const user = userEvent.setup();
+    await renderLoaded();
+
+    await user.click(form().getByRole("button", { name: RETIRE_BUTTON }));
+    await user.click(inDialog().getByRole("button", { name: "Retire code" }));
+
+    expect(
+      inDialog().getAllByText(/A changelog note is required\./).length,
+    ).toBeGreaterThan(0);
+    expect(writes(calls)).toHaveLength(0);
+  });
+
+  it("uses the row version the form's own save returned while the entry is still reloading", async () => {
+    const calls = stubApi([
+      entryRoute(ENTRY_WITH_CODE),
+      PROPERTIES_OK,
+      addOk(5),
+      {
+        method: "POST",
+        path: RETIRE_CODE_PATH,
+        status: 200,
+        body: { binding: { ...ACTIVE_BINDING, status: "retired" }, row_version: 6 },
+      },
+    ]);
+    const user = userEvent.setup();
+    await renderLoaded();
+    await user.click(form().getByLabelText("Add synonyms"));
+    await user.paste("Zovirax");
+    await fillNote(user, "Add a trade name");
+    await save(user);
+    await screen.findByRole("region", { name: "Changes saved" });
+
+    await user.click(form().getByRole("button", { name: RETIRE_BUTTON }));
+    await user.type(inDialog().getByLabelText("Changelog note"), "No longer a procedure");
+    await user.click(inDialog().getByRole("button", { name: "Retire code" }));
+
+    await waitFor(() =>
+      expect(bodyOf(calls, RETIRE_CODE_PATH)).toMatchObject({ expected_row_version: 5 }),
+    );
+  });
+
+  it("has no accessibility violations with the dialog open", async () => {
+    stubApi([entryRoute(ENTRY_WITH_CODE), PROPERTIES_OK]);
+    const user = userEvent.setup();
+    const { container } = await renderLoaded();
+
+    await user.click(form().getByRole("button", { name: RETIRE_BUTTON }));
+
     await expectNoA11yViolations(container);
   });
 });

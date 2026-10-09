@@ -86,12 +86,14 @@ export function CodeField({
   error,
   onPick,
   onClear,
+  onRetire,
 }: {
   bindings: Binding[];
   selection: CodeSelection;
   error?: string;
   onPick: (code: string) => void;
   onClear: () => void;
+  onRetire: (code: string) => void;
 }) {
   const active = bindings.find((binding) => binding.status === "active") ?? null;
 
@@ -111,6 +113,18 @@ export function CodeField({
           <dt className="text-[var(--color-text-muted)]">AU preferred term</dt>
           <dd className="m-0">{active.au_preferred_term ?? "not reported"}</dd>
         </dl>
+      )}
+      {active !== null && (
+        <div>
+          <Button
+            type="button"
+            variant="danger"
+            aria-label={`Retire ${active.code} without a replacement`}
+            onClick={() => onRetire(active.code)}
+          >
+            Retire without a replacement
+          </Button>
+        </div>
       )}
 
       <ProcedurePicker

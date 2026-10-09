@@ -15,6 +15,7 @@ import { useAnnounce } from "../components/use-announce.ts";
 import { ChangelogNoteField, useChangelogNote } from "./changelog-note-field.tsx";
 import { CODE_FIELD_ID, CodeField } from "./code-field.tsx";
 import { RefusalNotice } from "./collision-notice.tsx";
+import type { CollisionWarning, DesignationWarning } from "./collision-notice.tsx";
 import { formatPropertyValue } from "./format-property-value.ts";
 import { propertyValidationFieldErrors } from "./property-form-errors.ts";
 import { normaliseForComparison } from "./python-text.ts";
@@ -28,7 +29,12 @@ import {
 import type { PropertyValueSlot } from "./property-controls/index.ts";
 import { describeRun } from "./run-save.ts";
 import type { FieldChange, SaveRun } from "./run-save.ts";
-import { SaveSummary } from "./save-summary.tsx";
+import {
+  AcknowledgeCollisionDialog,
+  ReinstateSynonymDialog,
+  RetireBindingDialog,
+} from "./row-action-dialogs.tsx";
+import { SaveSummary, WarningList } from "./save-summary.tsx";
 import { statusLabelFor, statusToneFor } from "./status-options.ts";
 import { SynonymFields } from "./synonym-fields.tsx";
 import {
@@ -92,6 +98,12 @@ interface PropertyRow {
   editable: boolean;
 }
 
+/** The row action whose dialog is open. */
+type RowDialog =
+  | { kind: "reinstate"; term: string }
+  | { kind: "retire-binding"; code: string }
+  | { kind: "acknowledge"; warning: CollisionWarning };
+
 interface Baseline {
   term: string;
   values: Record<string, ValueItem[]>;
@@ -137,6 +149,12 @@ function buildRows(
 
 function activeCodeOf(entry: EntryDetail): string | null {
   return entry.bindings.find((binding) => binding.status === "active")?.code ?? null;
+}
+
+function retiredSynonyms(entry: EntryDetail): string[] {
+  return entry.designations
+    .filter((designation) => designation.status !== "active")
+    .map((designation) => designation.term);
 }
 
 function toItem(value: PropertyValue): ValueItem {
@@ -202,6 +220,9 @@ export function EntryEditForm({ entry }: { entry: EntryDetail }) {
   );
   const [addText, setAddText] = useState("");
   const [pickedCode, setPickedCode] = useState<string | null>(null);
+  const [dialog, setDialog] = useState<RowDialog | null>(null);
+  const [dialogWarnings, setDialogWarnings] = useState<DesignationWarning[]>([]);
+  const [acknowledged, setAcknowledged] = useState<ReadonlySet<string>>(new Set());
   const [seenEntry, setSeenEntry] = useState(entry);
   if (entry !== seenEntry) {
     // The entry was refetched: after this form's own save, or after a version
@@ -251,6 +272,13 @@ export function EntryEditForm({ entry }: { entry: EntryDetail }) {
   const entrySave = useEntrySave(entry.business_key);
   const selection = useCodeSelection(pickedCode);
   const activeCode = activeCodeOf(entry);
+  // The entry is refetched after every run, but not before an editor can press
+  // Save again, or open a row action. A run's own last version, and the term it
+  // stored, are newer than the entry until that refetch lands, and sending the
+  // older ones would make a write conflict with the editor's own previous one
+  // (FR-38).
+  const runIsNewer = run !== null && run.rowVersion > entry.row_version;
+  const rowVersion = runIsNewer ? run.rowVersion : entry.row_version;
 
   useEffect(() => {
     if (focusSummary > 0) {
@@ -475,12 +503,6 @@ export function EntryEditForm({ entry }: { entry: EntryDetail }) {
       return { ok: false };
     }
     const sent = changed;
-    // The entry is refetched after every run, but not before an editor can press
-    // Save again. A run's own last version, and the term it stored, are newer
-    // than the entry until that refetch lands, and sending the older ones would
-    // make a save conflict with the editor's own previous save.
-    const runIsNewer = run !== null && run.rowVersion > entry.row_version;
-    const rowVersion = runIsNewer ? run.rowVersion : entry.row_version;
     const storedTerm = runIsNewer ? baseline.term : entry.preferred_term;
     try {
       const result = await entrySave.save({
@@ -615,10 +637,13 @@ export function EntryEditForm({ entry }: { entry: EntryDetail }) {
             setOwnErrors([]);
             clearRefusal(BINDING_CHANGE_ID);
           }}
+          onRetire={(code) => setDialog({ kind: "retire-binding", code })}
         />
 
         <SynonymFields
           rows={synonyms}
+          retiredTerms={retiredSynonyms(entry)}
+          onReinstate={(term) => setDialog({ kind: "reinstate", term })}
           addText={addText}
           rowErrors={synonymRowErrors}
           addError={addError}
@@ -690,7 +715,72 @@ export function EntryEditForm({ entry }: { entry: EntryDetail }) {
         <ChangelogNoteField id={NOTE_FIELD_ID} changelogNote={changelogNote} />
       </Form>
 
-      {run !== null && <SaveSummary run={run} headingRef={summaryHeading} />}
+      {run !== null && (
+        <SaveSummary
+          run={run}
+          headingRef={summaryHeading}
+          acknowledged={acknowledged}
+          onAcknowledge={(warning) => setDialog({ kind: "acknowledge", warning })}
+        />
+      )}
+
+      {dialogWarnings.length > 0 && (
+        <section aria-labelledby="reinstated-warnings-heading">
+          <h2 id="reinstated-warnings-heading">After reinstating a term</h2>
+          <WarningList
+            warnings={dialogWarnings}
+            acknowledged={acknowledged}
+            onAcknowledge={(warning) => setDialog({ kind: "acknowledge", warning })}
+          />
+        </section>
+      )}
+
+      {dialog?.kind === "reinstate" && (
+        <ReinstateSynonymDialog
+          key={dialog.term}
+          businessKey={entry.business_key}
+          rowVersion={rowVersion}
+          term={dialog.term}
+          onClose={() => setDialog(null)}
+          onSaved={(warnings) => {
+            setDialogWarnings(warnings);
+            setDialog(null);
+            announce(
+              `Term reinstated.${
+                warnings.length > 0
+                  ? ` ${warnings.length} ${warnings.length === 1 ? "warning" : "warnings"} to review.`
+                  : ""
+              }`,
+            );
+          }}
+        />
+      )}
+      {dialog?.kind === "retire-binding" && (
+        <RetireBindingDialog
+          key={dialog.code}
+          businessKey={entry.business_key}
+          rowVersion={rowVersion}
+          code={dialog.code}
+          onClose={() => setDialog(null)}
+          onSaved={() => {
+            setDialog(null);
+            announce("Code retired.");
+          }}
+        />
+      )}
+      {dialog?.kind === "acknowledge" && (
+        <AcknowledgeCollisionDialog
+          key={dialog.warning.term}
+          businessKey={entry.business_key}
+          warning={dialog.warning}
+          onClose={() => setDialog(null)}
+          onSaved={(acknowledgedTerm) => {
+            setAcknowledged((current) => new Set([...current, acknowledgedTerm]));
+            setDialog(null);
+            announce("Duplicate acknowledged. It will not be reported again.");
+          }}
+        />
+      )}
     </section>
   );
 }

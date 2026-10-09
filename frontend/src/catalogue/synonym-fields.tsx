@@ -16,19 +16,24 @@ import type { SynonymRow } from "./synonym-state.ts";
 
 export function SynonymFields({
   rows,
+  retiredTerms,
   addText,
   rowErrors,
   addError,
   onRowsChange,
   onAddTextChange,
+  onReinstate,
 }: {
   rows: SynonymRow[];
+  /** Synonyms the entry holds as retired. Each can be reinstated. */
+  retiredTerms: string[];
   addText: string;
   /** The reason a row's change was refused or is invalid, by row id. */
   rowErrors: Record<string, string>;
   addError: string | undefined;
   onRowsChange: (next: SynonymRow[]) => void;
   onAddTextChange: (text: string) => void;
+  onReinstate: (term: string) => void;
 }) {
   const terms = addedTerms(addText);
 
@@ -89,6 +94,27 @@ export function SynonymFields({
             </Button>
           </div>
         ),
+      )}
+
+      {retiredTerms.length > 0 && (
+        <div>
+          <h4>Retired synonyms</h4>
+          <ul className="m-0 flex list-none flex-col gap-2 p-0">
+            {retiredTerms.map((term) => (
+              <li key={term} className="flex flex-wrap items-center gap-3">
+                <span>{term}</span>
+                <Button
+                  type="button"
+                  variant="secondary"
+                  aria-label={`Reinstate ${term}`}
+                  onClick={() => onReinstate(term)}
+                >
+                  Reinstate
+                </Button>
+              </li>
+            ))}
+          </ul>
+        </div>
       )}
 
       <Field
