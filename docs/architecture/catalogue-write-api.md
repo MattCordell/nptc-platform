@@ -115,7 +115,7 @@ second read per row.
 
 **`fsn` is tolerant on admin rows.** The public list builds `fsn` with FR-83's strict
 renderer, so one stored FSN with no trailing semantic tag 500s the whole page. The admin
-rows use `tolerant_entry_summary_fields`, which returns `fsn: null` for that entry and still
+rows call `entry_summary_fields(tolerant_fsn=True)`, which returns `fsn: null` for that entry and still
 lists it, because the admin screen is where the entry gets repaired. `fsn: null` with a
 `code` set therefore means "stored FSN cannot be stripped"; `fsn: null` with `code: null`
 means "no active code". The two are told apart by `code`, not by a new flag.

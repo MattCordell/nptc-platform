@@ -16,8 +16,8 @@ invite a future reader to inline them.
 served as stored (FR-82), and `Binding.label_provenance` declares that fact. `EntrySummary.fsn`
 is the entry's active binding's FSN with its semantic tag removed by FR-83's sanctioned
 renderer, `nptc.exports.semantic_tag.render_display_term`, and its `label_provenance`
-declares that. The renderer is called from `entry_summary_fields`, its admin variant
-`tolerant_entry_summary_fields`, and the export surface, nowhere else. `EntryDetail` carries neither `fsn` nor `specimens`: a stored FSN the renderer
+declares that. The renderer is called from `entry_summary_fields` and the export surface,
+nowhere else. `EntryDetail` carries neither `fsn` nor `specimens`: a stored FSN the renderer
 refuses fails a list page, and must not also stop an entry opening where it can be repaired.
 
 **One live terminology call, and only on a detail read (FR-54).** `EntryDetail.snomed_synonyms`
@@ -102,7 +102,6 @@ __all__ = [
     "property_value_from_row",
     "snomed_synonyms_for",
     "summary_from_entry",
-    "tolerant_entry_summary_fields",
 ]
 
 #: Shared by every route addressing an entry by its public identifier. A
@@ -654,51 +653,25 @@ def entry_summary_fields(
     status: str,
     updated_at: datetime,
     facts: queries.RowFacts,
+    *,
+    tolerant_fsn: bool = False,
 ) -> dict[str, Any]:
     """Raises `NotAServedFSNError` or `EmptyDisplayTermError` for a stored FSN FR-83 cannot
     strip. That is stored data written before the transform seeded served FSNs (a workbook label
     has no tag), so it fails the request loudly (a 500 with a logged error) rather than show a
-    value that may already have been stripped."""
-    return _summary_fields(
-        business_key,
-        preferred_term,
-        length,
-        status,
-        updated_at,
-        facts,
-        fsn=render_display_term(facts.fsn) if facts.fsn is not None else None,
-    )
+    value that may already have been stripped.
 
-
-def tolerant_entry_summary_fields(
-    business_key: str,
-    preferred_term: str,
-    length: int,
-    status: str,
-    updated_at: datetime,
-    facts: queries.RowFacts,
-) -> dict[str, Any]:
-    """`entry_summary_fields` for the admin list and search, which serve the screen that
-    repairs a bad stored FSN. A stored FSN FR-83 cannot strip becomes `fsn: None` instead of
-    raising, so the entry stays listed. `code` is still set on such a row, which tells it
-    apart from an entry with no active code (`code` and `fsn` both `None`)."""
-    try:
-        fsn = render_display_term(facts.fsn) if facts.fsn is not None else None
-    except NotAServedFSNError, EmptyDisplayTermError:
-        fsn = None
-    return _summary_fields(business_key, preferred_term, length, status, updated_at, facts, fsn=fsn)
-
-
-def _summary_fields(
-    business_key: str,
-    preferred_term: str,
-    length: int,
-    status: str,
-    updated_at: datetime,
-    facts: queries.RowFacts,
-    *,
-    fsn: str | None,
-) -> dict[str, Any]:
+    `tolerant_fsn` is for the admin list and search, which serve the screen that repairs such an
+    entry: the FSN becomes `None` and the row stays listed. `code` is still set on that row,
+    which tells it apart from an entry with no active code (`code` and `fsn` both `None`). This
+    is the only call to the renderer in this module (see `test_catalogue_bindings.py`)."""
+    fsn: str | None = None
+    if facts.fsn is not None:
+        try:
+            fsn = render_display_term(facts.fsn)
+        except NotAServedFSNError, EmptyDisplayTermError:
+            if not tolerant_fsn:
+                raise
     return {
         **entry_core_fields(business_key, preferred_term, length, status, updated_at, facts),
         "fsn": fsn,

@@ -198,6 +198,7 @@ class ProcedureMatch(BaseModel):
 
     code: str
     au_preferred_term: str | None
+    label_provenance: dict[str, LabelProvenance]
 
 
 class ProcedureSearchPage(BaseModel):
@@ -210,7 +211,6 @@ class ProcedureSearchPage(BaseModel):
 
     items: list[ProcedureMatch]
     total: int
-    label_provenance: dict[str, LabelProvenance]
 
 
 @router.get(
@@ -243,9 +243,12 @@ def search_procedure_concepts(
     found = search_procedures(client, q, count=count)
     return ProcedureSearchPage(
         items=[
-            ProcedureMatch(code=item.code, au_preferred_term=item.au_preferred_term)
+            ProcedureMatch(
+                code=item.code,
+                au_preferred_term=item.au_preferred_term,
+                label_provenance={"au_preferred_term": AU_PREFERRED_TERM_PROVENANCE},
+            )
             for item in found.items
         ],
         total=found.total,
-        label_provenance={"au_preferred_term": AU_PREFERRED_TERM_PROVENANCE},
     )

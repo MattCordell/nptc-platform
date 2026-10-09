@@ -107,12 +107,20 @@ def test_search_by_term_offers_only_active_descendants_of_procedure(api: ApiTest
 
     assert response.status_code == 200, response.text
     body = response.json()
-    assert body["items"] == [{"code": _MICROSCOPY, "au_preferred_term": _AU_PREFERRED_TERM}]
+    assert body["items"] == [
+        {
+            "code": _MICROSCOPY,
+            "au_preferred_term": _AU_PREFERRED_TERM,
+            "label_provenance": {
+                "au_preferred_term": {
+                    "designation": "au_preferred_term",
+                    "semantic_tag": "not_applicable",
+                }
+            },
+        }
+    ]
     assert body["total"] == 1
     assert f'"code":"{_MICROSCOPY}"' in response.text.replace(" ", "")
-    assert body["label_provenance"] == {
-        "au_preferred_term": {"designation": "au_preferred_term", "semantic_tag": "not_applicable"}
-    }
 
 
 @pytest.mark.req("FR-26")

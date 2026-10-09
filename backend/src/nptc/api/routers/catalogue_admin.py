@@ -61,10 +61,10 @@ from nptc.api.routers.catalogue_shared import (
     binding_from_row,
     designation_from_row,
     entry_core_fields,
+    entry_summary_fields,
     filter_parameter,
     property_value_from_row,
     snomed_synonyms_for,
-    tolerant_entry_summary_fields,
 )
 from nptc.auth.permissions import Permission
 from nptc.catalogue import maintenance, queries, search
@@ -168,7 +168,7 @@ _EDIT = Depends(permission_dep(Permission.CATALOGUE_EDIT_PUBLISHED))
 class AdminEntrySummary(EntrySummary):
     """`EntrySummary` plus FR-38's optimistic-locking token. Its `fsn` is tolerant: a stored
     FSN FR-83 cannot strip fails the public list, but must not also hide an entry from the
-    screen that repairs it (`tolerant_entry_summary_fields`).
+    screen that repairs it (`entry_summary_fields(tolerant_fsn=True)`).
 
     Defined here, not in `catalogue_shared.py`: that module is imported by
     the public router, and a field the public surface must never carry
@@ -244,13 +244,14 @@ def _admin_summary_from_row(
     """The admin counterpart of `summary_from_entry`, over a `maintenance.ListingRow`
     because the listing statement selects explicit columns, not a mapped entity."""
     return AdminEntrySummary(
-        **tolerant_entry_summary_fields(
+        **entry_summary_fields(
             row.business_key,
             row.preferred_term,
             preferred_term_length(row.preferred_term),
             row.status,
             row.updated_at,
             facts,
+            tolerant_fsn=True,
         ),
         row_version=row.row_version,
     )
@@ -408,13 +409,14 @@ def search_any_status(
     return AdminSearchPage(
         items=[
             AdminSearchHit(
-                **tolerant_entry_summary_fields(
+                **entry_summary_fields(
                     hit.business_key,
                     hit.preferred_term,
                     preferred_term_length(hit.preferred_term),
                     hit.status,
                     hit.updated_at,
                     facts[hit.business_key],
+                    tolerant_fsn=True,
                 ),
                 row_version=hit.row_version,
                 score=hit.score,

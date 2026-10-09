@@ -890,7 +890,7 @@ export interface components {
          * AdminEntrySummary
          * @description `EntrySummary` plus FR-38's optimistic-locking token. Its `fsn` is tolerant: a stored
          *     FSN FR-83 cannot strip fails the public list, but must not also hide an entry from the
-         *     screen that repairs it (`tolerant_entry_summary_fields`).
+         *     screen that repairs it (`entry_summary_fields(tolerant_fsn=True)`).
          *
          *     Defined here, not in `catalogue_shared.py`: that module is imported by
          *     the public router, and a field the public surface must never carry
@@ -2062,6 +2062,10 @@ export interface components {
             code: string;
             /** Au Preferred Term */
             au_preferred_term: string | null;
+            /** Label Provenance */
+            label_provenance: {
+                [key: string]: components["schemas"]["LabelProvenance"];
+            };
         };
         /**
          * ProcedureSearchPage
@@ -2075,10 +2079,6 @@ export interface components {
             items: components["schemas"]["ProcedureMatch"][];
             /** Total */
             total: number;
-            /** Label Provenance */
-            label_provenance: {
-                [key: string]: components["schemas"]["LabelProvenance"];
-            };
         };
         /**
          * PropertyCardinality

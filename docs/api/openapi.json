@@ -5021,7 +5021,7 @@
           "row_version"
         ],
         "title": "AdminEntrySummary",
-        "description": "`EntrySummary` plus FR-38's optimistic-locking token. Its `fsn` is tolerant: a stored\nFSN FR-83 cannot strip fails the public list, but must not also hide an entry from the\nscreen that repairs it (`tolerant_entry_summary_fields`).\n\nDefined here, not in `catalogue_shared.py`: that module is imported by\nthe public router, and a field the public surface must never carry\n(`EntryDetail`'s own docstring explains why `EntrySummary` does not\ncarry it) has to live somewhere the public router cannot reach by\nconstruction, not merely by convention. `test_api_public_response_\nhygiene.py` asserts the public listing/search routes still omit it.\n\nThe bulk reclassify route (FR-39) locks on `(business_key,\nexpected_row_version)`; this is what lets a row carry a `row_version`\ninstead of re-reading the entry once opened."
+        "description": "`EntrySummary` plus FR-38's optimistic-locking token. Its `fsn` is tolerant: a stored\nFSN FR-83 cannot strip fails the public list, but must not also hide an entry from the\nscreen that repairs it (`entry_summary_fields(tolerant_fsn=True)`).\n\nDefined here, not in `catalogue_shared.py`: that module is imported by\nthe public router, and a field the public surface must never carry\n(`EntryDetail`'s own docstring explains why `EntrySummary` does not\ncarry it) has to live somewhere the public router cannot reach by\nconstruction, not merely by convention. `test_api_public_response_\nhygiene.py` asserts the public listing/search routes still omit it.\n\nThe bulk reclassify route (FR-39) locks on `(business_key,\nexpected_row_version)`; this is what lets a row carry a `row_version`\ninstead of re-reading the entry once opened."
       },
       "AdminSearchHit": {
         "properties": {
@@ -6969,12 +6969,20 @@
               }
             ],
             "title": "Au Preferred Term"
+          },
+          "label_provenance": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/LabelProvenance"
+            },
+            "type": "object",
+            "title": "Label Provenance"
           }
         },
         "type": "object",
         "required": [
           "code",
-          "au_preferred_term"
+          "au_preferred_term",
+          "label_provenance"
         ],
         "title": "ProcedureMatch"
       },
@@ -6990,20 +6998,12 @@
           "total": {
             "type": "integer",
             "title": "Total"
-          },
-          "label_provenance": {
-            "additionalProperties": {
-              "$ref": "#/components/schemas/LabelProvenance"
-            },
-            "type": "object",
-            "title": "Label Provenance"
           }
         },
         "type": "object",
         "required": [
           "items",
-          "total",
-          "label_provenance"
+          "total"
         ],
         "title": "ProcedureSearchPage",
         "description": "The concepts under `71388002 |Procedure|` that match `q`, most relevant first as the\nterminology server orders them. `items` is empty when nothing matches: that is an answer,\nnot a failure. A server that cannot answer is a 503, never an empty page (FR-54).\n`total` counts every match, so it can exceed `len(items)`."
