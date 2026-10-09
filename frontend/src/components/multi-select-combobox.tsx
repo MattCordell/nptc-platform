@@ -147,7 +147,9 @@ export function MultiSelectCombobox({
                 </Combobox.Status>
                 <Combobox.Empty className="text-sm text-[var(--color-text-muted)]">
                   <p className="m-0 px-2 py-2">
-                    No {label.toLowerCase()} matches what you typed.
+                    {options.length === 0
+                      ? "No other values match this search."
+                      : `No ${label.toLowerCase()} matches what you typed.`}
                   </p>
                 </Combobox.Empty>
                 <Combobox.List>

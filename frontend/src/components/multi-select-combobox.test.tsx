@@ -88,6 +88,16 @@ describe("MultiSelectCombobox", () => {
     expect(screen.queryAllByRole("option")).toHaveLength(0);
   });
 
+  it("does not blame the typed text when there are no options at all", async () => {
+    const user = userEvent.setup();
+    render(<Harness options={[]} initial={["chem"]} />);
+
+    await user.click(screen.getByRole("combobox", { name: "Discipline" }));
+
+    expect(await screen.findByText("No other values match this search.")).toBeVisible();
+    expect(screen.queryByText(/matches what you typed/)).not.toBeInTheDocument();
+  });
+
   it("stays open after a pick, so several values come from one query", async () => {
     const user = userEvent.setup();
     const onToggle = vi.fn();

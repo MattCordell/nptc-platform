@@ -326,7 +326,7 @@ the value, the selection and the cursor, usually in the URL.
   pick so several values come from one query. A selected option carries a check mark as well
   as its fill (NFR-31). It holds no selection and draws no chips: the caller owns `selected`
   and is told each change through `onToggle`, and shows the selection with `FilterBar`'s chip
-  row, so a selection is removable from both. A selected value missing from `options` stays selected. At `maxSelected` it refuses a
+  row, so a selection is removable from both. A selected value missing from `options` stays selected, but the popup cannot list it, so the chip is then the only way to remove it. With no `options` at all the popup says "No other values match this search." instead of blaming the typed text. At `maxSelected` it refuses a
   further pick with a message inside the popup, because Base UI marks everything outside the
   popup inert while it is open, so a live region outside would not be read. For the same
   reason it names the input with `aria-label`, since the visible label is hidden from
