@@ -352,7 +352,6 @@ export function CatalogueSearchPage() {
         {/* Outside the `data` gate: removing a filter is the way out
             of a refused request, so it stays reachable on failure. */}
         <FilterBar
-          aria-label="Filters"
           activeFilters={chips}
           onRemove={handleChipRemove}
           onClearAll={handleClearAllFilters}

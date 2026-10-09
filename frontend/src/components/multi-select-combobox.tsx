@@ -137,13 +137,18 @@ export function MultiSelectCombobox({
               <Combobox.Popup className="max-h-72 w-[var(--anchor-width)] max-w-[var(--available-width)] overflow-y-auto rounded-[var(--radius-control)] border border-[var(--color-border)] bg-[var(--color-surface)] py-1">
                 {/* Inside the popup, because Base UI marks everything outside it
                     inert while it is open, and an inert live region is not read. */}
-                <Combobox.Status className="px-2 text-sm text-[var(--color-danger)]">
-                  {limitReached
-                    ? `You can choose at most ${maxSelected} ${label} values. Remove one to choose another.`
-                    : null}
+                <Combobox.Status className="text-sm text-[var(--color-danger)]">
+                  {limitReached ? (
+                    <p className="m-0 px-2 py-1">
+                      You can choose at most {maxSelected} {label} values. Remove one to
+                      choose another.
+                    </p>
+                  ) : null}
                 </Combobox.Status>
-                <Combobox.Empty className="px-2 py-2 text-sm text-[var(--color-text-muted)]">
-                  No {label.toLowerCase()} matches what you typed.
+                <Combobox.Empty className="text-sm text-[var(--color-text-muted)]">
+                  <p className="m-0 px-2 py-2">
+                    No {label.toLowerCase()} matches what you typed.
+                  </p>
                 </Combobox.Empty>
                 <Combobox.List>
                   {(option: MultiSelectOption) => (
