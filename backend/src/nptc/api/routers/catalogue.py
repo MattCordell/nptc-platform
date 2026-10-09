@@ -36,11 +36,10 @@ unquoted number of six or more digits appears in any body.
 
 from __future__ import annotations
 
-from datetime import datetime
 from typing import Annotated, Any, Final
 
 from fastapi import APIRouter, Depends, Query, Request
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict
 from sqlalchemy.orm import Session
 
 from nptc.api.dependencies import (
@@ -61,6 +60,8 @@ from nptc.api.routers.catalogue_shared import (
     EntryDetail,
     EntryPage,
     FilterRequest,
+    HistoryCursorQuery,
+    HistoryPage,
     LimitQuery,
     PropertyValue,
     SearchHit,
@@ -72,6 +73,7 @@ from nptc.api.routers.catalogue_shared import (
     entry_summary_fields,
     facet_models,
     filter_parameter,
+    history_page_from,
     property_value_from_row,
     summary_from_entry,
 )
@@ -157,29 +159,6 @@ PUBLIC_CODE_LOOKUP_ERROR_RESPONSES: Final[dict[int | str, dict[str, Any]]] = {
     422: _RESPONSE_422,
 }
 
-#: `/catalogue/entries/{business_key}/history` pages on the audit log's own
-#: `sequence` - a globally monotonic identity column, so a plain digit
-#: string makes a total order with no possible tie. Exclusive: the next
-#: page is every event *older* than this one (the endpoint serves most
-#: recent first).
-#:
-#: `max_length=19`: `AuditEvent.sequence` is a signed 64-bit `BigInteger` (max
-#: `9223372036854775807`, 19 digits), and bounding the digit count stops an
-#: arbitrarily long cursor reaching `int(before)` in `read_history`. A 19-digit
-#: string can still be out of range (`9999999999999999999`); `history.load_history`
-#: raises `MalformedHistoryCursorError` (422) for that.
-HistoryCursorQuery = Annotated[
-    str | None,
-    Query(
-        pattern=r"^[0-9]+$",
-        max_length=19,
-        description=(
-            "The `next_cursor` from the previous page. Pass it back unmodified, "
-            "and do not construct one."
-        ),
-    ),
-]
-
 #: Both collection routes accept filters and return facets, `/catalogue/search`
 #: always and `/catalogue/entries` when asked (ADR-0032).
 _FILTER_OPENAPI: Final[dict[str, Any]] = {"parameters": [filter_parameter("/catalogue/search")]}
@@ -218,41 +197,6 @@ class PropertyList(BaseModel):
     model_config = ConfigDict(frozen=True)
 
     items: list[PropertyValue]
-
-
-class HistoryEvent(BaseModel):
-    """One change to the entry or one of its designations, code bindings
-    or property values (FR-19).
-
-    Never the raw diff: `changed_fields` names what changed, not the
-    values themselves - a withheld field's name still appears (that a
-    field changed is not the secret), but no value from any audit event
-    is ever serialised here, changed or not.
-    """
-
-    model_config = ConfigDict(frozen=True)
-
-    occurred_at: datetime
-    action: str = Field(description="The internal action name, e.g. `catalogue_entry.updated`.")
-    changed_by: str | None = Field(
-        description="The administrator's display name, or `null` for a system-initiated "
-        "change, an account since pseudonymised on closure, or an anonymous caller "
-        "(NFR-26) - sign in to see who made a change."
-    )
-    changed_fields: list[str] = Field(description="Which fields changed at this event.")
-    note: str | None = Field(description="The changelog note supplied for this write (FR-37).")
-    release: None = Field(
-        default=None,
-        description="Always `null` in P1 - the defined slot P4's release membership fills "
-        "once releases exist (FR-19).",
-    )
-
-
-class HistoryPage(BaseModel):
-    model_config = ConfigDict(frozen=True)
-
-    items: list[HistoryEvent]
-    next_cursor: str | None
 
 
 # --- routes ---------------------------------------------------------------
@@ -576,16 +520,4 @@ def read_history(
         before=int(before) if before is not None else None,
         include_changed_by=principal.user_id is not None,
     )
-    return HistoryPage(
-        items=[
-            HistoryEvent(
-                occurred_at=event.occurred_at,
-                action=event.action,
-                changed_by=event.changed_by,
-                changed_fields=list(event.changed_fields),
-                note=event.note,
-            )
-            for event in page.events
-        ],
-        next_cursor=page.next_cursor,
-    )
+    return history_page_from(page)

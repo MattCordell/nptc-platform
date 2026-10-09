@@ -75,7 +75,7 @@ _BIGINT_MAX: Final = 2**63 - 1
 class MalformedHistoryCursorError(ValueError):
     """Raised for a `before` cursor exceeding `_BIGINT_MAX`.
 
-    `nptc.api.routers.catalogue.HistoryCursorQuery` already rejects anything
+    `nptc.api.routers.catalogue_shared.HistoryCursorQuery` already rejects anything
     that is not a short digit string; this catches a well-formed but
     out-of-range one. Refused, never silently reinterpreted, as in
     `nptc.catalogue.search.MalformedSearchCursorError`.

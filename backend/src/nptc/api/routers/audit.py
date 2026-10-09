@@ -102,7 +102,7 @@ AuditLimitQuery = Annotated[
     Query(ge=1, le=200, description="Maximum events in this page."),
 ]
 
-#: The same cursor shape as `catalogue.py`'s `HistoryCursorQuery`: a digit string
+#: The same cursor shape as `catalogue_shared.py`'s `HistoryCursorQuery`: a digit string
 #: bounded by `AuditEvent.sequence`'s `BigInteger` range. Bounding the digit count
 #: stops an arbitrarily long cursor reaching `int(before)` below, and
 #: `nptc.audit.queries.MalformedAuditCursorError` catches a well-formed but

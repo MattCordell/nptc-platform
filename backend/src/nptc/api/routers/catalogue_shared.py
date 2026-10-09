@@ -45,7 +45,7 @@ from nptc.api.labels import (
     LabelProvenance,
     fsn_provenance,
 )
-from nptc.catalogue import queries
+from nptc.catalogue import history, queries
 from nptc.catalogue.code_systems import SYSTEM_TOKEN_PATTERN
 from nptc.catalogue.entries import BUSINESS_KEY_PATTERN
 from nptc.catalogue.facets import (
@@ -87,6 +87,9 @@ __all__ = [
     "Facet",
     "FacetBucket",
     "FilterRequest",
+    "HistoryCursorQuery",
+    "HistoryEvent",
+    "HistoryPage",
     "LimitQuery",
     "PropertyValue",
     "SearchHit",
@@ -100,6 +103,7 @@ __all__ = [
     "entry_summary_fields",
     "facet_models",
     "filter_parameter",
+    "history_page_from",
     "property_value_from_row",
     "snomed_synonyms_for",
     "summary_from_entry",
@@ -776,6 +780,79 @@ def property_value_from_row(
         ordinal=row.ordinal,
         value=handler.serialise(row.value, SerialisationTarget.JSON),
         justification=row.justification,
+    )
+
+
+#: `.../history` routes page on the audit log's own `sequence`, a globally monotonic
+#: identity column, so a plain digit string makes a total order with no possible tie.
+#: Exclusive: the next page is every event *older* than this one (most recent first).
+#:
+#: `max_length=19`: `AuditEvent.sequence` is a signed 64-bit `BigInteger` (max
+#: `9223372036854775807`, 19 digits), and bounding the digit count stops an arbitrarily
+#: long cursor reaching `int(before)` in the route. A 19-digit string can still be out of
+#: range (`9999999999999999999`); `history.load_history` raises
+#: `MalformedHistoryCursorError` (422) for that.
+HistoryCursorQuery = Annotated[
+    str | None,
+    Query(
+        pattern=r"^[0-9]+$",
+        max_length=19,
+        description=(
+            "The `next_cursor` from the previous page. Pass it back unmodified, "
+            "and do not construct one."
+        ),
+    ),
+]
+
+
+class HistoryEvent(BaseModel):
+    """One change to the entry or one of its designations, code bindings
+    or property values (FR-19).
+
+    Never the raw diff: `changed_fields` names what changed, not the
+    values themselves - a withheld field's name still appears (that a
+    field changed is not the secret), but no value from any audit event
+    is ever serialised here, changed or not.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    occurred_at: datetime
+    action: str = Field(description="The internal action name, e.g. `catalogue_entry.updated`.")
+    changed_by: str | None = Field(
+        description="The administrator's display name, or `null` for a system-initiated "
+        "change, an account since pseudonymised on closure, or an anonymous caller "
+        "(NFR-26) - sign in to see who made a change."
+    )
+    changed_fields: list[str] = Field(description="Which fields changed at this event.")
+    note: str | None = Field(description="The changelog note supplied for this write (FR-37).")
+    release: None = Field(
+        default=None,
+        description="Always `null` in P1 - the defined slot P4's release membership fills "
+        "once releases exist (FR-19).",
+    )
+
+
+class HistoryPage(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    items: list[HistoryEvent]
+    next_cursor: str | None
+
+
+def history_page_from(page: history.HistoryPage) -> HistoryPage:
+    return HistoryPage(
+        items=[
+            HistoryEvent(
+                occurred_at=event.occurred_at,
+                action=event.action,
+                changed_by=event.changed_by,
+                changed_fields=list(event.changed_fields),
+                note=event.note,
+            )
+            for event in page.events
+        ],
+        next_cursor=page.next_cursor,
     )
 
 
