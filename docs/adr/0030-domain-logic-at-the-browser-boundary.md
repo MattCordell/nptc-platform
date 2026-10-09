@@ -280,3 +280,42 @@ Both `_HAS_LETTER_RE` (`changelog.py`) and `HAS_LETTER_RE`/`STRIP_PUNCTUATION_RE
 (`changelog-note.ts`) now carry a comment pointing at this amendment and the enumeration test,
 so a reader who doubts the identity again finds the verification rather than re-filing the
 same claim.
+
+## Amendment (2026-10-09): a third mirror - `term-length.ts` (issue #526)
+
+The catalogue edit form shows the length of the RCPA Preferred term while the editor types
+(FR-85). `frontend/src/catalogue/term-length.ts` mirrors `preferred_term_length`
+(`backend/src/nptc/catalogue/term_hygiene.py`): NFC, every non-ASCII `Zs` space to an
+ordinary space, edge whitespace stripped the way Python does, then a code-point count.
+
+Checked against the three conditions:
+
+1. **Small enough to read against the original.** One expression over the same
+   `normalise_for_comparison` that `changelog-note.ts` already mirrors. That function now
+   lives once on the browser side, in `python-text.ts`, which `changelog-note.ts`,
+   `split-synonyms.ts` and `term-length.ts` all import. The two copies of the Python
+   whitespace set that the first two mirrors carried are gone.
+2. **One fixture file, read by both suites.** This is the first mirror to share a file
+   rather than quote cases. `shared/tests/fixtures/term-length-cases.json` holds terms as
+   `\u` escapes, with expected lengths produced by the Python function.
+   `backend/tests/test_term_length_fixtures.py` asserts the file against Python, and
+   `frontend/tests/term-length-mirror.test.ts` asserts it against the mirror. The cases are
+   the boundary ones: non-breaking and narrow no-break spaces, decomposed against
+   precomposed accents, a character outside the Basic Multilingual Plane, U+0085 and
+   U+001C edge stripping, and U+FEFF, which JavaScript `trim` would strip and Python does not.
+3. **The server stays the authority.** The edit form shows the server's `length` from the
+   save response beside the live figure. The live figure never reaches a request, and the
+   server recounts every term it is sent.
+
+**Code points, not UTF-16 units.** Python's `len` counts code points. `String.prototype.length`
+counts UTF-16 units, so a character outside the Basic Multilingual Plane would count twice.
+The mirror uses `Array.from`.
+
+**Residual.** The UCD-version residual named in the 2026-09-07 amendment applies here too:
+NFC is a function of the Unicode Character Database each engine ships, and the fixture can
+only catch a difference on the characters it names.
+
+**Why a mirror and not a server round trip.** A length request on every keystroke would make
+the preview lag the typing, and the count is one expression. This is the case the 2026-09-03
+amendment excludes from "a round trip is already unavoidable": the save does not need the
+length before it is sent.
