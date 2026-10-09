@@ -52,9 +52,11 @@ from nptc.catalogue.facets import (
     FILTER_OP_SEPARATOR,
     FILTER_PARAM_PREFIX,
     FILTER_VALUE_CAP,
+    UNCAPPED_FACET_KEYS,
     FacetContext,
     FilterSelection,
 )
+from nptc.catalogue.facets import Facet as DomainFacet
 from nptc.db.models.catalogue_entry import CatalogueEntry
 from nptc.db.models.code_binding import SNOMED_CT_SYSTEM, CodeBindingStatus
 from nptc.db.session import end_read_transaction
@@ -90,6 +92,7 @@ __all__ = [
     "designation_from_row",
     "entry_core_fields",
     "entry_summary_fields",
+    "facet_models",
     "filter_parameter",
     "property_value_from_row",
     "snomed_synonyms_for",
@@ -381,24 +384,6 @@ _ENTRY_SUMMARY_LABEL_PROVENANCE: dict[str, LabelProvenance] = {
 }
 
 
-class EntryPage(BaseModel):
-    """One page of `EntrySummary` rows, keyset-paginated on `business_key`.
-
-    Served by both `catalogue.py`'s public `GET /catalogue/entries`
-    (`PUBLIC_STATUSES` only) and `catalogue_admin.py`'s
-    `GET /catalogue/admin/entries` (any status) - one shape, the same
-    reason `EntryDetail` is shared rather than duplicated. `next_cursor` is
-    `null` on the last page - which is the *only* reliable signal that
-    paging is finished. A client must not infer the end from a short page: a
-    page can be short and still have a successor.
-    """
-
-    model_config = ConfigDict(frozen=True)
-
-    items: list[EntrySummary]
-    next_cursor: str | None
-
-
 class SearchHit(EntrySummary):
     """A summary plus its relevance score.
 
@@ -443,6 +428,9 @@ class FacetBucket(BaseModel):
     )
 
 
+_UNCAPPED_KEY_LIST = " and ".join(f"`{key}`" for key in sorted(UNCAPPED_FACET_KEYS))
+
+
 class Facet(BaseModel):
     """One facet, derived from the property registry at request time.
 
@@ -469,10 +457,54 @@ class Facet(BaseModel):
         description=(
             f"`true` when this facet has more than {FACET_BUCKET_CAP} distinct "
             "values and only the most common were returned. There is no way to "
-            "page through the remainder; narrow the search instead."
+            "page through the remainder; narrow the search instead. Always "
+            f"`false` for {_UNCAPPED_KEY_LIST}, which return every value."
         )
     )
     buckets: list[FacetBucket]
+
+
+class EntryPage(BaseModel):
+    """One page of `EntrySummary` rows, keyset-paginated on `business_key`,
+    served by the public `GET /catalogue/entries` (`PUBLIC_STATUSES` only).
+    `catalogue_admin.py` has its own `AdminEntryPage`.
+
+    `next_cursor` is `null` on the last page - which is the *only* reliable
+    signal that paging is finished. A client must not infer the end from a
+    short page: a page can be short and still have a successor.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    items: list[EntrySummary]
+    next_cursor: str | None
+    facets: list[Facet] | None = Field(
+        default=None,
+        description=(
+            "`null` unless the request sent `facets=true`. Then the same facet "
+            "list `GET /catalogue/search` returns, with counts over every "
+            "published entry the `filter.*` parameters leave rather than over "
+            "this page. A facet's own selection is excluded from its own "
+            "counts."
+        ),
+    )
+
+
+def facet_models(facets: Sequence[DomainFacet]) -> list[Facet]:
+    """The wire form of `compute_facets`' result."""
+    return [
+        Facet(
+            key=facet.key,
+            label=facet.label,
+            facetable=facet.facetable,
+            truncated=facet.truncated,
+            buckets=[
+                FacetBucket(value=bucket.value, label=bucket.label, count=bucket.count)
+                for bucket in facet.buckets
+            ],
+        )
+        for facet in facets
+    ]
 
 
 class SearchPage(BaseModel):

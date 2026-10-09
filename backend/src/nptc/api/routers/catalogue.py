@@ -60,8 +60,6 @@ from nptc.api.routers.catalogue_shared import (
     EntryCursorQuery,
     EntryDetail,
     EntryPage,
-    Facet,
-    FacetBucket,
     FilterRequest,
     LimitQuery,
     PropertyValue,
@@ -72,6 +70,7 @@ from nptc.api.routers.catalogue_shared import (
     build_entry_detail,
     designation_from_row,
     entry_summary_fields,
+    facet_models,
     filter_parameter,
     property_value_from_row,
     summary_from_entry,
@@ -181,8 +180,8 @@ HistoryCursorQuery = Annotated[
     ),
 ]
 
-#: Both collection routes accept filters; only `/catalogue/search` returns
-#: facets (ADR-0032).
+#: Both collection routes accept filters and return facets, `/catalogue/search`
+#: always and `/catalogue/entries` when asked (ADR-0032).
 _FILTER_OPENAPI: Final[dict[str, Any]] = {"parameters": [filter_parameter("/catalogue/search")]}
 
 
@@ -278,6 +277,16 @@ def list_entries(
     filters: FiltersDep,
     limit: LimitQuery = 50,
     after: EntryCursorQuery = None,
+    facets: Annotated[
+        bool,
+        Query(
+            description=(
+                "Send `true` to have the response carry `facets`: the facet list "
+                "with counts, over every published entry the `filter.*` "
+                "parameters leave. Omitted, no counts are computed."
+            ),
+        ),
+    ] = False,
 ) -> EntryPage:
     """Keyset paging on `business_key`, ascending. Pass the response's
     `next_cursor` back as `after` for the following page; a `null`
@@ -289,16 +298,25 @@ def list_entries(
     mid-scan.
 
     `filter.*` parameters are accepted here and behave exactly as they do on
-    `/catalogue/search`. Facets are **not** returned: computing counts on
-    every page of a browse costs something no caller has asked for, and
-    `GET /catalogue/search` is where the facet list with counts lives
-    (ADR-0032).
+    `/catalogue/search`. Facets are returned only when asked for with
+    `facets=true`: counting costs something a client paging through a browse
+    has no use for on every page, so a client asks once and reads the counts
+    for the whole filtered set, not the page (ADR-0032). `limit=1` makes that
+    one request cheap.
     """
     page = queries.list_entries(session, limit=limit, after=after, filters=filters.selections)
+    facet_list = (
+        facet_models(
+            queries.browse_facets(session, context=filters.context, filters=filters.selections)
+        )
+        if facets
+        else None
+    )
     facts = queries.row_facts(session, (entry.business_key for entry in page.entries))
     return EntryPage(
         items=[summary_from_entry(entry, facts[entry.business_key]) for entry in page.entries],
         next_cursor=page.next_cursor,
+        facets=facet_list,
     )
 
 
@@ -374,19 +392,7 @@ def search(
             for hit in page.hits
         ],
         next_cursor=page.next_cursor,
-        facets=[
-            Facet(
-                key=facet.key,
-                label=facet.label,
-                facetable=facet.facetable,
-                truncated=facet.truncated,
-                buckets=[
-                    FacetBucket(value=bucket.value, label=bucket.label, count=bucket.count)
-                    for bucket in facet.buckets
-                ],
-            )
-            for facet in facets
-        ],
+        facets=facet_models(facets),
     )
 
 

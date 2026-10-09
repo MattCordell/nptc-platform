@@ -354,7 +354,7 @@
           "catalogue"
         ],
         "summary": "One page of published catalogue entries",
-        "description": "Keyset paging on `business_key`, ascending. Pass the response's\n`next_cursor` back as `after` for the following page; a `null`\n`next_cursor` means there is no following page.\n\nThere is no `offset` and no total count, on purpose (ADR-0024): an\noffset re-reads and re-skips every earlier row on every page, and drops\nor repeats rows outright when a concurrent insert shifts the window\nmid-scan.\n\n`filter.*` parameters are accepted here and behave exactly as they do on\n`/catalogue/search`. Facets are **not** returned: computing counts on\nevery page of a browse costs something no caller has asked for, and\n`GET /catalogue/search` is where the facet list with counts lives\n(ADR-0032).",
+        "description": "Keyset paging on `business_key`, ascending. Pass the response's\n`next_cursor` back as `after` for the following page; a `null`\n`next_cursor` means there is no following page.\n\nThere is no `offset` and no total count, on purpose (ADR-0024): an\noffset re-reads and re-skips every earlier row on every page, and drops\nor repeats rows outright when a concurrent insert shifts the window\nmid-scan.\n\n`filter.*` parameters are accepted here and behave exactly as they do on\n`/catalogue/search`. Facets are returned only when asked for with\n`facets=true`: counting costs something a client paging through a browse\nhas no use for on every page, so a client asks once and reads the counts\nfor the whole filtered set, not the page (ADR-0032). `limit=1` makes that\none request cheap.",
         "operationId": "list_entries_api_v1_catalogue_entries_get",
         "parameters": [
           {
@@ -389,6 +389,18 @@
               "title": "After"
             },
             "description": "The `next_cursor` from the previous page. Pass it back unmodified, and do not construct one."
+          },
+          {
+            "name": "facets",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean",
+              "description": "Send `true` to have the response carry `facets`: the facet list with counts, over every published entry the `filter.*` parameters leave. Omitted, no counts are computed.",
+              "default": false,
+              "title": "Facets"
+            },
+            "description": "Send `true` to have the response carry `facets`: the facet list with counts, over every published entry the `filter.*` parameters leave. Omitted, no counts are computed."
           },
           {
             "name": "filter.{property_key}",
@@ -6306,6 +6318,21 @@
               }
             ],
             "title": "Next Cursor"
+          },
+          "facets": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/components/schemas/Facet"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Facets",
+            "description": "`null` unless the request sent `facets=true`. Then the same facet list `GET /catalogue/search` returns, with counts over every published entry the `filter.*` parameters leave rather than over this page. A facet's own selection is excluded from its own counts."
           }
         },
         "type": "object",
@@ -6314,7 +6341,7 @@
           "next_cursor"
         ],
         "title": "EntryPage",
-        "description": "One page of `EntrySummary` rows, keyset-paginated on `business_key`.\n\nServed by both `catalogue.py`'s public `GET /catalogue/entries`\n(`PUBLIC_STATUSES` only) and `catalogue_admin.py`'s\n`GET /catalogue/admin/entries` (any status) - one shape, the same\nreason `EntryDetail` is shared rather than duplicated. `next_cursor` is\n`null` on the last page - which is the *only* reliable signal that\npaging is finished. A client must not infer the end from a short page: a\npage can be short and still have a successor."
+        "description": "One page of `EntrySummary` rows, keyset-paginated on `business_key`,\nserved by the public `GET /catalogue/entries` (`PUBLIC_STATUSES` only).\n`catalogue_admin.py` has its own `AdminEntryPage`.\n\n`next_cursor` is `null` on the last page - which is the *only* reliable\nsignal that paging is finished. A client must not infer the end from a\nshort page: a page can be short and still have a successor."
       },
       "EntrySummary": {
         "properties": {
@@ -6442,7 +6469,7 @@
           "truncated": {
             "type": "boolean",
             "title": "Truncated",
-            "description": "`true` when this facet has more than 20 distinct values and only the most common were returned. There is no way to page through the remainder; narrow the search instead."
+            "description": "`true` when this facet has more than 20 distinct values and only the most common were returned. There is no way to page through the remainder; narrow the search instead. Always `false` for `discipline` and `specimen`, which return every value."
           },
           "buckets": {
             "items": {
