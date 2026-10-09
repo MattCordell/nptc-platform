@@ -78,6 +78,10 @@ reinstating is blocked the same way adding it would be. See
 
 An earlier acknowledgement of a possible duplicate still applies after you reinstate.
 
+If the reinstated term is also a synonym on another entry, the screen shows **After
+reinstating a term** below the form, with the same **Check these** list and an
+**Acknowledge** button for each duplicate.
+
 ## When a term is already in use elsewhere
 
 The catalogue checks every term you save against every other live entry. It ignores
@@ -89,7 +93,7 @@ There are two outcomes, and they behave differently.
 ### The term is refused
 
 If your term is another entry's **preferred term**, that term is refused. The summary names
-the entry it clashes with and links to it. The box keeps what you typed, and your other
+the entry it clashes with, by its identifier. The box keeps what you typed, and your other
 changes still save. Nothing was saved for that term.
 
 Either choose a different term, or open that other entry and resolve it there first, for
@@ -128,8 +132,9 @@ is the default, you never see this note.
 
 ## If something goes wrong
 
-**"This term is already in use on another entry."** The refused case above. Choose a
-different term, or resolve it on the entry named in the summary.
+**"This term is already in use on NPTC-000012, once case, spacing and punctuation are
+ignored."** The refused case above, with the identifier of the entry it clashes with. Choose
+a different term, or resolve it on that entry.
 
 **"This entry already has an active designation for this term, once case, spacing and
 punctuation are ignored."** The entry already holds this term. Check the synonym boxes. You
