@@ -21,7 +21,8 @@ published yet can be edited the same way as published ones.
 ## What you see
 
 The edit form lists **Registry properties** below the SNOMED CT code and the synonyms, one
-control for each active property, in the order the registry gives them. Each shows what is currently recorded.
+control for each active property, in the order the registry gives them. Each shows what is
+currently recorded.
 
 The controls are generated from the registry's own definitions, not hand-built for each
 property. If an administrator adds a property definition elsewhere in the platform, it
