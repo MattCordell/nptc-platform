@@ -236,6 +236,24 @@ def test_detail_carries_the_same_fields_as_its_row(api: ApiTestApp, seeded: _See
     assert {b["code"] for b in bound["bindings"]} == {_ACTIVE_CODE, _RETIRED_CODE}
 
 
+def _admin_listing_rows(api: ApiTestApp, token: str) -> list[dict[str, Any]]:
+    """Every row of `/catalogue/admin/entries`. Its cursor is opaque, so a page cannot be scoped
+    to a key block the way the public listing's can."""
+    items: list[dict[str, Any]] = []
+    after: str | None = None
+    while True:
+        params: dict[str, Any] = {"limit": 200}
+        if after is not None:
+            params["after"] = after
+        response = api.get("/catalogue/admin/entries", token=token, params=params)
+        assert response.status_code == 200, response.text
+        body = response.json()
+        items.extend(body["items"])
+        after = body["next_cursor"]
+        if after is None:
+            return items
+
+
 @pytest.mark.req("FR-20")
 @pytest.mark.integration
 def test_admin_rows_carry_the_same_fields(api: ApiTestApp, seeded: _Seeded) -> None:
@@ -249,8 +267,52 @@ def test_admin_rows_carry_the_same_fields(api: ApiTestApp, seeded: _Seeded) -> N
     ]
 
     assert found.status_code == 200, found.text
-    _assert_rows(seeded, found.json()["items"], summary=False)
+    _assert_rows(seeded, found.json()["items"])
+    _assert_rows(seeded, _admin_listing_rows(api, token))
     _assert_rows(seeded, details, summary=False)
+
+
+@pytest.mark.req("FR-83")
+@pytest.mark.integration
+def test_admin_rows_list_an_entry_whose_stored_fsn_cannot_be_stripped(api: ApiTestApp) -> None:
+    """The public list 500s on this entry, and the admin list must not: the admin screen is
+    where it gets repaired. `fsn` is `null` and `code` is set, which is how a client tells it
+    from an entry with no active code."""
+    session = api.session
+    base = random.randrange(100_000_000, 999_000_000)
+    key = f"NPTC-{base}"
+    entry = CatalogueEntry(
+        business_key=key,
+        preferred_term=f"Untagged {base}",
+        status=CatalogueEntryStatus.ACTIVE.value,
+    )
+    session.add(entry)
+    session.flush()
+    session.add(
+        CodeBinding(
+            entry_id=entry.id,
+            code=_ACTIVE_CODE,
+            fsn="Microscopy without a tag",
+            au_preferred_term=None,
+            edition_hint="au",
+            status=CodeBindingStatus.ACTIVE.value,
+        )
+    )
+    session.flush()
+    token = api.admin_token(subject="sub-row-fields-untagged")
+
+    searched = api.get("/catalogue/admin/search", token=token, params={"q": f"Untagged {base}"})
+
+    assert searched.status_code == 200, searched.text
+    assert "Microscopy without a tag" not in searched.text
+    rows = {
+        "search": searched.json()["items"],
+        "listing": _admin_listing_rows(api, token),
+    }
+    for source, items in rows.items():
+        row = next(item for item in items if item["business_key"] == key)
+        assert row["fsn"] is None, source
+        assert row["code"] == _ACTIVE_CODE, source
 
 
 @pytest.mark.req("FR-20")

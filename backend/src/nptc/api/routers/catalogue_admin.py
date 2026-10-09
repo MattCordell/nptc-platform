@@ -52,8 +52,8 @@ from nptc.api.routers.auth import ErrorResponse
 from nptc.api.routers.catalogue_shared import (
     BusinessKeyPath,
     CursorQuery,
-    EntryCore,
     EntryDetail,
+    EntrySummary,
     Facet,
     FacetBucket,
     FilterRequest,
@@ -64,6 +64,7 @@ from nptc.api.routers.catalogue_shared import (
     filter_parameter,
     property_value_from_row,
     snomed_synonyms_for,
+    tolerant_entry_summary_fields,
 )
 from nptc.auth.permissions import Permission
 from nptc.catalogue import maintenance, queries, search
@@ -164,10 +165,10 @@ RegistryDep = Annotated[DatatypeRegistry, Depends(get_datatype_registry)]
 _EDIT = Depends(permission_dep(Permission.CATALOGUE_EDIT_PUBLISHED))
 
 
-class AdminEntrySummary(EntryCore):
-    """`EntryCore` plus FR-38's optimistic-locking token. It carries neither `fsn` nor
-    `specimens`, which are the public list's: a stored FSN FR-83 cannot strip fails the
-    public list, and must not also hide an entry from the screen that repairs it.
+class AdminEntrySummary(EntrySummary):
+    """`EntrySummary` plus FR-38's optimistic-locking token. Its `fsn` is tolerant: a stored
+    FSN FR-83 cannot strip fails the public list, but must not also hide an entry from the
+    screen that repairs it (`tolerant_entry_summary_fields`).
 
     Defined here, not in `catalogue_shared.py`: that module is imported by
     the public router, and a field the public surface must never carry
@@ -177,12 +178,20 @@ class AdminEntrySummary(EntryCore):
     hygiene.py` asserts the public listing/search routes still omit it.
 
     The bulk reclassify route (FR-39) locks on `(business_key,
-    expected_row_version)`; this is what lets its selection surface read a
-    `row_version` per row instead of re-reading the entry once selected.
+    expected_row_version)`; this is what lets a row carry a `row_version`
+    instead of re-reading the entry once opened.
     """
 
     model_config = ConfigDict(frozen=True)
 
+    fsn: str | None = Field(
+        description=(
+            "The fully specified name of the entry's active SNOMED CT code with its "
+            "trailing semantic tag removed (FR-83). `null` in two cases: the entry has no "
+            "active code (`code` is then `null` too), or its stored FSN cannot be stripped "
+            "(`code` is set). `bindings[].fsn` on the detail keeps the tag."
+        )
+    )
     row_version: int
 
 
@@ -235,7 +244,7 @@ def _admin_summary_from_row(
     """The admin counterpart of `summary_from_entry`, over a `maintenance.ListingRow`
     because the listing statement selects explicit columns, not a mapped entity."""
     return AdminEntrySummary(
-        **entry_core_fields(
+        **tolerant_entry_summary_fields(
             row.business_key,
             row.preferred_term,
             preferred_term_length(row.preferred_term),
@@ -399,7 +408,7 @@ def search_any_status(
     return AdminSearchPage(
         items=[
             AdminSearchHit(
-                **entry_core_fields(
+                **tolerant_entry_summary_fields(
                     hit.business_key,
                     hit.preferred_term,
                     preferred_term_length(hit.preferred_term),

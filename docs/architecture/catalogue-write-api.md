@@ -104,14 +104,21 @@ reason "Entry read, any status" gives for its own gate.
 **Rows also carry `row_version` (issue #267).** `AdminEntrySummary`/`AdminSearchHit` -
 `EntrySummary`/`SearchHit` plus FR-38's optimistic-locking token - are what these two
 routes actually return, not the public shapes: `AdminEntryPage.items: [AdminEntrySummary]`,
-`AdminSearchPage.items: [AdminSearchHit]`. They inherit `EntrySummary`'s `code` and
-`disciplines` row fields, filled by the same loader as the public rows. Defined in `catalogue_admin.py`, not
+`AdminSearchPage.items: [AdminSearchHit]`. They inherit `EntrySummary`'s `code`,
+`disciplines`, `fsn` and `specimens` row fields, filled by the same loader as the public
+rows. Defined in `catalogue_admin.py`, not
 `catalogue_shared.py` (which the public router also imports), so the public
 `/catalogue/entries`/`/catalogue/search` stay byte-identical by construction -
-`test_api_public_response_hygiene.py` asserts they still omit the field. The admin
-catalogue list screen's row-selection surface is the reason: it locks the bulk
-property-value write route below on `(business_key, expected_row_version)`, and a list is
-where that token has to come from without a second read per selected row.
+`test_api_public_response_hygiene.py` asserts they still omit the field. The token is
+there so a caller can lock a write on `(business_key, expected_row_version)` without a
+second read per row.
+
+**`fsn` is tolerant on admin rows.** The public list builds `fsn` with FR-83's strict
+renderer, so one stored FSN with no trailing semantic tag 500s the whole page. The admin
+rows use `tolerant_entry_summary_fields`, which returns `fsn: null` for that entry and still
+lists it, because the admin screen is where the entry gets repaired. `fsn: null` with a
+`code` set therefore means "stored FSN cannot be stripped"; `fsn: null` with `code: null`
+means "no active code". The two are told apart by `code`, not by a new flag.
 
 ### Errors (all-status listing and search)
 
