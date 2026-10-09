@@ -850,8 +850,9 @@ export interface components {
         };
         /**
          * AdminEntryPage
-         * @description The admin counterpart to `catalogue_shared.EntryPage` - same shape,
-         *     rows that additionally carry `row_version`. A standalone model rather
+         * @description The admin counterpart to `catalogue_shared.EntryPage` - rows that
+         *     additionally carry `row_version`, and no `facets`: the admin list asks
+         *     `GET /catalogue/admin/search` for those. A standalone model rather
          *     than a subclass of `EntryPage`: overriding `items`' element type in a
          *     subclass is the field-covariance trap `mypy --strict` (and Liskov
          *     substitution generally) flags on a model a caller might still pass
@@ -2358,8 +2359,8 @@ export interface components {
          * SearchPage
          * @description Served by both `catalogue.py`'s public `GET /catalogue/search`
          *     (`PUBLIC_STATUSES` only) and `catalogue_admin.py`'s
-         *     `GET /catalogue/admin/search` (any status) - see `EntryPage`'s own
-         *     docstring for why one shape rather than two.
+         *     `GET /catalogue/admin/search` (any status) - one shape, the same
+         *     reason `EntryDetail` is shared rather than duplicated.
          */
         SearchPage: {
             /** Items */

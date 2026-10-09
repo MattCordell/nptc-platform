@@ -4795,7 +4795,7 @@
           "next_cursor"
         ],
         "title": "AdminEntryPage",
-        "description": "The admin counterpart to `catalogue_shared.EntryPage` - same shape,\nrows that additionally carry `row_version`. A standalone model rather\nthan a subclass of `EntryPage`: overriding `items`' element type in a\nsubclass is the field-covariance trap `mypy --strict` (and Liskov\nsubstitution generally) flags on a model a caller might still pass\naround as the parent type."
+        "description": "The admin counterpart to `catalogue_shared.EntryPage` - rows that\nadditionally carry `row_version`, and no `facets`: the admin list asks\n`GET /catalogue/admin/search` for those. A standalone model rather\nthan a subclass of `EntryPage`: overriding `items`' element type in a\nsubclass is the field-covariance trap `mypy --strict` (and Liskov\nsubstitution generally) flags on a model a caller might still pass\naround as the parent type."
       },
       "AdminEntrySummary": {
         "properties": {
@@ -7527,7 +7527,7 @@
           "facets"
         ],
         "title": "SearchPage",
-        "description": "Served by both `catalogue.py`'s public `GET /catalogue/search`\n(`PUBLIC_STATUSES` only) and `catalogue_admin.py`'s\n`GET /catalogue/admin/search` (any status) - see `EntryPage`'s own\ndocstring for why one shape rather than two."
+        "description": "Served by both `catalogue.py`'s public `GET /catalogue/search`\n(`PUBLIC_STATUSES` only) and `catalogue_admin.py`'s\n`GET /catalogue/admin/search` (any status) - one shape, the same\nreason `EntryDetail` is shared rather than duplicated."
       },
       "SemanticTagState": {
         "type": "string",

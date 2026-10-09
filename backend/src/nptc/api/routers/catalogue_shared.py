@@ -510,8 +510,8 @@ def facet_models(facets: Sequence[DomainFacet]) -> list[Facet]:
 class SearchPage(BaseModel):
     """Served by both `catalogue.py`'s public `GET /catalogue/search`
     (`PUBLIC_STATUSES` only) and `catalogue_admin.py`'s
-    `GET /catalogue/admin/search` (any status) - see `EntryPage`'s own
-    docstring for why one shape rather than two."""
+    `GET /catalogue/admin/search` (any status) - one shape, the same
+    reason `EntryDetail` is shared rather than duplicated."""
 
     model_config = ConfigDict(frozen=True)
 

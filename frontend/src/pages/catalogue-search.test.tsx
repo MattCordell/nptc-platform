@@ -476,6 +476,28 @@ describe("CatalogueSearchPage", () => {
     await waitFor(() => expect(validatedSearch(router)).toEqual({ q: "" }));
   });
 
+  it("keeps a combobox that holds a selection when a search leaves it no options", async () => {
+    const emptied = (facet: typeof DISCIPLINE_FACET) => ({ ...facet, buckets: [] });
+    stubApi([
+      {
+        ...SEARCH_OK,
+        body: searchPage({
+          items: [],
+          facets: [emptied(DISCIPLINE_FACET), emptied(SPECIMEN_FACET)],
+        }),
+      },
+    ]);
+
+    await renderRoute("/catalogue?q=zzz&filter.discipline=chem");
+
+    expect(await screen.findByRole("combobox", { name: "Discipline" })).toHaveAttribute(
+      "placeholder",
+      "1 selected",
+    );
+    // Nothing selected and nothing on offer: no control to show.
+    expect(screen.queryByRole("combobox", { name: "Specimen" })).not.toBeInTheDocument();
+  });
+
   it("stops at the limit of values the API accepts in one filter, and says why", async () => {
     const buckets = Array.from({ length: 60 }, (_, index) => ({
       value: `v${index}`,

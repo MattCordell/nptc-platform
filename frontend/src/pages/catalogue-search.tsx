@@ -142,11 +142,16 @@ export function CatalogueSearchPage() {
     () =>
       COMBOBOX_FACET_KEYS.flatMap((key) => {
         const facet = facets.find((candidate) => candidate.key === key);
-        return facet !== undefined && facet.facetable && facet.buckets.length > 0
-          ? [facet]
-          : [];
+        // A facet holding a selection stays even with no buckets, as when a
+        // search matches nothing: the control must not leave the layout, and
+        // take focus with it, while its values are still in the URL.
+        const keep =
+          facet !== undefined &&
+          facet.facetable &&
+          (facet.buckets.length > 0 || (filters[key] ?? []).length > 0);
+        return keep ? [facet] : [];
       }),
-    [facets],
+    [facets, filters],
   );
 
   // The draft mirrors `search.q`, so Back, Forward or a pasted link shows its
