@@ -17,9 +17,10 @@ export type CatalogueEntryStatus = "draft" | "active" | "deprecated" | "withdraw
 
 /**
  * The four `CatalogueEntryStatus` values. Hardcoded, unlike the registry
- * properties, because this set is a stable part of the domain model, not administrator-editable registry
- * state - there is nowhere on the wire to discover it from in browse mode
- * (facets, with counts, exist only on the search surface).
+ * properties, because this set is a stable part of the domain model, not
+ * administrator-editable registry state - there is nowhere on the wire to
+ * discover it from in browse mode (facets, with counts, exist only on the
+ * search surface).
  *
  * Its own module, not a constant inside a component file: a `.tsx` file that
  * exports a non-component trips `react-refresh/only-export-components` -

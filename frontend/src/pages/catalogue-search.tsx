@@ -8,6 +8,12 @@ import {
   useEntriesList,
 } from "../api/queries.ts";
 import type { components } from "../api/schema.ts";
+import {
+  MAX_VALUES_PER_FILTER,
+  emptyStateText,
+  resultAnnouncement,
+  useCurrentPage,
+} from "../catalogue/list-screen.ts";
 import { Button } from "../components/button.tsx";
 import { DataTable } from "../components/data-table.tsx";
 import { FilterBar } from "../components/filter-bar.tsx";
@@ -15,12 +21,6 @@ import type { ActiveFilter } from "../components/filter-bar.tsx";
 import { FindingIndicator } from "../components/finding-indicator.tsx";
 import { LiveRegion } from "../components/live-region.tsx";
 import { MultiSelectCombobox } from "../components/multi-select-combobox.tsx";
-import {
-  MAX_VALUES_PER_FILTER,
-  emptyStateText,
-  resultAnnouncement,
-  useCurrentPage,
-} from "../catalogue/list-screen.ts";
 import { PageContainer } from "../components/page-container.tsx";
 import { PageHeader } from "../components/page-header.tsx";
 import { Pagination } from "../components/pagination.tsx";
