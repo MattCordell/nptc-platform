@@ -291,8 +291,8 @@
   priority: MUST
   phase: p2
   title: "Rate limits MUST be enforced server-side"
-  status: planned
-  notes: ""
+  status: implemented
+  notes: "The per-user submission quota: POST /api/v1/submissions and POST /api/v1/submissions/amendments count the caller's earlier submissions, new tests and amendments together, against nptc.auth.permissions.QUOTAS (Provisional 5 in total, Member 20 in a rolling hour, Reviewer and Administrator unlimited). A refusal is a 429, with Retry-After for the hourly limit only, and is recorded as a submission.quota_refused audit event that survives the refusal. A per-user advisory lock serialises one user's requests, so two requests cannot both take the last slot. The per-user override (FR-41) has no column yet. Tests: test_submissions_quota.py, test_submissions_quota_concurrency.py, test_api_submissions_quota.py."
 - id: "FR-44"
   priority: SHOULD
   phase: p1
@@ -783,7 +783,7 @@
   phase: p1
   title: "Rate limiting at three layers: per-IP for anonymous requests, per-user for authenticated actions, and the domain-level submission limits in FR-43"
   status: in-progress
-  notes: "Issue #145 lands layer 1, the per-IP limit for anonymous requests (see FR-22). Stays in-progress: the per-user limit on authenticated actions and the domain-level submission limits (FR-43, which has quota data in nptc.auth.permissions.QUOTAS but no enforcement) are not built."
+  notes: "Issue #145 lands layer 1, the per-IP limit for anonymous requests (see FR-22). Layer 3, the domain-level submission limits, is built (FR-43). Stays in-progress: the per-user limit on authenticated actions, layer 2, is not built."
 - id: "NFR-25"
   priority: MUST
   phase: foundation

@@ -14,11 +14,13 @@ idempotent no-op path short-circuits before this module, as `close_account` does
 records the decision.
 
 `record_batch_summary` is a third, narrower wrapper for a batch header event, which carries a
-structured summary rather than a diff.
+structured summary rather than a diff. `record_quota_refusal` is a fourth, for a refusal that
+changes nothing.
 """
 
 from __future__ import annotations
 
+import uuid
 from collections.abc import Mapping
 from typing import cast
 
@@ -146,6 +148,37 @@ def record_batch_summary(
         entity_id=entity_id,
         after=dict(tallies),
         reason=reason,
+    )
+
+
+def record_quota_refusal(
+    session: Session,
+    ctx: AuditContext,
+    *,
+    user_id: uuid.UUID,
+    limit: str,
+    maximum: int,
+    count: int,
+    submission_kind: str,
+) -> AuditEvent:
+    """Appends a diff-free event for a submission refused by its submitter's quota (FR-43).
+
+    Nothing changed, so there is no diff and `AuditNoOpError` does not apply. The event names the
+    user the limit applied to and holds the limit, the count and the kind of submission, never
+    anything the user typed (NFR-35). Lives here for the reason `record_batch_summary` does.
+    """
+    return append_audit_event(
+        session,
+        ctx,
+        action="submission.quota_refused",
+        entity_type="app_user",
+        entity_id=str(user_id),
+        after={
+            "limit": limit,
+            "maximum": maximum,
+            "count": count,
+            "submission_kind": submission_kind,
+        },
     )
 
 

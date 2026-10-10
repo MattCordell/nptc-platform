@@ -176,8 +176,8 @@ def test_effective_quota_resolves_per_dimension_independently() -> None:
     integer" is applied to each dimension independently rather than
     picking one role's quota wholesale. Worth stating plainly rather than
     leaving as a surprise: this is the resolution *rule* as designed, not
-    a bug - `effective_quota` is unit-tested here but not yet enforced
-    anywhere (see the module docstring), so this has no live effect until
-    the submissions issue wires it in."""
+    a bug - `effective_quota` is unit-tested here, and
+    `nptc.submissions.quota` enforces whatever it returns, so a user holding
+    both roles is never refused."""
     quota = effective_quota(frozenset({Role.PROVISIONAL, Role.MEMBER}))
     assert quota == SubmissionQuota(lifetime_max=None, per_hour_max=None)
