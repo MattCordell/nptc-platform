@@ -5,7 +5,8 @@ fixes two things that would otherwise make "the document" ambiguous between call
 
   * which settings produced it - `ApiSettings` and `AuthSettings` are built with
     `model_construct`, which reads no `NPTC_*` variable and runs no validator, and the
-    terminology client is a stub, so no environment variable can break generation; and
+    terminology client and the reference checker are inert, so no environment variable can
+    break generation; and
   * the exact committed bytes of `docs/api/openapi.json` - `indent=2, ensure_ascii=False`
     plus a single trailing newline, so every reader gets the same file.
 """
@@ -17,6 +18,7 @@ from typing import Any
 
 from nptc.api.app import create_app
 from nptc.settings import ApiSettings, AuthSettings
+from nptc.submissions.reference_check import HttpReferenceChecker
 from nptc_shared.terminology import StubTerminologyClient
 
 #: Not a real deployment target: `create_app` requires an origin for CORS, and it never
@@ -32,6 +34,7 @@ def build_document() -> dict[str, Any]:
         settings=settings,
         auth_settings=AuthSettings.model_construct(),
         terminology_client=StubTerminologyClient(),
+        reference_checker=HttpReferenceChecker(probe=lambda: False),
     )
     return dict(app.openapi())
 

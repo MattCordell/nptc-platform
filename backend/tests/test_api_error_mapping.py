@@ -336,24 +336,28 @@ def test_a_malformed_terminology_config_fails_app_construction(
 def test_an_explicit_terminology_client_reads_no_terminology_variable(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """The one caller that supplies a client (the OpenAPI document build) must
-    not depend on `NPTC_TX_*`, and the app must serve that client, not a built one."""
+    """The one caller that supplies a client and a reference checker (the OpenAPI document
+    build) must not depend on `NPTC_TX_*`, and the app must serve that client, not a built one."""
     from nptc.api.app import create_app
-    from nptc.api.dependencies import get_terminology_client
+    from nptc.api.dependencies import get_reference_checker, get_terminology_client
     from nptc.settings import AuthSettings
+    from nptc.submissions.reference_check import HttpReferenceChecker
     from nptc_shared.terminology import StubTerminologyClient
 
     stub = StubTerminologyClient()
     monkeypatch.setenv(_TX_CONFIG_VAR, "not-a-number")
     get_terminology_client.cache_clear()
+    get_reference_checker.cache_clear()
     try:
         app = create_app(
             settings=_support.hermetic_api_settings(),
             auth_settings=AuthSettings.model_construct(),
             terminology_client=stub,
+            reference_checker=HttpReferenceChecker(probe=lambda: False),
         )
     finally:
         get_terminology_client.cache_clear()
+        get_reference_checker.cache_clear()
 
     assert app.dependency_overrides[get_terminology_client]() is stub
 
