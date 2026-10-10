@@ -4242,6 +4242,16 @@
               }
             }
           },
+          "409": {
+            "description": "The submission matches an active catalogue entry or an open submission, and the request did not set `confirm_not_duplicate`. `matches[]` lists them. Nothing was saved. Send the request again with `confirm_not_duplicate` set to true if it is a different test.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SubmissionDuplicatesResponse"
+                }
+              }
+            }
+          },
           "422": {
             "description": "The request is not acceptable. `detail` says why for a term that cannot be cleaned and for a SNOMED CT code that is malformed, unknown to the AU edition, inactive, has no reported status or has no fully specified name, and for `notes` or `organisation` that carry an invisible character, and for a `reference_url` that is not a usable web address, points at an internal address, answers with a failing status, redirects too often, times out or cannot be found. `issues[]` names each property problem: an unknown, deprecated or out-of-scope property, a value its datatype refuses, or a property required for submission with no value. A missing `preferred_term`, an unrecognised field, or a part of the request over its size bound fails validation before the route runs.",
             "content": {
@@ -4289,6 +4299,97 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "An address exceeded its request budget (FR-22): an anonymous caller its anonymous budget, or a caller whose credentials the API kept rejecting its budget for rejected credentials. Wait for the number of seconds in `Retry-After`, then try again. A valid credential is never counted. The body's `bulk_artefacts` names where to fetch the whole catalogue instead.",
+            "headers": {
+              "Retry-After": {
+                "description": "Whole seconds until the caller's request budget is available again.",
+                "schema": {
+                  "type": "integer",
+                  "minimum": 1
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RateLimitedResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/submissions/duplicate-check": {
+      "post": {
+        "tags": [
+          "submissions"
+        ],
+        "summary": "Check a submission for duplicates before sending it",
+        "operationId": "check_submission_duplicates_api_v1_submissions_duplicate_check_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DuplicateCheckRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DuplicateCheckResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No credential, or one that could not be verified.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The caller is authenticated but does not hold `submission.create`, or has not accepted the current terms of use (the body then carries a `code` that says so). The current terms of use have not been accepted. The body carries `code: terms_acceptance_required`. Accept them with `POST /auth/terms/acceptance` and try again. Never carries `WWW-Authenticate`.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/ErrorResponse"
+                    },
+                    {
+                      "$ref": "#/components/schemas/TermsAcceptanceRequiredResponse"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "The request is not acceptable: a term that cannot be cleaned, a SNOMED CT code that is malformed or fails its check digit, a missing `preferred_term`, an unrecognised field, or a part of the request over its size bound.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/HTTPValidationError"
+                    }
+                  ]
                 }
               }
             }
@@ -6334,6 +6435,12 @@
               }
             ],
             "title": "Organisation"
+          },
+          "confirm_not_duplicate": {
+            "type": "boolean",
+            "title": "Confirm Not Duplicate",
+            "description": "Set to true to confirm this is a different test from the matches a 409 listed. It has no effect when nothing matches.",
+            "default": false
           }
         },
         "additionalProperties": false,
@@ -6553,6 +6660,112 @@
         ],
         "title": "DesignationWriteResult",
         "description": "`add_designations`'s response: the created row(s), any warning-severity\ncollisions, and the entry's new `row_version` (FR-38) - so a client\nnever has to re-fetch the entry just to learn its next lock token."
+      },
+      "DuplicateCheckRequest": {
+        "properties": {
+          "preferred_term": {
+            "type": "string",
+            "maxLength": 500,
+            "title": "Preferred Term"
+          },
+          "synonyms": {
+            "items": {
+              "type": "string",
+              "maxLength": 500
+            },
+            "type": "array",
+            "maxItems": 100,
+            "title": "Synonyms"
+          },
+          "snomed_code": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 18
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Snomed Code"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "preferred_term"
+        ],
+        "title": "DuplicateCheckRequest",
+        "description": "The body of `POST /submissions/duplicate-check`: the terms and code a submission would\ncarry, with the same size bounds as the create body. The code is checked for format and check\ndigit only."
+      },
+      "DuplicateCheckResponse": {
+        "properties": {
+          "matches": {
+            "items": {
+              "$ref": "#/components/schemas/DuplicateMatchItem"
+            },
+            "type": "array",
+            "title": "Matches"
+          }
+        },
+        "type": "object",
+        "required": [
+          "matches"
+        ],
+        "title": "DuplicateCheckResponse",
+        "description": "Active catalogue entries first, then open submissions, each best first and capped. An empty\nlist means nothing matched."
+      },
+      "DuplicateMatchItem": {
+        "properties": {
+          "source": {
+            "$ref": "#/components/schemas/MatchSource"
+          },
+          "matched_on": {
+            "$ref": "#/components/schemas/MatchedOn"
+          },
+          "key": {
+            "type": "string",
+            "title": "Key"
+          },
+          "preferred_term": {
+            "type": "string",
+            "title": "Preferred Term"
+          },
+          "term": {
+            "type": "string",
+            "title": "Term"
+          },
+          "similarity": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Similarity"
+          },
+          "label_provenance": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/LabelProvenance"
+            },
+            "type": "object",
+            "title": "Label Provenance"
+          }
+        },
+        "type": "object",
+        "required": [
+          "source",
+          "matched_on",
+          "key",
+          "preferred_term",
+          "term",
+          "similarity",
+          "label_provenance"
+        ],
+        "title": "DuplicateMatchItem",
+        "description": "One catalogue entry or open submission that a new submission may duplicate (FR-25).\n\n`key` is the entry's business key or the submission's id, and it never names a submitter\n(FR-42). `preferred_term` is that record's own preferred term. `term` is the text that matched,\nand is the synonym when `matched_on` is `synonym`. `similarity` is null for a code match.\n`label_provenance` states which designation `preferred_term` and `term` are (FR-98)."
       },
       "EntryCoreWriteResult": {
         "properties": {
@@ -7138,6 +7351,23 @@
         ],
         "title": "LengthWarning",
         "description": "FR-86: the catalogue's own preferred term exceeds the configured\nmaximum length. Non-blocking, the same \"warn, never raise\" shape as\n`CollisionWarning` - a hard block would make an existing over-length\nentry uneditable, the specific failure FR-86 exists to prevent.\n\nA separate union member from `CollisionWarning`, not a widened\n`CollisionWarning`: its shape (a colliding entry's business key, term,\nprovenance) has no field this could honestly populate, and this one has\nno colliding entry to name. Both ride the one `warnings` list so a\nfurther warning class adds a member, not a response field.\n\nOnly ever produced on `amend_designation_route`'s preferred-term\nbranch: FR-85's `length` is defined against the catalogue's own\npreferred term (`nptc.catalogue.term_hygiene.preferred_term_length`),\nwhich lives on `catalogue_entry.preferred_term`, never on a\n`designation` row (ADR-0022) - there is no other branch this could ever\napply to."
+      },
+      "MatchSource": {
+        "type": "string",
+        "enum": [
+          "catalogue_entry",
+          "submission"
+        ],
+        "title": "MatchSource"
+      },
+      "MatchedOn": {
+        "type": "string",
+        "enum": [
+          "preferred_term",
+          "synonym",
+          "code"
+        ],
+        "title": "MatchedOn"
       },
       "PatchEntryRequest": {
         "properties": {
@@ -8061,6 +8291,28 @@
         "title": "SnomedSynonyms",
         "description": "The active binding's SNOMED CT synonyms, as the terminology server serves them today.\n\nNever stored, so never part of `row_version` or the audit trail. `terms` excludes the FSN\nand the binding's AU preferred term, and is not limited to en-AU: no FHIR operation\nseparates the AU-acceptable synonyms, so US spellings can appear (see\n`nptc.terminology.synonyms`). `status` is `unavailable` when the server could not answer;\n`terms` is then empty, which is not the same as `available` with no terms. A code missing\nfrom the current AU edition is `available` with no terms."
       },
+      "SubmissionDuplicatesResponse": {
+        "properties": {
+          "detail": {
+            "type": "string",
+            "title": "Detail"
+          },
+          "matches": {
+            "items": {
+              "$ref": "#/components/schemas/DuplicateMatchItem"
+            },
+            "type": "array",
+            "title": "Matches"
+          }
+        },
+        "type": "object",
+        "required": [
+          "detail",
+          "matches"
+        ],
+        "title": "SubmissionDuplicatesResponse",
+        "description": "FR-25's 409 body: the matches the submitter must confirm before the submission is saved."
+      },
       "SubmissionPropertyValueRequest": {
         "properties": {
           "value": {
@@ -8190,6 +8442,18 @@
             ],
             "title": "Reference Status"
           },
+          "duplicate_confirmed_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Duplicate Confirmed At"
+          },
           "organisation": {
             "anyOf": [
               {
@@ -8232,13 +8496,14 @@
           "reference_url",
           "reference_checked_at",
           "reference_status",
+          "duplicate_confirmed_at",
           "organisation",
           "created_at",
           "row_version",
           "label_provenance"
         ],
         "title": "SubmissionResponse",
-        "description": "The stored submission.\n\n`snomed_fsn` is the label the terminology server returned for `snomed_code`, never anything\nthe caller sent (FR-82). `label_provenance` states which designation each label field is\n(FR-98): the suggested term is offered as the catalogue's preferred term, and the synonyms as\nsynonyms. The three `reference_*` fields describe one check and are all present or all absent;\na new test always has them."
+        "description": "The stored submission.\n\n`snomed_fsn` is the label the terminology server returned for `snomed_code`, never anything\nthe caller sent (FR-82). `label_provenance` states which designation each label field is\n(FR-98): the suggested term is offered as the catalogue's preferred term, and the synonyms as\nsynonyms. The three `reference_*` fields describe one check and are all present or all absent;\na new test always has them. `duplicate_confirmed_at` is when the submitter confirmed the\nmatches a 409 listed (FR-25), and is null when nothing matched."
       },
       "SubmittedPropertyValue": {
         "properties": {

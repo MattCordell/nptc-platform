@@ -172,7 +172,7 @@
   phase: p2
   title: "Provisional users, Members, Reviewers and Administrators can submit a proposed new test"
   status: in-progress
-  notes: "POST /api/v1/submissions stores a new-test submission in state Submitted, with the submitter and an editable copy of their organisation, for Provisional, Member, Reviewer and Administrator (backend/src/nptc/db/models/submission.py, migration 0027, backend/tests/test_api_submissions.py). Stays in-progress: the SPA submission form, amendments, the duplicate check and the quota do not exist yet."
+  notes: "POST /api/v1/submissions stores a new-test submission in state Submitted, with the submitter and an editable copy of their organisation, for Provisional, Member, Reviewer and Administrator (backend/src/nptc/db/models/submission.py, migration 0027, backend/tests/test_api_submissions.py). Stays in-progress: the SPA submission form, amendments and the quota do not exist yet."
 - id: "FR-24"
   priority: MUST
   phase: p2
@@ -183,8 +183,8 @@
   priority: MUST
   phase: p2
   title: "Before submission is accepted, the system MUST run duplicate detection against existing catalogue entries and open submissions"
-  status: planned
-  notes: ""
+  status: in-progress
+  notes: "POST /api/v1/submissions/duplicate-check returns the active catalogue entries and the open submissions that share the submission's SNOMED CT code or have a preferred term or synonym above the catalogue search's trigram threshold (backend/src/nptc/submissions/duplicates.py, backend/tests/test_submissions_duplicates.py, test_api_submissions.py). POST /api/v1/submissions answers 409 with the matches when there are any and the request does not set confirm_not_duplicate, and saves nothing. A confirmed submission stores the time and the matches the server found (migration 0029). Open means every state except Published in release, Rejected and Withdrawn. The check never calls the terminology server. Stays in-progress: the submission form step that shows the matches and asks the submitter to confirm (issue #547) does not exist yet, so the requirement is met by the API alone."
 - id: "FR-26"
   priority: SHOULD
   phase: p2
