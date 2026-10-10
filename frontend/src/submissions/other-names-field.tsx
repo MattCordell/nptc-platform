@@ -33,15 +33,28 @@ export function OtherNamesField({
     onChange(rows.map((row) => (row.id === id ? { ...row, term } : row)));
   }
 
-  function paste(id: string, text: string): boolean {
+  /**
+   * Splits pasted text into names without losing what the row holds. The pasted text replaces
+   * the selection. If the row still has text outside it, that text stays and every pasted name
+   * becomes a row after it. If nothing is left, the first name takes the row.
+   */
+  function paste(input: HTMLInputElement, id: string, text: string): boolean {
     const parts = splitSynonyms(text);
     if (parts.length < 2) {
       return false;
     }
     const at = rows.findIndex((row) => row.id === id);
-    const added = parts.slice(1).map((term) => ({ ...blankName(), term }));
+    const current = rows[at].term;
+    const start = input.selectionStart ?? current.length;
+    const end = input.selectionEnd ?? current.length;
+    const kept = current.slice(0, start) + current.slice(end);
+    const keepsRow = kept.trim() !== "";
+    const added = (keepsRow ? parts : parts.slice(1)).map((term) => ({
+      ...blankName(),
+      term,
+    }));
     const replaced = rows.map((row) =>
-      row.id === id ? { ...row, term: parts[0] } : row,
+      row.id === id ? { ...row, term: keepsRow ? kept : parts[0] } : row,
     );
     onChange([...replaced.slice(0, at + 1), ...added, ...replaced.slice(at + 1)]);
     return true;
@@ -76,7 +89,13 @@ export function OtherNamesField({
                   value={row.term}
                   onChange={(event) => setTerm(row.id, event.target.value)}
                   onPaste={(event) => {
-                    if (paste(row.id, event.clipboardData.getData("text"))) {
+                    if (
+                      paste(
+                        event.currentTarget,
+                        row.id,
+                        event.clipboardData.getData("text"),
+                      )
+                    ) {
                       event.preventDefault();
                     }
                   }}
