@@ -24,6 +24,7 @@ import uuid
 from collections.abc import Callable, Iterator
 from functools import lru_cache
 from typing import Annotated
+from urllib.parse import urlsplit
 
 from fastapi import Depends, Request
 from sqlalchemy.orm import Session
@@ -40,6 +41,7 @@ from nptc.db.session import session_scope
 from nptc.registry.datatypes import build_builtin_handlers
 from nptc.registry.handlers import DatatypeRegistry, HandlerDeps
 from nptc.settings import ApiSettings, AuthSettings
+from nptc.submissions.reference_check import HttpReferenceChecker, ReferenceChecker, tcp_probe
 from nptc.terminology.synonyms import SnomedSynonymSource, interactive_config
 from nptc_shared.terminology import OntoserverClient, TerminologyClient, TerminologyConfig
 
@@ -91,6 +93,27 @@ def get_snomed_synonym_source() -> SnomedSynonymSource:
 
 
 SnomedSynonymSourceDep = Annotated[SnomedSynonymSource, Depends(get_snomed_synonym_source)]
+
+
+def _outbound_reachable() -> bool:
+    """The no-egress probe: can this deployment open a connection to the terminology server's host?
+
+    The platform already needs that host, so this adds no setting. It runs only after a link
+    failed to resolve or connect (`HttpReferenceChecker`), never on a healthy check."""
+    base = urlsplit(TerminologyConfig.from_env().base_url)
+    host = base.hostname
+    if not host:
+        return False
+    return tcp_probe(host, base.port or (80 if base.scheme == "http" else 443))
+
+
+@lru_cache(maxsize=1)
+def get_reference_checker() -> ReferenceChecker:
+    """The FR-27 link checker. Construction opens no socket, so building it lazily is safe."""
+    return HttpReferenceChecker(probe=_outbound_reachable)
+
+
+ReferenceCheckerDep = Annotated[ReferenceChecker, Depends(get_reference_checker)]
 
 
 def get_session() -> Iterator[Session]:
