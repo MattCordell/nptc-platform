@@ -46,7 +46,9 @@ submissions, new tests and amendments together, against the quota their roles al
 (`nptc.submissions.quota`). A refusal is returned and sent as a normal response, never raised,
 because the request session rolls back on an exception and would take the audit event with it. An
 hourly refusal carries `Retry-After`, and a lifetime one does not, because waiting does not lift it.
-The check runs after the permission gate and the body validation, and before any terminology or
+A caller whose earlier submission is still being processed is refused too, with `limit` of
+`concurrent` and a short `Retry-After`, rather than made to wait for the per-user lock while holding
+a database connection. The check runs after the permission gate and the body validation, and before any terminology or
 reference call, so an over-limit caller costs the server no network request. The duplicate check
 writes nothing and is not counted.
 
@@ -195,13 +197,16 @@ _RESPONSE_429: Final[dict[str, Any]] = {
         "the quota is a number of submissions in a rolling hour, and the response then carries "
         "`Retry-After`, the whole seconds until a submission can be made. `limit` is `lifetime` "
         "when the quota is a total, and the response carries no `Retry-After`, because waiting "
-        "does not lift it. Nothing was saved, and the quota refusal is recorded in the audit trail."
+        "does not lift it. Nothing was saved, and a used-up quota is recorded in the audit trail. "
+        "`limit` is `concurrent` when an earlier submission from the same user is still being "
+        "processed. The response then carries a short `Retry-After`, and the refusal is not "
+        "audited, because no limit was reached."
     ),
     "headers": {
         "Retry-After": {
             "description": (
                 "Whole seconds until the caller can try again. Always present on a request budget "
-                "refusal, and on a quota refusal only when `limit` is `hourly`."
+                "refusal, and on a quota refusal only when `limit` is `hourly` or `concurrent`."
             ),
             "schema": {"type": "integer", "minimum": 1},
         }
@@ -574,6 +579,11 @@ def _plural(count: int, noun: str) -> str:
 
 
 def _quota_detail(refusal: QuotaRefusal) -> str:
+    if refusal.limit is QuotaLimit.CONCURRENT:
+        return (
+            "Another submission from your account is still being checked. "
+            f"Try again in {_plural(refusal.retry_after_seconds or 1, 'second')}."
+        )
     if refusal.limit is QuotaLimit.LIFETIME:
         return (
             f"Your account has reached its limit of {_plural(refusal.maximum, 'submission')} in "

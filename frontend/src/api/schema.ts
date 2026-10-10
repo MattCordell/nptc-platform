@@ -2431,7 +2431,7 @@ export interface components {
          * @description Which limit was reached. A fixed set, so the API can name it without echoing anything.
          * @enum {string}
          */
-        QuotaLimit: "lifetime" | "hourly";
+        QuotaLimit: "lifetime" | "hourly" | "concurrent";
         /** RateLimitedResponse */
         RateLimitedResponse: {
             /**
@@ -5628,10 +5628,10 @@ export interface operations {
                     "application/json": components["schemas"]["HTTPValidationError"] | components["schemas"]["ErrorResponse"] | components["schemas"]["PropertyValidationResponse"];
                 };
             };
-            /** @description Either the caller has used up their submission quota (FR-43), or an anonymous or repeatedly rejected address has used up its request budget (FR-22, a `RateLimitedResponse`). For a quota refusal, new tests and amendments share one counter. `limit` is `hourly` when the quota is a number of submissions in a rolling hour, and the response then carries `Retry-After`, the whole seconds until a submission can be made. `limit` is `lifetime` when the quota is a total, and the response carries no `Retry-After`, because waiting does not lift it. Nothing was saved, and the quota refusal is recorded in the audit trail. */
+            /** @description Either the caller has used up their submission quota (FR-43), or an anonymous or repeatedly rejected address has used up its request budget (FR-22, a `RateLimitedResponse`). For a quota refusal, new tests and amendments share one counter. `limit` is `hourly` when the quota is a number of submissions in a rolling hour, and the response then carries `Retry-After`, the whole seconds until a submission can be made. `limit` is `lifetime` when the quota is a total, and the response carries no `Retry-After`, because waiting does not lift it. Nothing was saved, and a used-up quota is recorded in the audit trail. `limit` is `concurrent` when an earlier submission from the same user is still being processed. The response then carries a short `Retry-After`, and the refusal is not audited, because no limit was reached. */
             429: {
                 headers: {
-                    /** @description Whole seconds until the caller can try again. Always present on a request budget refusal, and on a quota refusal only when `limit` is `hourly`. */
+                    /** @description Whole seconds until the caller can try again. Always present on a request budget refusal, and on a quota refusal only when `limit` is `hourly` or `concurrent`. */
                     "Retry-After"?: number;
                     [name: string]: unknown;
                 };
@@ -5735,10 +5735,10 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description Either the caller has used up their submission quota (FR-43), or an anonymous or repeatedly rejected address has used up its request budget (FR-22, a `RateLimitedResponse`). For a quota refusal, new tests and amendments share one counter. `limit` is `hourly` when the quota is a number of submissions in a rolling hour, and the response then carries `Retry-After`, the whole seconds until a submission can be made. `limit` is `lifetime` when the quota is a total, and the response carries no `Retry-After`, because waiting does not lift it. Nothing was saved, and the quota refusal is recorded in the audit trail. */
+            /** @description Either the caller has used up their submission quota (FR-43), or an anonymous or repeatedly rejected address has used up its request budget (FR-22, a `RateLimitedResponse`). For a quota refusal, new tests and amendments share one counter. `limit` is `hourly` when the quota is a number of submissions in a rolling hour, and the response then carries `Retry-After`, the whole seconds until a submission can be made. `limit` is `lifetime` when the quota is a total, and the response carries no `Retry-After`, because waiting does not lift it. Nothing was saved, and a used-up quota is recorded in the audit trail. `limit` is `concurrent` when an earlier submission from the same user is still being processed. The response then carries a short `Retry-After`, and the refusal is not audited, because no limit was reached. */
             429: {
                 headers: {
-                    /** @description Whole seconds until the caller can try again. Always present on a request budget refusal, and on a quota refusal only when `limit` is `hourly`. */
+                    /** @description Whole seconds until the caller can try again. Always present on a request budget refusal, and on a quota refusal only when `limit` is `hourly` or `concurrent`. */
                     "Retry-After"?: number;
                     [name: string]: unknown;
                 };

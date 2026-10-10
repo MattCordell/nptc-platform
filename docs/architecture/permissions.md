@@ -240,16 +240,20 @@ the request through or returns a refusal.
   permissive value in each dimension. Reviewer and Administrator have no limit, and a request from
   them takes no lock and runs no query.
 - **A refusal is a 429.** The body is `SubmissionQuotaResponse`: `detail` (one sentence), `limit`
-  (`lifetime` or `hourly`) and `maximum`. An hourly refusal carries `Retry-After`, the whole seconds
-  until the limit-th newest submission in the window is an hour old, rounded up and never below 1. A
-  lifetime refusal carries none, because waiting does not lift it.
+  (`lifetime`, `hourly` or `concurrent`) and `maximum`. An hourly refusal carries `Retry-After`, the
+  whole seconds until the limit-th newest submission in the window is an hour old, rounded up and
+  never below 1. A lifetime refusal carries none, because waiting does not lift it.
 - **A refusal is audited and the event survives it.** The check returns the refusal and the route
   sends the 429 as a normal response. The request session therefore commits the
   `submission.quota_refused` event. Raising an exception would roll the session back and lose it.
-- **Concurrency.** The check takes `pg_advisory_xact_lock(hashtext('submission-quota:<user id>'))`,
+- **Concurrency.** The check tries `pg_try_advisory_xact_lock(hashtext('submission-quota:<user id>'))`,
   which the transaction holds until it commits, after the caller's insert. Two requests for the last
-  slot therefore run one after the other, and the second is refused. The lock is per user, so one
-  user's requests never wait on another's.
+  slot therefore never both count it as free. The second finds the lock taken and is refused at once
+  with `limit` of `concurrent` and a `Retry-After` of 5 seconds. It does not wait, because a waiter
+  would hold a pooled database connection for as long as the holder's terminology and reference
+  calls take, and one user's parallel requests could drain the pool for everyone. That refusal is not
+  audited, since no limit was reached. The lock is per user, so one user's requests never block
+  another's.
 - **Lock order.** The per-user lock is taken before the global audit append lock on both the refusal
   path and the success path, and nothing takes them the other way round. The check runs before the
   terminology lookup and the reference fetch, so an over-limit user costs the server no network

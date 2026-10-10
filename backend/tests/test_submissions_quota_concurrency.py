@@ -31,7 +31,7 @@ from nptc.db.models.catalogue_entry import CatalogueEntry
 from nptc.db.models.submission import Submission, SubmissionKind
 from nptc.db.models.user import User
 from nptc.submissions.amendment import AmendmentInput, create_amendment_submission
-from nptc.submissions.quota import QuotaRefusal, enforce_submission_quota
+from nptc.submissions.quota import QuotaLimit, QuotaRefusal, enforce_submission_quota
 from nptc_shared.terminology import StubTerminologyClient
 
 
@@ -88,7 +88,9 @@ def test_two_concurrent_requests_for_the_last_slot_admit_exactly_one(
     racing_user: tuple[uuid.UUID, str], app_engine: Engine
 ) -> None:
     """Each request counts, waits a moment, then saves. A request that did not hold the per-user
-    lock would count four in both transactions and both would save."""
+    lock would count four in both transactions and both would save. The loser is refused either
+    because the lock is busy or, if it arrives after the winner commits, because the count is full,
+    so only the stored total is asserted."""
     user_id, business_key = racing_user
     barrier = threading.Barrier(2)
     results: dict[str, str] = {}
@@ -139,28 +141,22 @@ def test_two_concurrent_requests_for_the_last_slot_admit_exactly_one(
         stored = check.execute(
             select(func.count()).select_from(Submission).where(Submission.submitter_id == user_id)
         ).scalar_one()
-        refusals = check.execute(
-            select(func.count())
-            .select_from(AuditEvent)
-            .where(AuditEvent.action == _REFUSED_ACTION, AuditEvent.entity_id == str(user_id))
-        ).scalar_one()
     assert stored == 5
-    assert refusals == 1
 
 
 # --- lock order --------------------------------------------------------------------------------
 
 
 def _is_lock_or_submission_read(statement: str, parameters: object) -> bool:
-    return "pg_advisory_xact_lock" in statement or "FROM submission" in statement
+    return "advisory_xact_lock" in statement or "FROM submission" in statement
 
 
 def _is_user_lock(statement: str) -> bool:
-    return "pg_advisory_xact_lock" in statement and "hashtext" in statement
+    return "advisory_xact_lock" in statement and "hashtext" in statement
 
 
 def _is_append_lock(statement: str, parameters: object) -> bool:
-    return "pg_advisory_xact_lock" in statement and "hashtext" not in statement
+    return "advisory_xact_lock" in statement and "hashtext" not in statement
 
 
 def _user(session: Session) -> tuple[User, AuditContext]:
@@ -245,3 +241,49 @@ def test_the_user_lock_key_is_bound_as_a_parameter_and_names_the_user(
 
     assert keys == [f"submission-quota:{user.id}"]
     assert AUDIT_APPEND_LOCK_KEY not in keys
+
+
+@pytest.mark.req("FR-43")
+@pytest.mark.integration
+def test_a_request_that_finds_the_user_lock_taken_is_refused_at_once_and_not_audited(
+    racing_user: tuple[uuid.UUID, str], app_engine: Engine
+) -> None:
+    """A waiter would hold a pooled connection for as long as the holder's network calls take, so
+    the lock is tried and a busy one is a refusal. The holder here is a second open transaction."""
+    user_id, _ = racing_user
+    holder = Session(app_engine)
+    waiter = Session(app_engine)
+    try:
+        assert (
+            enforce_submission_quota(
+                holder,
+                _context(user_id),
+                quota=QUOTAS[Role.PROVISIONAL],
+                kind=SubmissionKind.NEW_TEST,
+            )
+            is None
+        )
+
+        started = time.monotonic()
+        refusal = enforce_submission_quota(
+            waiter,
+            _context(user_id),
+            quota=QUOTAS[Role.PROVISIONAL],
+            kind=SubmissionKind.NEW_TEST,
+        )
+        waited = time.monotonic() - started
+        waiter.commit()
+    finally:
+        holder.rollback()
+        holder.close()
+        waiter.close()
+
+    assert refusal == QuotaRefusal(QuotaLimit.CONCURRENT, 1, 5)
+    assert waited < 2
+    with Session(app_engine) as check:
+        refusals = check.execute(
+            select(func.count())
+            .select_from(AuditEvent)
+            .where(AuditEvent.action == _REFUSED_ACTION, AuditEvent.entity_id == str(user_id))
+        ).scalar_one()
+    assert refusals == 0

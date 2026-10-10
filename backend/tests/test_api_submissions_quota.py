@@ -20,8 +20,8 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-from sqlalchemy import func, select
-from sqlalchemy.engine import Connection
+from sqlalchemy import func, select, text
+from sqlalchemy.engine import Connection, Engine
 
 from nptc.auth.permissions import Role
 from nptc.db.models.audit import AuditEvent
@@ -204,6 +204,30 @@ def test_a_refusal_makes_no_terminology_or_reference_call(api: ApiTestApp) -> No
     assert amendment.status_code == 429, amendment.text
     assert api.reference_checker.urls == []
     assert api.terminology.requests == ()
+
+
+@pytest.mark.req("FR-43")
+@pytest.mark.integration
+def test_a_caller_whose_earlier_submission_is_still_running_is_429_with_a_short_retry_time(
+    api: ApiTestApp, app_engine: Engine
+) -> None:
+    """Another connection holds the user's lock, as a request in the middle of its network calls
+    does. The second request is refused at once, saves nothing and writes no audit event."""
+    token, user = _token(api, Role.PROVISIONAL)
+    with app_engine.connect() as other:
+        other.execute(
+            text("SELECT pg_advisory_xact_lock(hashtext(:key))"),
+            {"key": f"submission-quota:{user.id}"},
+        )
+        response = _new_test(api, token)
+        other.rollback()
+
+    assert response.status_code == 429, response.text
+    assert response.json()["limit"] == "concurrent"
+    assert response.headers["Retry-After"] == "5"
+    assert "still being checked" in response.json()["detail"]
+    assert _submission_count(api, user) == 0
+    assert _refusal_events(api, user) == []
 
 
 @pytest.mark.req("FR-43")

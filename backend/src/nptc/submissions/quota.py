@@ -9,9 +9,14 @@ exception, so an audit event written before a raised error would vanish with the
 turns the returned value into a normal 429 response, the session commits, and the event stays.
 
 **The lock and the count come before any network call.** An over-limit user is refused before the
-terminology lookup and the reference fetch. The lock is per user, so it only makes that user's other
-submissions wait. It is released at commit, which is after the caller's insert, so two requests for
-the last slot cannot both count the slot as free.
+terminology lookup and the reference fetch. The lock is per user and is released at commit, which is
+after the caller's insert, so two requests for the last slot cannot both count the slot as free.
+
+**A busy lock is a refusal, never a wait.** The holder keeps the lock through the terminology lookup
+and the reference fetch. A request that waited for it would hold a pooled database connection for as
+long, and one user sending many parallel requests could drain the pool for everyone. So the lock is
+tried, and a request that finds it taken is refused with `QuotaLimit.CONCURRENT` and a short
+`Retry-After`. That refusal is not audited: no limit was reached, and the audit append lock is global.
 
 **Lock order.** The per-user lock comes before the audit append lock, on the refusal path and on
 the success path, and nothing takes them in the reverse order. The audit append lock stays global,
@@ -43,7 +48,10 @@ _WINDOW = timedelta(hours=1)
 
 #: `hashtext` is undocumented and has no cross-version stability contract, which is harmless
 #: because the value is never stored (see `nptc.catalogue.collisions`).
-_ACQUIRE_USER_LOCK_SQL = text("SELECT pg_advisory_xact_lock(hashtext(:key))")
+_TRY_USER_LOCK_SQL = text("SELECT pg_try_advisory_xact_lock(hashtext(:key))")
+
+#: How long a caller whose previous submission is still being checked is told to wait.
+_BUSY_RETRY_AFTER_SECONDS = 5
 
 
 class QuotaLimit(StrEnum):
@@ -51,12 +59,15 @@ class QuotaLimit(StrEnum):
 
     LIFETIME = "lifetime"
     HOURLY = "hourly"
+    #: Not a quota: an earlier submission from the same user is still being processed.
+    CONCURRENT = "concurrent"
 
 
 @dataclass(frozen=True)
 class QuotaRefusal:
-    """A used-up quota. `retry_after_seconds` is `None` when waiting does not help: a lifetime
-    limit never lifts, and an hourly limit of zero never admits anyone."""
+    """A refused submission. `retry_after_seconds` is `None` when waiting does not help: a lifetime
+    limit never lifts, and an hourly limit of zero never admits anyone. For `CONCURRENT`, `maximum`
+    is 1, the number of submissions one user may have in flight."""
 
     limit: QuotaLimit
     maximum: int
@@ -70,7 +81,8 @@ def enforce_submission_quota(
     quota: SubmissionQuota,
     kind: SubmissionKind,
 ) -> QuotaRefusal | None:
-    """`None` when the user may submit, or the refusal after recording it in the audit trail.
+    """`None` when the user may submit, or the refusal. A refusal for a used-up quota is recorded
+    in the audit trail first. One for a busy lock is not.
 
     The lifetime limit is checked first, because it decides whether a wait helps at all. Takes
     no lock and runs no query when the quota has no limit.
@@ -81,7 +93,11 @@ def enforce_submission_quota(
     if quota.lifetime_max is None and quota.per_hour_max is None:
         return None
 
-    session.execute(_ACQUIRE_USER_LOCK_SQL, {"key": f"submission-quota:{user_id}"})
+    acquired = session.execute(
+        _TRY_USER_LOCK_SQL, {"key": f"submission-quota:{user_id}"}
+    ).scalar_one()
+    if not acquired:
+        return QuotaRefusal(QuotaLimit.CONCURRENT, 1, _BUSY_RETRY_AFTER_SECONDS)
 
     if quota.lifetime_max is not None:
         lifetime_count = _count(session, Submission.submitter_id == user_id)
