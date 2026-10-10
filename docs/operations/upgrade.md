@@ -72,6 +72,7 @@ and/or `data-model.md`, so it gets no section of its own below.
 | [`0026_drop_designation_language.py`](../../backend/migrations/versions/0026_drop_designation_language.py) | Drops `designation.use`, `designation.language` and `designation_collision_acknowledgement.language` (see [`data-model.md`](../architecture/data-model.md#designation-issue-47-fr-04-fr-24-fr-37-fr-85)) | See [below](#0026_drop_designation_languagepy) - refuses to run if any row is not an en-AU synonym; re-emit any dataset made before this release |
 | [`0027_submission.py`](../../backend/migrations/versions/0027_submission.py) | `submission` (see [`data-model.md`](../architecture/data-model.md#submission-fr-23-fr-27-fr-28-fr-29-nfr-08)) | See [below](#0027_submissionpy) - an empty table on upgrade, and the downgrade discards every submission |
 | [`0028_submission_reference.py`](../../backend/migrations/versions/0028_submission_reference.py) | `submission.reference_url`, `reference_checked_at` and `reference_status` (see [`data-model.md`](../architecture/data-model.md#submission-fr-23-fr-27-fr-28-fr-29-nfr-08)) | See [below](#0028_submission_referencepy) - three nullable columns, and the downgrade discards every stored reference |
+| [`0029_submission_duplicate_confirmation.py`](../../backend/migrations/versions/0029_submission_duplicate_confirmation.py) | `submission.duplicate_confirmed_at` and `duplicate_matches` (see [`data-model.md`](../architecture/data-model.md#submission-fr-23-fr-27-fr-28-fr-29-nfr-08)) | See [below](#0029_submission_duplicate_confirmationpy) - two columns, and the downgrade discards every stored confirmation |
 
 ## Provisioning the app role's login
 
@@ -625,6 +626,20 @@ on and leaves those rows alone. The API at this revision requires `reference_url
 
 The downgrade drops the three columns, which discards every stored reference. Take a backup
 first if any submissions have been made.
+
+## `0029_submission_duplicate_confirmation.py`
+
+Adds two columns to `submission` for the duplicate check (FR-25): `duplicate_matches`, which
+defaults to an empty array, and `duplicate_confirmed_at`, which is null. A submission saved at
+revision 0028 reads as one that matched nothing, so the upgrade is instant and needs no data step.
+Two checks tie the columns together: the matches are an array, and a confirmation time exists
+exactly when the array is not empty.
+
+The API at this revision serves `POST /api/v1/submissions/duplicate-check` and answers 409 on
+`POST /api/v1/submissions` for a submission that has matches and no confirmation.
+
+The downgrade drops the two columns, which discards every stored confirmation. Take a backup first
+if any submissions have been made.
 
 ## Testcontainers and Docker
 
