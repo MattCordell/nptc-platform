@@ -11,7 +11,8 @@ write. `test_lock_ordering.py` therefore names this function as exempt from its 
 **A duplicate must be confirmed (FR-25).** After the code is resolved, the submission is compared
 with the active catalogue and the open submissions. A match without `confirm_not_duplicate` raises
 and saves nothing. A confirmed match is stored with the database time and the matches found at
-this moment, never a list the caller supplied. They can include a match the submitter never saw. The comparison is a read, so it also runs before the lock.
+this moment, never a list the caller supplied. They can include a match the submitter never saw.
+The comparison is a read, so it also runs before the lock.
 
 **The reference link is fetched before the lock too (FR-27).** A new test must carry one, and the
 check can take up to its own deadline, so it runs after every cheaper refusal, the duplicate check
