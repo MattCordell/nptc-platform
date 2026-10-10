@@ -8,12 +8,17 @@ events as a delta, because `backend/tests` shares one Postgres container (see `C
 
 from __future__ import annotations
 
+import importlib.util
+import sys
 import uuid
 from collections.abc import Callable
+from datetime import UTC, datetime
+from pathlib import Path
 from typing import Any
 
 import pytest
 from sqlalchemy import func, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from nptc.audit.diffing import REDACTED_KEY
@@ -31,6 +36,12 @@ from nptc.registry.datatypes import build_builtin_handlers
 from nptc.registry.handlers import DatatypeRegistry, HandlerDeps
 from nptc.submissions.errors import CodeRefusal, FreeTextRefusedError, SubmissionCodeRefusedError
 from nptc.submissions.new_test import NewTestSubmissionInput, create_new_test_submission
+from nptc.submissions.reference_check import (
+    ReferenceCheckFailedError,
+    ReferenceCheckResult,
+    ReferenceCheckUnavailableError,
+    ReferenceFailure,
+)
 from nptc.terminology.errors import TerminologyUnavailableError
 from nptc_shared.sctid import InvalidSCTIDError
 from nptc_shared.terminology import (
@@ -47,6 +58,19 @@ from nptc_shared.terminology import (
 )
 from nptc_shared.terminology.models import Edition, ValidationResult
 
+
+def _load(name: str) -> Any:
+    spec = importlib.util.spec_from_file_location(name, Path(__file__).parent / f"{name}.py")
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+StubReferenceChecker = _load("api_app_support").StubReferenceChecker
+
+_REFERENCE_URL = "https://example.org/evidence"
 _CODE = "391483001"
 _FSN = "Microscopy (acid fast bacilli) (procedure)"
 _FSN_USE_CODE = "900000000000003001"
@@ -135,6 +159,7 @@ def _create(
     client: StubTerminologyClient | None = None,
     *,
     profile_organisation: str | None = _PROFILE_ORGANISATION,
+    reference_checker: Any = None,
 ) -> Submission:
     terminology = client if client is not None else StubTerminologyClient()
     return create_new_test_submission(
@@ -144,6 +169,9 @@ def _create(
         profile_organisation=profile_organisation,
         registry=_registry(session, terminology),
         terminology_client=terminology,
+        reference_checker=reference_checker
+        if reference_checker is not None
+        else StubReferenceChecker(),
     )
 
 
@@ -160,6 +188,7 @@ def test_creates_a_new_test_submission_in_state_submitted(app_session: Session) 
         app_session,
         ctx,
         NewTestSubmissionInput(
+            reference_url=_REFERENCE_URL,
             preferred_term="  Serum" + NBSP + "sodium  ",
             synonyms=["Sodium, serum", "Na (serum)"],
             notes="  Seen on the new analyser panel  ",
@@ -183,7 +212,11 @@ def test_creates_a_new_test_submission_in_state_submitted(app_session: Session) 
 def test_the_organisation_defaults_to_the_profile_value(app_session: Session) -> None:
     _, ctx = _submitter(app_session)
 
-    submission = _create(app_session, ctx, NewTestSubmissionInput(preferred_term="Serum sodium"))
+    submission = _create(
+        app_session,
+        ctx,
+        NewTestSubmissionInput(reference_url=_REFERENCE_URL, preferred_term="Serum sodium"),
+    )
 
     assert submission.organisation == _PROFILE_ORGANISATION
 
@@ -207,7 +240,9 @@ def test_the_request_can_override_the_organisation(
     submission = _create(
         app_session,
         ctx,
-        NewTestSubmissionInput(preferred_term="Serum sodium", organisation=requested),
+        NewTestSubmissionInput(
+            reference_url=_REFERENCE_URL, preferred_term="Serum sodium", organisation=requested
+        ),
     )
 
     assert submission.organisation == expected
@@ -221,7 +256,7 @@ def test_a_profile_without_an_organisation_leaves_the_copy_empty(app_session: Se
     submission = _create(
         app_session,
         ctx,
-        NewTestSubmissionInput(preferred_term="Serum sodium"),
+        NewTestSubmissionInput(reference_url=_REFERENCE_URL, preferred_term="Serum sodium"),
         profile_organisation=None,
     )
 
@@ -239,7 +274,9 @@ def test_one_audit_event_records_the_content_and_withholds_the_organisation(
     submission = _create(
         app_session,
         ctx,
-        NewTestSubmissionInput(preferred_term="Serum sodium", notes="A note"),
+        NewTestSubmissionInput(
+            reference_url=_REFERENCE_URL, preferred_term="Serum sodium", notes="A note"
+        ),
     )
 
     assert _audit_event_count(app_session) == before + 1
@@ -267,7 +304,11 @@ def test_a_submission_needs_a_human_submitter(app_session: Session) -> None:
     before = _audit_event_count(app_session)
 
     with pytest.raises(ValueError, match="human submitter"):
-        _create(app_session, anonymous_ctx, NewTestSubmissionInput(preferred_term="Serum sodium"))
+        _create(
+            app_session,
+            anonymous_ctx,
+            NewTestSubmissionInput(reference_url=_REFERENCE_URL, preferred_term="Serum sodium"),
+        )
 
     assert _audit_event_count(app_session) == before
 
@@ -285,7 +326,11 @@ def test_a_term_that_cannot_be_cleaned_is_refused(app_session: Session, term: st
     before = _audit_event_count(app_session)
 
     with pytest.raises(TermCleaningError):
-        _create(app_session, ctx, NewTestSubmissionInput(preferred_term=term))
+        _create(
+            app_session,
+            ctx,
+            NewTestSubmissionInput(reference_url=_REFERENCE_URL, preferred_term=term),
+        )
 
     assert _submission_count(app_session, user.id) == 0
     assert _audit_event_count(app_session) == before
@@ -300,7 +345,11 @@ def test_a_synonym_that_cannot_be_cleaned_is_refused(app_session: Session) -> No
         _create(
             app_session,
             ctx,
-            NewTestSubmissionInput(preferred_term="Serum sodium", synonyms=["Sodium", "  "]),
+            NewTestSubmissionInput(
+                reference_url=_REFERENCE_URL,
+                preferred_term="Serum sodium",
+                synonyms=["Sodium", "  "],
+            ),
         )
 
     assert _submission_count(app_session, user.id) == 0
@@ -320,7 +369,11 @@ def test_the_stored_fsn_is_the_one_the_server_returned(app_session: Session) -> 
     submission = _create(
         app_session,
         ctx,
-        NewTestSubmissionInput(preferred_term="Acid fast bacilli microscopy", snomed_code=_CODE),
+        NewTestSubmissionInput(
+            reference_url=_REFERENCE_URL,
+            preferred_term="Acid fast bacilli microscopy",
+            snomed_code=_CODE,
+        ),
         client,
     )
 
@@ -341,7 +394,9 @@ def test_a_code_the_server_does_not_know_is_refused_with_a_reason(app_session: S
         _create(
             app_session,
             ctx,
-            NewTestSubmissionInput(preferred_term="Serum sodium", snomed_code=_CODE),
+            NewTestSubmissionInput(
+                reference_url=_REFERENCE_URL, preferred_term="Serum sodium", snomed_code=_CODE
+            ),
             client,
         )
 
@@ -360,7 +415,9 @@ def test_an_inactive_code_is_refused_with_a_reason(app_session: Session) -> None
         _create(
             app_session,
             ctx,
-            NewTestSubmissionInput(preferred_term="Serum sodium", snomed_code=_CODE),
+            NewTestSubmissionInput(
+                reference_url=_REFERENCE_URL, preferred_term="Serum sodium", snomed_code=_CODE
+            ),
             _client_with_concept(active=False),
         )
 
@@ -393,7 +450,9 @@ def test_a_code_whose_active_status_is_not_reported_is_refused(app_session: Sess
         _create(
             app_session,
             ctx,
-            NewTestSubmissionInput(preferred_term="Serum sodium", snomed_code=_CODE),
+            NewTestSubmissionInput(
+                reference_url=_REFERENCE_URL, preferred_term="Serum sodium", snomed_code=_CODE
+            ),
             client,
         )
 
@@ -421,7 +480,9 @@ def test_a_code_with_no_served_fsn_is_refused(app_session: Session) -> None:
         _create(
             app_session,
             ctx,
-            NewTestSubmissionInput(preferred_term="Serum sodium", snomed_code=_CODE),
+            NewTestSubmissionInput(
+                reference_url=_REFERENCE_URL, preferred_term="Serum sodium", snomed_code=_CODE
+            ),
             client,
         )
 
@@ -443,7 +504,9 @@ def test_a_terminology_outage_is_reported_as_unavailable_not_as_a_bad_code(
         _create(
             app_session,
             ctx,
-            NewTestSubmissionInput(preferred_term="Serum sodium", snomed_code=_CODE),
+            NewTestSubmissionInput(
+                reference_url=_REFERENCE_URL, preferred_term="Serum sodium", snomed_code=_CODE
+            ),
             client,
         )
 
@@ -464,7 +527,9 @@ def test_a_malformed_code_is_refused_without_asking_the_server(
         _create(
             app_session,
             ctx,
-            NewTestSubmissionInput(preferred_term="Serum sodium", snomed_code=code),
+            NewTestSubmissionInput(
+                reference_url=_REFERENCE_URL, preferred_term="Serum sodium", snomed_code=code
+            ),
             client,
         )
 
@@ -488,6 +553,7 @@ def test_submission_scoped_values_are_stored_under_their_property_key(
         app_session,
         ctx,
         NewTestSubmissionInput(
+            reference_url=_REFERENCE_URL,
             preferred_term="Serum sodium",
             property_values={
                 "sub_analyte": [PropertyValueInput(value="Sodium", justification="Per panel")],
@@ -511,7 +577,11 @@ def test_a_property_with_no_values_is_treated_as_absent(app_session: Session) ->
     submission = _create(
         app_session,
         ctx,
-        NewTestSubmissionInput(preferred_term="Serum sodium", property_values={"sub_optional": []}),
+        NewTestSubmissionInput(
+            reference_url=_REFERENCE_URL,
+            preferred_term="Serum sodium",
+            property_values={"sub_optional": []},
+        ),
     )
 
     assert submission.property_values == {}
@@ -533,6 +603,7 @@ def test_a_property_outside_submission_scope_is_refused(app_session: Session) ->
             app_session,
             ctx,
             NewTestSubmissionInput(
+                reference_url=_REFERENCE_URL,
                 preferred_term="Serum sodium",
                 property_values={"sub_maintenance_only": [PropertyValueInput(value="x")]},
             ),
@@ -558,6 +629,7 @@ def test_an_out_of_scope_coded_value_never_reaches_the_terminology_server(
             app_session,
             ctx,
             NewTestSubmissionInput(
+                reference_url=_REFERENCE_URL,
                 preferred_term="Serum sodium",
                 property_values={"sub_maintenance_only": [PropertyValueInput(value="x")]},
             ),
@@ -579,6 +651,7 @@ def test_an_unknown_property_or_a_computed_field_is_refused(app_session: Session
             app_session,
             ctx,
             NewTestSubmissionInput(
+                reference_url=_REFERENCE_URL,
                 preferred_term="Serum sodium",
                 property_values={key: [PropertyValueInput(value=12)]},
             ),
@@ -608,6 +681,7 @@ def test_a_deprecated_property_is_refused(app_session: Session) -> None:
             app_session,
             ctx,
             NewTestSubmissionInput(
+                reference_url=_REFERENCE_URL,
                 preferred_term="Serum sodium",
                 property_values={"sub_retired": [PropertyValueInput(value="x")]},
             ),
@@ -628,6 +702,7 @@ def test_a_value_the_registry_handler_refuses_is_refused(app_session: Session) -
             app_session,
             ctx,
             NewTestSubmissionInput(
+                reference_url=_REFERENCE_URL,
                 preferred_term="Serum sodium",
                 property_values={"sub_short": [PropertyValueInput(value="too long")]},
             ),
@@ -645,7 +720,11 @@ def test_a_missing_required_property_is_refused(app_session: Session) -> None:
     before = _audit_event_count(app_session)
 
     with pytest.raises(PropertyValidationError) as excinfo:
-        _create(app_session, ctx, NewTestSubmissionInput(preferred_term="Serum sodium"))
+        _create(
+            app_session,
+            ctx,
+            NewTestSubmissionInput(reference_url=_REFERENCE_URL, preferred_term="Serum sodium"),
+        )
 
     assert ("sub_required", "required-property-missing") in _issue_codes(excinfo.value)
     assert _submission_count(app_session, user.id) == 0
@@ -663,7 +742,9 @@ def test_a_required_property_given_no_values_counts_as_missing(app_session: Sess
             app_session,
             ctx,
             NewTestSubmissionInput(
-                preferred_term="Serum sodium", property_values={"sub_required": []}
+                reference_url=_REFERENCE_URL,
+                preferred_term="Serum sodium",
+                property_values={"sub_required": []},
             ),
         )
 
@@ -680,6 +761,7 @@ def test_a_supplied_required_property_is_accepted(app_session: Session) -> None:
         app_session,
         ctx,
         NewTestSubmissionInput(
+            reference_url=_REFERENCE_URL,
             preferred_term="Serum sodium",
             property_values={"sub_required": [PropertyValueInput(value="given")]},
         ),
@@ -705,7 +787,11 @@ def test_a_deprecated_required_property_does_not_block_a_submission(app_session:
     app_session.flush()
     _, ctx = _submitter(app_session)
 
-    submission = _create(app_session, ctx, NewTestSubmissionInput(preferred_term="Serum sodium"))
+    submission = _create(
+        app_session,
+        ctx,
+        NewTestSubmissionInput(reference_url=_REFERENCE_URL, preferred_term="Serum sodium"),
+    )
 
     assert "sub_retired_required" not in submission.property_values
 
@@ -722,6 +808,7 @@ def test_every_property_problem_is_reported_at_once(app_session: Session) -> Non
             app_session,
             ctx,
             NewTestSubmissionInput(
+                reference_url=_REFERENCE_URL,
                 preferred_term="Serum sodium",
                 property_values={
                     "length": [PropertyValueInput(value=12)],
@@ -748,7 +835,11 @@ def test_a_maintenance_only_property_marked_required_does_not_block_a_submission
     )
     _, ctx = _submitter(app_session)
 
-    submission = _create(app_session, ctx, NewTestSubmissionInput(preferred_term="Serum sodium"))
+    submission = _create(
+        app_session,
+        ctx,
+        NewTestSubmissionInput(reference_url=_REFERENCE_URL, preferred_term="Serum sodium"),
+    )
 
     assert submission.property_values == {}
 
@@ -761,7 +852,9 @@ def _synonyms_of(app_session: Session, preferred_term: str, *synonyms: str) -> l
     submission = _create(
         app_session,
         ctx,
-        NewTestSubmissionInput(preferred_term=preferred_term, synonyms=list(synonyms)),
+        NewTestSubmissionInput(
+            reference_url=_REFERENCE_URL, preferred_term=preferred_term, synonyms=list(synonyms)
+        ),
     )
     return list(submission.synonyms)
 
@@ -832,6 +925,7 @@ def test_free_text_with_an_invisible_character_is_refused(
     before = _audit_event_count(app_session)
     text = "text" + character + "more"
     content = NewTestSubmissionInput(
+        reference_url=_REFERENCE_URL,
         preferred_term="Serum sodium",
         notes=text if field == "notes" else None,
         organisation=text if field == "organisation" else None,
@@ -854,7 +948,11 @@ def test_a_note_may_span_lines_and_use_tabs(app_session: Session) -> None:
     note = "First line\nSecond line\r\n\tIndented third"
 
     submission = _create(
-        app_session, ctx, NewTestSubmissionInput(preferred_term="Serum sodium", notes=note)
+        app_session,
+        ctx,
+        NewTestSubmissionInput(
+            reference_url=_REFERENCE_URL, preferred_term="Serum sodium", notes=note
+        ),
     )
 
     assert submission.notes == note
@@ -870,7 +968,9 @@ def test_the_organisation_is_one_line(app_session: Session) -> None:
             app_session,
             ctx,
             NewTestSubmissionInput(
-                preferred_term="Serum sodium", organisation="Example\nPathology"
+                reference_url=_REFERENCE_URL,
+                preferred_term="Serum sodium",
+                organisation="Example\nPathology",
             ),
         )
 
@@ -886,6 +986,7 @@ def test_a_non_breaking_space_in_free_text_is_normalised_not_refused(app_session
         app_session,
         ctx,
         NewTestSubmissionInput(
+            reference_url=_REFERENCE_URL,
             preferred_term="Serum sodium",
             notes="Seen" + NBSP + "here",
             organisation="Example" + NBSP + "Pathology",
@@ -954,6 +1055,7 @@ def test_no_terminology_call_is_made_while_the_append_lock_is_held(
             app_session,
             ctx,
             NewTestSubmissionInput(
+                reference_url=_REFERENCE_URL,
                 preferred_term="Acid fast bacilli microscopy",
                 snomed_code=_CODE,
                 property_values={
@@ -969,3 +1071,186 @@ def test_no_terminology_call_is_made_while_the_append_lock_is_held(
     assert [held for _, held in calls] == [False, False]
     # The probe does see the lock the write takes, so the assertions above cannot pass vacuously.
     assert locks
+
+
+# --- the supporting reference link (FR-27) -----------------------------------------------------
+
+
+@pytest.mark.req("FR-27")
+@pytest.mark.integration
+def test_the_reference_is_stored_with_what_the_check_saw(app_session: Session) -> None:
+    _, ctx = _submitter(app_session)
+    checker = StubReferenceChecker()
+    checker.status = 403
+
+    submission = _create(
+        app_session,
+        ctx,
+        NewTestSubmissionInput(reference_url=_REFERENCE_URL, preferred_term="Serum sodium"),
+        reference_checker=checker,
+    )
+
+    assert checker.urls == [_REFERENCE_URL]
+    assert submission.reference_url == _REFERENCE_URL
+    assert submission.reference_status == 403
+    assert submission.reference_checked_at is not None
+
+
+@pytest.mark.req("FR-27")
+@pytest.mark.req("NFR-08")
+@pytest.mark.integration
+def test_the_audit_event_records_the_reference_and_its_check(app_session: Session) -> None:
+    _, ctx = _submitter(app_session)
+
+    _create(
+        app_session,
+        ctx,
+        NewTestSubmissionInput(reference_url=_REFERENCE_URL, preferred_term="Serum sodium"),
+    )
+
+    event = app_session.execute(
+        select(AuditEvent).order_by(AuditEvent.sequence.desc()).limit(1)
+    ).scalar_one()
+    assert event.after is not None
+    assert event.after["reference_url"] == _REFERENCE_URL
+    assert event.after["reference_status"] == 200
+    assert event.after["reference_checked_at"]
+
+
+@pytest.mark.req("FR-27")
+@pytest.mark.integration
+@pytest.mark.parametrize(
+    "error",
+    [
+        ReferenceCheckFailedError(ReferenceFailure.BAD_STATUS, status=404),
+        ReferenceCheckFailedError(ReferenceFailure.INTERNAL_ADDRESS),
+        ReferenceCheckUnavailableError(),
+    ],
+    ids=["bad_status", "internal_address", "no_outbound_access"],
+)
+def test_a_reference_that_fails_its_check_saves_nothing(
+    app_session: Session, error: Exception
+) -> None:
+    user, ctx = _submitter(app_session)
+    checker = StubReferenceChecker()
+    checker.error = error
+    before = _audit_event_count(app_session)
+
+    with pytest.raises(type(error)):
+        _create(
+            app_session,
+            ctx,
+            NewTestSubmissionInput(reference_url=_REFERENCE_URL, preferred_term="Serum sodium"),
+            reference_checker=checker,
+        )
+
+    assert _submission_count(app_session, user.id) == 0
+    assert _audit_event_count(app_session) == before
+
+
+@pytest.mark.req("FR-27")
+@pytest.mark.integration
+def test_a_cheaper_refusal_means_no_link_is_fetched(app_session: Session) -> None:
+    _, ctx = _submitter(app_session)
+    checker = StubReferenceChecker()
+
+    with pytest.raises(TermCleaningError):
+        _create(
+            app_session,
+            ctx,
+            NewTestSubmissionInput(reference_url=_REFERENCE_URL, preferred_term="  "),
+            reference_checker=checker,
+        )
+
+    assert checker.urls == []
+
+
+@pytest.mark.req("FR-27")
+@pytest.mark.req("NFR-08")
+@pytest.mark.integration
+def test_the_reference_is_fetched_before_the_append_lock_is_taken(
+    app_session: Session, capture_statements: Any
+) -> None:
+    """A fetch can run for seconds, and the lock is one global advisory lock, so a fetch made
+    while holding it would stall every audit write."""
+    _, ctx = _submitter(app_session)
+    calls: list[bool] = []
+
+    def is_lock(statement: str, _parameters: object) -> bool:
+        return "pg_advisory_xact_lock" in statement
+
+    class _Recording(StubReferenceChecker):
+        def check(self, url: str) -> ReferenceCheckResult:
+            calls.append(bool(locks))
+            return super().check(url)
+
+    with capture_statements(app_session.get_bind(), keep=is_lock) as locks:
+        _create(
+            app_session,
+            ctx,
+            NewTestSubmissionInput(reference_url=_REFERENCE_URL, preferred_term="Serum sodium"),
+            reference_checker=_Recording(),
+        )
+
+    assert calls == [False]
+    assert locks
+
+
+def _insert_submission(session: Session, user: User, **columns: Any) -> None:
+    values: dict[str, Any] = {
+        "kind": SubmissionKind.NEW_TEST.value,
+        "preferred_term": "Serum sodium",
+        "submitter_id": user.id,
+        "reference_url": _REFERENCE_URL,
+        "reference_checked_at": datetime.now(UTC),
+        "reference_status": 200,
+    }
+    values.update(columns)
+    with session.begin_nested():
+        session.add(Submission(**values))
+        session.flush()
+
+
+@pytest.mark.req("FR-27")
+@pytest.mark.integration
+@pytest.mark.parametrize(
+    "columns",
+    [
+        {"reference_url": None, "reference_checked_at": None, "reference_status": None},
+        {"reference_checked_at": None},
+        {"reference_status": None},
+        {"reference_url": None},
+        {"reference_url": "   "},
+    ],
+    ids=[
+        "new_test_without_reference",
+        "no_check_time",
+        "no_status",
+        "status_without_url",
+        "blank_url",
+    ],
+)
+def test_the_database_refuses_a_new_test_with_no_complete_reference(
+    app_session: Session, columns: dict[str, Any]
+) -> None:
+    user, _ = _submitter(app_session)
+
+    with pytest.raises(IntegrityError):
+        _insert_submission(app_session, user, **columns)
+
+
+@pytest.mark.req("FR-27")
+@pytest.mark.integration
+def test_an_amendment_may_leave_the_reference_out(app_session: Session) -> None:
+    user, _ = _submitter(app_session)
+
+    _insert_submission(
+        app_session,
+        user,
+        kind=SubmissionKind.AMENDMENT.value,
+        reference_url=None,
+        reference_checked_at=None,
+        reference_status=None,
+    )
+
+    assert _submission_count(app_session, user.id) == 1

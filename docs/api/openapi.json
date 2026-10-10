@@ -4243,7 +4243,7 @@
             }
           },
           "422": {
-            "description": "The request is not acceptable. `detail` says why for a term that cannot be cleaned and for a SNOMED CT code that is malformed, unknown to the AU edition, inactive, has no reported status or has no fully specified name, and for `notes` or `organisation` that carry an invisible character. `issues[]` names each property problem: an unknown, deprecated or out-of-scope property, a value its datatype refuses, or a property required for submission with no value. A missing `preferred_term`, an unrecognised field, or a part of the request over its size bound fails validation before the route runs.",
+            "description": "The request is not acceptable. `detail` says why for a term that cannot be cleaned and for a SNOMED CT code that is malformed, unknown to the AU edition, inactive, has no reported status or has no fully specified name, and for `notes` or `organisation` that carry an invisible character, and for a `reference_url` that is not a usable web address, points at an internal address, answers with a failing status, redirects too often, times out or cannot be found. `issues[]` names each property problem: an unknown, deprecated or out-of-scope property, a value its datatype refuses, or a property required for submission with no value. A missing `preferred_term`, an unrecognised field, or a part of the request over its size bound fails validation before the route runs.",
             "content": {
               "application/json": {
                 "schema": {
@@ -4284,7 +4284,7 @@
             }
           },
           "503": {
-            "description": "The terminology server could not be reached, or a rate limit persisted through retries. Nothing was saved, and the same request can be sent again. May carry a `Retry-After` header.",
+            "description": "The terminology server could not be reached, or a rate limit persisted through retries, or the platform has no outbound internet access to check the `reference_url`. Nothing was saved, and the same request can be sent again. May carry a `Retry-After` header.",
             "content": {
               "application/json": {
                 "schema": {
@@ -6270,6 +6270,11 @@
             "maxLength": 500,
             "title": "Preferred Term"
           },
+          "reference_url": {
+            "type": "string",
+            "maxLength": 2048,
+            "title": "Reference Url"
+          },
           "synonyms": {
             "items": {
               "type": "string",
@@ -6334,10 +6339,11 @@
         "additionalProperties": false,
         "type": "object",
         "required": [
-          "preferred_term"
+          "preferred_term",
+          "reference_url"
         ],
         "title": "CreateSubmissionRequest",
-        "description": "The body of `POST /submissions`.\n\n`property_values` maps a property key to the complete value list for that property. A key with\nan empty list counts as absent. `organisation` left out means the profile's value, and a blank\nstring means none. The size bounds are in the schema as `maxLength` and `maxItems`."
+        "description": "The body of `POST /submissions`.\n\n`reference_url` is the supporting link, an `http` or `https` address on port 80 or 443. The\nserver fetches it before saving. `property_values` maps a property key to the complete value\nlist for that property. A key with an empty list counts as absent. `organisation` left out means the profile's value, and a blank\nstring means none. The size bounds are in the schema as `maxLength` and `maxItems`."
       },
       "CurrentTermsResponse": {
         "properties": {
@@ -8150,6 +8156,40 @@
             ],
             "title": "Notes"
           },
+          "reference_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reference Url"
+          },
+          "reference_checked_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reference Checked At"
+          },
+          "reference_status": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reference Status"
+          },
           "organisation": {
             "anyOf": [
               {
@@ -8189,13 +8229,16 @@
           "snomed_fsn",
           "property_values",
           "notes",
+          "reference_url",
+          "reference_checked_at",
+          "reference_status",
           "organisation",
           "created_at",
           "row_version",
           "label_provenance"
         ],
         "title": "SubmissionResponse",
-        "description": "The stored submission.\n\n`snomed_fsn` is the label the terminology server returned for `snomed_code`, never anything\nthe caller sent (FR-82). `label_provenance` states which designation each label field is\n(FR-98): the suggested term is offered as the catalogue's preferred term, and the synonyms as\nsynonyms."
+        "description": "The stored submission.\n\n`snomed_fsn` is the label the terminology server returned for `snomed_code`, never anything\nthe caller sent (FR-82). `label_provenance` states which designation each label field is\n(FR-98): the suggested term is offered as the catalogue's preferred term, and the synonyms as\nsynonyms. The three `reference_*` fields describe one check and are all present or all absent;\na new test always has them."
       },
       "SubmittedPropertyValue": {
         "properties": {
