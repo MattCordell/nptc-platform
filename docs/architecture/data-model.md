@@ -26,6 +26,7 @@ CONTRIBUTING.md's "A schema change's prose has one home each".
 | `backend/src/nptc/db/models/catalogue_entry.py` | The `catalogue_entry` table (issue #46) |
 | `backend/src/nptc/db/models/designation.py` | The `designation` table (issue #47) |
 | `backend/src/nptc/db/models/code_binding.py` | The `code_binding` table (issue #48) |
+| `backend/src/nptc/db/models/submission.py` | The `submission` table |
 | `backend/src/nptc/db/functions.py` | `nptc_sctid_is_valid`, the database-level Verhoeff check (issue #48, ADR-0023); `nptc_search_text`, the search normalisation primitive (issue #142, ADR-0024) |
 | `backend/src/nptc/db/models/local_code_system.py` | The `local_code_system` table (issue #56) |
 | `backend/src/nptc/db/models/local_code.py` | The `local_code` table (issue #56) |
@@ -1454,6 +1455,53 @@ version rolled back to an earlier one asks for acceptance again.
 The row holds no personal data, so it survives account closure unchanged. Each acceptance
 emits a `terms_acceptance.created` audit event naming the version (NFR-08). The model
 classifies every column in its audit policy.
+
+## `submission` (FR-23, FR-27, FR-28, FR-29, NFR-08)
+
+A user's proposal to add a test, or later to change one. It is its own record and not a
+`catalogue_entry` with another status (FR-29), so a proposed value is never mistaken for
+catalogue content. Only `POST /api/v1/submissions` writes it today, and only for a new test.
+
+| Column | Type | Notes |
+|---|---|---|
+| `id` | `UUID` | PK, `gen_random_uuid()` |
+| `kind` | `TEXT` | `NOT NULL`, `CHECK` in `new_test`, `amendment`. Amendments reuse the table, so they need no second one |
+| `state` | `TEXT` | `NOT NULL DEFAULT 'Submitted'`, `CHECK` in `Submitted`. The other FR-28 states arrive with the workflow |
+| `preferred_term` | `TEXT` | `NOT NULL`, `CHECK` not blank. Cleaned at entry like an entry's term (FR-63) |
+| `synonyms` | `JSONB` | `NOT NULL DEFAULT '[]'`, `CHECK` a JSON array. Each term is cleaned at entry |
+| `snomed_code` | `TEXT` | Nullable. `CHECK nptc_sctid_is_valid`, so the format and the check digit hold in the database (FR-06) |
+| `snomed_fsn` | `TEXT` | Nullable, `CHECK` not blank. Present exactly when `snomed_code` is: `CHECK ((snomed_code IS NULL) = (snomed_fsn IS NULL))`. The terminology server's label, stored as served (FR-82) |
+| `property_values` | `JSONB` | `NOT NULL DEFAULT '{}'`, `CHECK` a JSON object. See below |
+| `notes` | `TEXT` | Nullable, `CHECK` not blank. The submitter's free-text justification (FR-27) |
+| `submitter_id` | `UUID` | `NOT NULL`, FK to `app_user.id`. The internal id, which account closure keeps (NFR-17) |
+| `organisation` | `TEXT` | Nullable. The submitter's own copy of their organisation |
+| `created_at` | `TIMESTAMPTZ` | `NOT NULL`, `now()` |
+| `updated_at` | `TIMESTAMPTZ` | `NOT NULL`, `now()` |
+| `row_version` | `INTEGER` | `NOT NULL DEFAULT 1`, bumped by `version_id_col` on a mapped update, as on `catalogue_entry` |
+
+`ix_submission_submitter_id` serves "a user's own submissions" and `ix_submission_created_at`
+serves "newest first".
+
+**`property_values` is one JSONB document, not a child table.** It maps a property key to the
+complete value list for that property, each item `{"value": ..., "justification": ...}`. That is
+the shape `property_value` rows take, so the later step that turns a submission into an entry
+copies each item to a row at the ordinal of its list position. A submission is read whole and
+never queried by one property's value, so a child table would add a join and an index for no
+reader. A key with no values is absent, never an empty list. The registry validates every value
+before it is stored, so the document holds nothing the entry write path would refuse.
+
+**The organisation is a copy.** It is pre-filled from the profile and editable on the request.
+Closing an account clears the profile's organisation (NFR-17) and leaves the copy on the
+submission. The audit policy withholds it, as it does `app_user.organisation` (NFR-26): an event
+records that it was set, never its value.
+
+**What the submitter sent is fixed by privilege.** `nptc_app` holds `SELECT, INSERT` and a
+column-level `UPDATE` on `state`, `updated_at` and `row_version` only. It holds no `DELETE` or
+`TRUNCATE`, so a submission leaves the workflow through `state`. A column added later that must
+change gets its own grant constant, as `nptc.db.roles` explains.
+
+Each create emits a `submission.created` audit event carrying the content and naming
+`organisation` in `_redacted` (NFR-08). Every column is classified in the model's audit policy.
 
 ## Extensions
 
