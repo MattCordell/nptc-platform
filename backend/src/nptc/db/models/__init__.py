@@ -28,6 +28,7 @@ from nptc.db.models.property_definition import (
 )
 from nptc.db.models.property_value import PropertyValue
 from nptc.db.models.seed_import import SeedImport
+from nptc.db.models.submission import Submission, SubmissionKind, SubmissionState
 from nptc.db.models.terms_acceptance import TermsAcceptance
 from nptc.db.models.user import User, UserStatus
 from nptc.db.models.user_identity import UserIdentity
@@ -60,6 +61,9 @@ __all__ = [
     "PropertyValue",
     "SeedImport",
     "SnomedMapMatchStrength",
+    "Submission",
+    "SubmissionKind",
+    "SubmissionState",
     "TermsAcceptance",
     "User",
     "UserIdentity",
