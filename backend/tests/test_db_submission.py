@@ -45,10 +45,11 @@ def _insert_user(connection: Connection) -> object:
 _INSERT_SUBMISSION = text(
     "INSERT INTO submission (kind, state, preferred_term, synonyms, snomed_code, snomed_fsn, "
     "property_values, notes, reference_url, reference_checked_at, reference_status, "
-    "submitter_id, organisation) "
+    "duplicate_confirmed_at, duplicate_matches, submitter_id, organisation) "
     "VALUES (:kind, :state, :preferred_term, CAST(:synonyms AS jsonb), :snomed_code, :snomed_fsn, "
     "CAST(:property_values AS jsonb), :notes, :reference_url, :reference_checked_at, "
-    ":reference_status, :submitter_id, :organisation) RETURNING id"
+    ":reference_status, :duplicate_confirmed_at, CAST(:duplicate_matches AS jsonb), "
+    ":submitter_id, :organisation) RETURNING id"
 )
 #: Only the columns with a server default are left out, so a test sees the defaults themselves. A
 #: new test must carry its reference, which has no default.
@@ -75,6 +76,8 @@ def _insert_submission(connection: Connection, submitter_id: object, **overrides
         "reference_url": "https://example.org/evidence",
         "reference_checked_at": datetime.now(UTC),
         "reference_status": 200,
+        "duplicate_confirmed_at": None,
+        "duplicate_matches": "[]",
         "submitter_id": submitter_id,
         "organisation": None,
     }
@@ -109,6 +112,27 @@ def test_app_role_can_insert_and_select_a_submission(app_db: Connection) -> None
     assert row.organisation == "Example Pathology"
 
 
+@pytest.mark.req("FR-25")
+@pytest.mark.integration
+def test_a_confirmed_duplicate_keeps_the_matches_and_the_time(db: Connection) -> None:
+    submitter = _insert_user(db)
+    confirmed_at = datetime(2026, 1, 1, tzinfo=UTC)
+
+    submission_id = _insert_submission(
+        db,
+        submitter,
+        duplicate_confirmed_at=confirmed_at,
+        duplicate_matches='[{"source": "submission", "key": "k"}]',
+    )
+
+    row = db.execute(
+        text("SELECT duplicate_confirmed_at, duplicate_matches FROM submission WHERE id = :id"),
+        {"id": submission_id},
+    ).one()
+    assert row.duplicate_confirmed_at == confirmed_at
+    assert row.duplicate_matches == [{"source": "submission", "key": "k"}]
+
+
 @pytest.mark.req("FR-28")
 @pytest.mark.integration
 def test_a_new_row_defaults_to_submitted_with_empty_json_and_version_one(db: Connection) -> None:
@@ -118,7 +142,8 @@ def test_a_new_row_defaults_to_submitted_with_empty_json_and_version_one(db: Con
 
     row = db.execute(
         text(
-            "SELECT state, synonyms, property_values, row_version, created_at, updated_at "
+            "SELECT state, synonyms, property_values, duplicate_matches, duplicate_confirmed_at, "
+            "row_version, created_at, updated_at "
             "FROM submission WHERE id = :id"
         ),
         {"id": submission_id},
@@ -127,6 +152,8 @@ def test_a_new_row_defaults_to_submitted_with_empty_json_and_version_one(db: Con
     assert row.synonyms == []
     assert row.property_values == {}
     assert row.row_version == 1
+    assert row.duplicate_matches == []
+    assert row.duplicate_confirmed_at is None
     assert row.created_at is not None
     assert row.updated_at is not None
 
@@ -163,6 +190,11 @@ _CHECK_VIOLATIONS: dict[str, dict[str, object]] = {
     "reference_without_check_time": {"reference_checked_at": None},
     "reference_without_status": {"reference_status": None},
     "check_without_reference": {"reference_url": None},
+    "duplicate_matches_not_an_array": {"duplicate_matches": '{"a": 1}'},
+    "matches_without_confirmation_time": {"duplicate_matches": '[{"source": "submission"}]'},
+    "confirmation_time_without_matches": {
+        "duplicate_confirmed_at": datetime(2026, 1, 1, tzinfo=UTC)
+    },
 }
 
 
@@ -230,6 +262,8 @@ _REFUSED_STATEMENTS = {
     "update_reference_url": "UPDATE submission SET reference_url = 'https://example.org/other'",
     "update_reference_status": "UPDATE submission SET reference_status = 200",
     "update_reference_checked_at": "UPDATE submission SET reference_checked_at = now()",
+    "update_duplicate_confirmed_at": "UPDATE submission SET duplicate_confirmed_at = now()",
+    "update_duplicate_matches": "UPDATE submission SET duplicate_matches = '[]'::jsonb",
     "update_organisation": "UPDATE submission SET organisation = 'changed'",
     "update_submitter": "UPDATE submission SET submitter_id = submitter_id",
     "update_created_at": "UPDATE submission SET created_at = now()",
@@ -270,6 +304,8 @@ def test_the_audit_policy_withholds_the_organisation_and_records_the_rest() -> N
             "reference_url",
             "reference_checked_at",
             "reference_status",
+            "duplicate_confirmed_at",
+            "duplicate_matches",
             "submitter_id",
         }
     )

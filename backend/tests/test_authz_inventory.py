@@ -163,6 +163,9 @@ COVERED_WRITE_ROUTES = frozenset(
         # The new-test submission route (FR-23, FR-80). Negative-auth coverage lives in
         # `test_api_submissions.py`.
         RouteKey(method="POST", path="/submissions"),
+        # The duplicate check (FR-25). It writes nothing but is a POST, so it sits under the terms
+        # gate too. Negative-auth coverage lives in `test_api_submissions.py`.
+        RouteKey(method="POST", path="/submissions/duplicate-check"),
         # issue #249: the entry's own core-column write route - status.
         # Negative-auth coverage lives in
         # `test_api_catalogue_entries.py`.

@@ -8,10 +8,13 @@ test created, because `backend/tests` shares one Postgres container (see `CLAUDE
 from __future__ import annotations
 
 import importlib.util
+import random
 import re
+import string
 import sys
 import uuid
 from collections.abc import Iterator
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -24,6 +27,8 @@ from nptc.audit.diffing import REDACTED_KEY
 from nptc.auth.permissions import Role
 from nptc.db.bootstrap import seed_system_properties
 from nptc.db.models.audit import AuditEvent
+from nptc.db.models.catalogue_entry import CatalogueEntry, CatalogueEntryStatus
+from nptc.db.models.code_binding import CodeBinding
 from nptc.db.models.property_definition import PropertyDefinition, PropertyOrigin, PropertyScope
 from nptc.db.models.submission import Submission
 from nptc.db.models.user import User
@@ -901,12 +906,17 @@ def test_a_request_at_every_bound_is_accepted(api: ApiTestApp) -> None:
             "api_key_0": [{"value": "x" * 9_990, "justification": "x" * 2_000}],
         },
     )
+    # Terms that share nothing, so the second and third requests are not duplicates of earlier ones.
     at_the_property_bound = _post(
-        api, token, property_values={f"api_key_{n}": [{"value": "x"}] for n in range(25)}
+        api,
+        token,
+        preferred_term="Ferritin level",
+        property_values={f"api_key_{n}": [{"value": "x"}] for n in range(25)},
     )
     at_the_value_bounds = _post(
         api,
         token,
+        preferred_term="Glucose tolerance",
         property_values={
             "api_many_a": [{"value": f"a{n}"} for n in range(25)],
             "api_many_b": [{"value": f"b{n}"} for n in range(25)],
@@ -955,4 +965,350 @@ def test_free_text_with_an_invisible_character_is_422_with_a_fixed_reason(
     assert other not in detail
     assert _ZERO_WIDTH_SPACE not in response.text
     assert "200B" not in response.text.upper()
+    assert _submission_count(api, user) == 0
+
+
+# --- duplicates (FR-25) ------------------------------------------------------------------------
+
+_CHECK_PATH = "/submissions/duplicate-check"
+
+
+def _word(length: int = 14) -> str:
+    """A run of random letters, so no seeded row or other test's row can match it."""
+    return "".join(random.choices(string.ascii_lowercase, k=length))
+
+
+def _entry(
+    api: ApiTestApp,
+    term: str,
+    *,
+    code: str | None = None,
+    status: CatalogueEntryStatus = CatalogueEntryStatus.ACTIVE,
+) -> CatalogueEntry:
+    entry = CatalogueEntry(
+        business_key=f"NPTC-{random.randrange(100_000_000, 999_999_999)}",
+        preferred_term=term,
+        status=status.value,
+    )
+    api.session.add(entry)
+    api.session.flush()
+    if code is not None:
+        api.session.add(CodeBinding(entry_id=entry.id, code=code, fsn=_FSN))
+        api.session.flush()
+    return entry
+
+
+def _foreign_submission(api: ApiTestApp, term: str) -> tuple[Submission, User]:
+    """An open submission by another user. Every test token carries the same email, so two tokens
+    sign in as one user; a second submitter has to be a row."""
+    user = User(username=f"other-{uuid.uuid4()}", display_name="Other Submitter")
+    api.session.add(user)
+    api.session.flush()
+    submission = Submission(
+        kind="new_test",
+        preferred_term=term,
+        reference_url=_REFERENCE_URL,
+        reference_checked_at=datetime.now(UTC),
+        reference_status=200,
+        submitter_id=user.id,
+    )
+    api.session.add(submission)
+    api.session.flush()
+    return submission, user
+
+
+def _check(api: ApiTestApp, token: str | None, **body: object) -> Any:
+    payload: dict[str, object] = {"preferred_term": _word()}
+    payload.update(body)
+    return api.post(_CHECK_PATH, token=token, json=payload)
+
+
+@pytest.mark.req("FR-25")
+@pytest.mark.integration
+def test_the_check_returns_an_entry_with_the_same_code_without_asking_the_server(
+    api: ApiTestApp,
+) -> None:
+    entry = _entry(api, _word(), code=_CODE)
+    token, _ = _token(api, Role.PROVISIONAL)
+
+    response = _check(api, token, snomed_code=_CODE)
+
+    assert response.status_code == 200, response.text
+    match = next(m for m in response.json()["matches"] if m["key"] == entry.business_key)
+    assert match["source"] == "catalogue_entry"
+    assert match["matched_on"] == "code"
+    assert match["similarity"] is None
+    assert match["preferred_term"] == entry.preferred_term
+    assert api.terminology.requests == ()
+
+
+@pytest.mark.req("FR-25")
+@pytest.mark.req("FR-98")
+@pytest.mark.integration
+def test_the_check_returns_a_near_term_with_its_provenance(api: ApiTestApp) -> None:
+    term = _word()
+    entry = _entry(api, term)
+    token, _ = _token(api, Role.PROVISIONAL)
+
+    response = _check(api, token, preferred_term=f"{term}s")
+
+    assert response.status_code == 200, response.text
+    match = next(m for m in response.json()["matches"] if m["key"] == entry.business_key)
+    assert match["matched_on"] == "preferred_term"
+    assert 0.3 <= match["similarity"] < 1
+    assert match["label_provenance"] == {
+        "preferred_term": {"designation": "au_preferred_term", "semantic_tag": "not_applicable"},
+        "term": {"designation": "au_preferred_term", "semantic_tag": "not_applicable"},
+    }
+
+
+@pytest.mark.req("FR-25")
+@pytest.mark.integration
+def test_the_check_finds_nothing_for_a_term_nothing_resembles(api: ApiTestApp) -> None:
+    token, _ = _token(api, Role.PROVISIONAL)
+
+    response = _check(api, token, preferred_term=_word(20), synonyms=[_word(20)])
+
+    assert response.status_code == 200, response.text
+    assert response.json() == {"matches": []}
+
+
+@pytest.mark.req("FR-25")
+@pytest.mark.req("FR-42")
+@pytest.mark.integration
+def test_the_check_shows_another_users_open_submission_without_naming_them(
+    api: ApiTestApp,
+) -> None:
+    term = _word()
+    other, other_user = _foreign_submission(api, term)
+    token, user = _token(api, Role.MEMBER)
+
+    response = _check(api, token, preferred_term=term)
+
+    assert response.status_code == 200, response.text
+    assert [m["key"] for m in response.json()["matches"]] == [str(other.id)]
+    assert response.json()["matches"][0]["source"] == "submission"
+    assert str(other_user.id) not in response.text
+    assert str(user.id) not in response.text
+    assert "submitter" not in response.text
+
+
+@pytest.mark.req("NFR-08")
+@pytest.mark.integration
+def test_the_check_writes_no_submission_and_no_audit_event(api: ApiTestApp) -> None:
+    term = _word()
+    _entry(api, term)
+    token, user = _token(api, Role.PROVISIONAL)
+    audit_before = _audit_event_count(api)
+
+    response = _check(api, token, preferred_term=term)
+
+    assert response.status_code == 200, response.text
+    assert response.json()["matches"]
+    assert _submission_count(api, user) == 0
+    assert _audit_event_count(api) == audit_before
+    assert api.reference_checker.urls == []
+
+
+@pytest.mark.req("FR-80")
+@pytest.mark.integration
+def test_an_observer_cannot_run_the_check(api: ApiTestApp) -> None:
+    term = _word()
+    entry = _entry(api, term)
+    token, _ = _token(api, Role.OBSERVER)
+
+    response = _check(api, token, preferred_term=term)
+
+    assert response.status_code == 403, response.text
+    assert entry.business_key not in response.text
+    for role in Role:
+        assert role.value not in response.text
+    assert not _UUID.search(response.text)
+
+
+@pytest.mark.req("FR-80")
+@pytest.mark.integration
+def test_an_anonymous_caller_cannot_run_the_check(api: ApiTestApp) -> None:
+    response = _check(api, None)
+
+    assert response.status_code == 401, response.text
+    assert response.headers["WWW-Authenticate"] == "Bearer"
+
+
+@pytest.mark.req("NFR-45")
+@pytest.mark.integration
+def test_a_user_who_has_not_accepted_the_terms_cannot_run_the_check(api: ApiTestApp) -> None:
+    token, user = _token(api, Role.PROVISIONAL, accept_terms=False)
+
+    refused = _check(api, token)
+
+    assert refused.status_code == 403, refused.text
+    assert refused.json()["code"] == TERMS_ACCEPTANCE_REQUIRED_CODE
+
+    api.accept_current_terms(user.id)
+
+    assert _check(api, token).status_code == 200
+
+
+@pytest.mark.req("FR-06")
+@pytest.mark.integration
+@pytest.mark.parametrize(
+    "code",
+    ["not-a-code", "391483009", "", " 391483001", 391483001],
+    ids=["malformed", "bad_check_digit", "empty", "padded", "number"],
+)
+def test_a_malformed_code_is_422_on_the_check_without_asking_the_server(
+    api: ApiTestApp, code: object
+) -> None:
+    token, _ = _token(api, Role.PROVISIONAL)
+
+    response = _check(api, token, snomed_code=code)
+
+    assert response.status_code == 422, response.text
+    assert api.terminology.requests == ()
+
+
+@pytest.mark.req("FR-63")
+@pytest.mark.integration
+@pytest.mark.parametrize(
+    "term", ["", "   ", "Serum" + chr(0x200B) + "sodium"], ids=["empty", "blank", "invisible"]
+)
+def test_a_term_that_cannot_be_cleaned_is_422_on_the_check(api: ApiTestApp, term: str) -> None:
+    token, _ = _token(api, Role.PROVISIONAL)
+
+    response = _check(api, token, preferred_term=term)
+
+    assert response.status_code == 422, response.text
+
+
+@pytest.mark.req("FR-25")
+@pytest.mark.integration
+def test_the_check_refuses_an_unknown_field(api: ApiTestApp) -> None:
+    token, _ = _token(api, Role.PROVISIONAL)
+
+    assert _check(api, token, reference_url=_REFERENCE_URL).status_code == 422
+
+
+@pytest.mark.req("FR-25")
+@pytest.mark.integration
+def test_a_match_without_confirmation_is_409_and_nothing_is_stored(api: ApiTestApp) -> None:
+    term = _word()
+    entry = _entry(api, term)
+    token, user = _token(api, Role.PROVISIONAL)
+    audit_before = _audit_event_count(api)
+
+    response = _post(api, token, preferred_term=term)
+
+    assert response.status_code == 409, response.text
+    assert [m["key"] for m in response.json()["matches"]] == [entry.business_key]
+    assert "confirm_not_duplicate" in response.json()["detail"]
+    assert _submission_count(api, user) == 0
+    assert _audit_event_count(api) == audit_before
+    assert api.reference_checker.urls == []
+
+
+@pytest.mark.req("FR-25")
+@pytest.mark.integration
+def test_a_confirmed_match_is_stored_with_the_time_and_the_matches_found(
+    api: ApiTestApp,
+) -> None:
+    term = _word()
+    entry = _entry(api, term)
+    other, _ = _foreign_submission(api, f"{term}s")
+    token, user = _token(api, Role.PROVISIONAL)
+
+    response = _post(api, token, preferred_term=term, confirm_not_duplicate=True)
+
+    assert response.status_code == 201, response.text
+    assert response.json()["duplicate_confirmed_at"] is not None
+    stored = api.session.execute(
+        select(Submission).where(Submission.submitter_id == user.id)
+    ).scalar_one()
+    assert stored.duplicate_confirmed_at is not None
+    assert {(m["source"], m["key"], m["matched_on"]) for m in stored.duplicate_matches} == {
+        ("catalogue_entry", entry.business_key, "preferred_term"),
+        ("submission", str(other.id), "preferred_term"),
+    }
+    assert str(user.id) not in str(stored.duplicate_matches)
+
+
+@pytest.mark.req("NFR-08")
+@pytest.mark.integration
+def test_the_audit_event_records_the_confirmation(api: ApiTestApp) -> None:
+    term = _word()
+    entry = _entry(api, term)
+    token, _ = _token(api, Role.PROVISIONAL)
+
+    response = _post(api, token, preferred_term=term, confirm_not_duplicate=True)
+
+    assert response.status_code == 201, response.text
+    event = latest_audit_event(
+        api.session, entity_type="submission", entity_id=response.json()["id"]
+    )
+    assert event.after is not None
+    assert event.after["duplicate_confirmed_at"]
+    assert [m["key"] for m in event.after["duplicate_matches"]] == [entry.business_key]
+
+
+@pytest.mark.req("FR-25")
+@pytest.mark.integration
+def test_a_confirmation_with_no_match_records_nothing(api: ApiTestApp) -> None:
+    token, _ = _token(api, Role.PROVISIONAL)
+
+    response = _post(api, token, preferred_term=_word(20), confirm_not_duplicate=True)
+
+    assert response.status_code == 201, response.text
+    assert response.json()["duplicate_confirmed_at"] is None
+    stored = api.session.get(Submission, uuid.UUID(response.json()["id"]))
+    assert stored is not None
+    assert stored.duplicate_confirmed_at is None
+    assert stored.duplicate_matches == []
+
+
+@pytest.mark.req("FR-25")
+@pytest.mark.integration
+def test_a_term_with_no_match_is_created_without_a_confirmation(api: ApiTestApp) -> None:
+    token, _ = _token(api, Role.PROVISIONAL)
+
+    response = _post(api, token, preferred_term=_word(20), synonyms=[_word(20)])
+
+    assert response.status_code == 201, response.text
+    assert response.json()["duplicate_confirmed_at"] is None
+
+
+@pytest.mark.req("FR-25")
+@pytest.mark.req("FR-06")
+@pytest.mark.integration
+def test_the_resolved_code_is_compared_with_the_catalogue(api: ApiTestApp) -> None:
+    _seed_concept(api)
+    entry = _entry(api, _word(), code=_CODE)
+    token, user = _token(api, Role.PROVISIONAL)
+
+    refused = _post(api, token, preferred_term=_word(), snomed_code=_CODE)
+
+    assert refused.status_code == 409, refused.text
+    assert [(m["key"], m["matched_on"]) for m in refused.json()["matches"]] == [
+        (entry.business_key, "code")
+    ]
+    assert _submission_count(api, user) == 0
+
+
+@pytest.mark.req("FR-25")
+@pytest.mark.integration
+def test_a_draft_entry_is_not_a_match(api: ApiTestApp) -> None:
+    term = _word()
+    _entry(api, term, status=CatalogueEntryStatus.DRAFT)
+    token, _ = _token(api, Role.PROVISIONAL)
+
+    assert _post(api, token, preferred_term=term).status_code == 201
+
+
+@pytest.mark.req("FR-25")
+@pytest.mark.integration
+def test_the_create_body_refuses_a_non_boolean_confirmation(api: ApiTestApp) -> None:
+    token, user = _token(api, Role.PROVISIONAL)
+
+    response = _post(api, token, confirm_not_duplicate="maybe")
+
+    assert response.status_code == 422, response.text
     assert _submission_count(api, user) == 0

@@ -2,10 +2,19 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from enum import StrEnum
 from typing import ClassVar
 
-__all__ = ["CodeRefusal", "FreeTextField", "FreeTextRefusedError", "SubmissionCodeRefusedError"]
+from nptc.submissions.duplicates import DuplicateMatch
+
+__all__ = [
+    "CodeRefusal",
+    "FreeTextField",
+    "FreeTextRefusedError",
+    "SubmissionCodeRefusedError",
+    "SubmissionDuplicatesFoundError",
+]
 
 
 class CodeRefusal(StrEnum):
@@ -50,3 +59,15 @@ class FreeTextRefusedError(ValueError):
     def __init__(self, field: FreeTextField, codepoints: tuple[str, ...]) -> None:
         self.field = field
         super().__init__(f"{field.value} contains an invisible character: {', '.join(codepoints)}")
+
+
+class SubmissionDuplicatesFoundError(Exception):
+    """The submission matches an active catalogue entry or an open submission, and the request did
+    not confirm it is a different test (FR-25). Carries the matches so the submitter can review
+    them. The message names none of the submitted text."""
+
+    http_status: ClassVar[int] = 409
+
+    def __init__(self, matches: Sequence[DuplicateMatch]) -> None:
+        self.matches = tuple(matches)
+        super().__init__(f"submission matches {len(self.matches)} existing record(s)")

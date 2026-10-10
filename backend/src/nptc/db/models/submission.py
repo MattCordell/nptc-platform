@@ -24,6 +24,13 @@ sent, `reference_checked_at` is when the server fetched it and `reference_status
 HTTP status. A new test must carry all three. The check runs before the row is written, so a
 stored link has always passed.
 
+**A confirmed duplicate is stored with what the server found (FR-25).** `duplicate_matches` holds
+the matches the server found when it saved the row, never a list the caller sent. It can include a
+match the submitter was never shown, because a request may confirm without a prior 409 and a new
+match can appear between the 409 and the resend. `duplicate_confirmed_at` is the database time of
+the save, the same value as `created_at`, and says the request carried a confirmation. A submission
+that matched nothing has an empty array and no time.
+
 **`organisation` is the submitter's own copy** of the profile value, pre-filled and editable.
 Closing an account clears the profile (NFR-17); the copy stays, and the audit policy withholds it
 as it does on `app_user`.
@@ -34,7 +41,7 @@ from __future__ import annotations
 import uuid
 from datetime import datetime
 from enum import StrEnum
-from typing import ClassVar
+from typing import ClassVar, Final
 
 from sqlalchemy import CheckConstraint, DateTime, ForeignKey, Index, Integer, Text, text
 from sqlalchemy.dialects.postgresql import JSONB, UUID
@@ -43,7 +50,7 @@ from sqlalchemy.sql import func
 
 from nptc.db.base import Base
 
-__all__ = ["Submission", "SubmissionKind", "SubmissionState"]
+__all__ = ["CLOSED_SUBMISSION_STATES", "Submission", "SubmissionKind", "SubmissionState"]
 
 
 class SubmissionKind(StrEnum):
@@ -53,6 +60,13 @@ class SubmissionKind(StrEnum):
 
 class SubmissionState(StrEnum):
     SUBMITTED = "Submitted"
+
+
+#: The states in which a submission no longer counts as an open proposal. "Open" is every other
+#: state, so a state added later is open until it is listed here. The three are the end of the
+#: submission workflow (FR-28): published, refused or taken back by the submitter. Plain strings,
+#: because `SubmissionState` does not yet name them and the `state` check allows only `Submitted`.
+CLOSED_SUBMISSION_STATES: Final[tuple[str, ...]] = ("Published in release", "Rejected", "Withdrawn")
 
 
 #: Plain literals, never built from the `StrEnum`s above: `test_sql_parameterisation.py`'s AST guard
@@ -76,6 +90,11 @@ _REFERENCE_CHECK_COMPLETE_SQL = (
     "AND (reference_url IS NULL) = (reference_status IS NULL)"
 )
 _NEW_TEST_HAS_REFERENCE_SQL = "kind <> 'new_test' OR reference_url IS NOT NULL"
+_DUPLICATE_MATCHES_IS_ARRAY_SQL = "jsonb_typeof(duplicate_matches) = 'array'"
+#: A confirmation time exists exactly when there is something to confirm.
+_DUPLICATE_CONFIRMATION_COMPLETE_SQL = (
+    "(duplicate_confirmed_at IS NULL) = (duplicate_matches = '[]'::jsonb)"
+)
 
 
 class Submission(Base):
@@ -96,6 +115,8 @@ class Submission(Base):
             "reference_url",
             "reference_checked_at",
             "reference_status",
+            "duplicate_confirmed_at",
+            "duplicate_matches",
             "submitter_id",
         }
     )
@@ -118,6 +139,10 @@ class Submission(Base):
         CheckConstraint(_REFERENCE_URL_NOT_BLANK_SQL, name="reference_url_not_blank"),
         CheckConstraint(_REFERENCE_CHECK_COMPLETE_SQL, name="reference_check_complete"),
         CheckConstraint(_NEW_TEST_HAS_REFERENCE_SQL, name="new_test_has_reference"),
+        CheckConstraint(_DUPLICATE_MATCHES_IS_ARRAY_SQL, name="duplicate_matches_is_array"),
+        CheckConstraint(
+            _DUPLICATE_CONFIRMATION_COMPLETE_SQL, name="duplicate_confirmation_complete"
+        ),
         # "A user's own submissions" (FR-42) and "newest first" are the two reads on this table.
         Index("ix_submission_submitter_id", "submitter_id"),
         Index("ix_submission_created_at", "created_at"),
@@ -151,6 +176,12 @@ class Submission(Base):
     )
     reference_status: Mapped[int | None] = mapped_column(
         Integer, nullable=True, active_history=True
+    )
+    duplicate_confirmed_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True, active_history=True
+    )
+    duplicate_matches: Mapped[list[dict[str, object]]] = mapped_column(
+        JSONB, nullable=False, server_default=text("'[]'::jsonb"), active_history=True
     )
     submitter_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), ForeignKey("app_user.id"), nullable=False, active_history=True

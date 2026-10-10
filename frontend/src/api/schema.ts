@@ -763,6 +763,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/submissions/duplicate-check": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Check a submission for duplicates before sending it */
+        post: operations["check_submission_duplicates_api_v1_submissions_duplicate_check_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/terminology/concepts/{code}": {
         parameters: {
             query?: never;
@@ -1608,6 +1625,12 @@ export interface components {
             notes?: string | null;
             /** Organisation */
             organisation?: string | null;
+            /**
+             * Confirm Not Duplicate
+             * @description Set to true to say this is a different test from any match. The server stores the matches it finds when it saves, which can include one a 409 did not list. It has no effect when nothing matches.
+             * @default false
+             */
+            confirm_not_duplicate: boolean;
         };
         /**
          * CurrentTermsResponse
@@ -1715,6 +1738,54 @@ export interface components {
             warnings: (components["schemas"]["CollisionWarning"] | components["schemas"]["LengthWarning"])[];
             /** Row Version */
             row_version: number;
+        };
+        /**
+         * DuplicateCheckRequest
+         * @description The body of `POST /submissions/duplicate-check`: the terms and code a submission would
+         *     carry, with the same size bounds as the create body. The code is checked for format and check
+         *     digit only.
+         */
+        DuplicateCheckRequest: {
+            /** Preferred Term */
+            preferred_term: string;
+            /** Synonyms */
+            synonyms?: string[];
+            /** Snomed Code */
+            snomed_code?: string | null;
+        };
+        /**
+         * DuplicateCheckResponse
+         * @description Active catalogue entries first, then open submissions, each best first and capped. An empty
+         *     list means nothing matched.
+         */
+        DuplicateCheckResponse: {
+            /** Matches */
+            matches: components["schemas"]["DuplicateMatchItem"][];
+        };
+        /**
+         * DuplicateMatchItem
+         * @description One catalogue entry or open submission that a new submission may duplicate (FR-25).
+         *
+         *     `key` is the entry's business key or the submission's id, and it never names a submitter
+         *     (FR-42). `preferred_term` is that record's own preferred term. `term` is the text that matched,
+         *     and is the synonym when `matched_on` is `synonym`. `similarity` is null for a code match.
+         *     `label_provenance` states which designation `preferred_term` and `term` are (FR-98).
+         */
+        DuplicateMatchItem: {
+            source: components["schemas"]["MatchSource"];
+            matched_on: components["schemas"]["MatchedOn"];
+            /** Key */
+            key: string;
+            /** Preferred Term */
+            preferred_term: string;
+            /** Term */
+            term: string;
+            /** Similarity */
+            similarity: number | null;
+            /** Label Provenance */
+            label_provenance: {
+                [key: string]: components["schemas"]["LabelProvenance"];
+            };
         };
         /**
          * EntryCoreWriteResult
@@ -2088,6 +2159,16 @@ export interface components {
             /** Max Length */
             max_length: number;
         };
+        /**
+         * MatchSource
+         * @enum {string}
+         */
+        MatchSource: "catalogue_entry" | "submission";
+        /**
+         * MatchedOn
+         * @enum {string}
+         */
+        MatchedOn: "preferred_term" | "synonym" | "code";
         /**
          * PatchEntryRequest
          * @description The body of `PATCH /catalogue/entries/{business_key}`. Unknown fields are refused, so a
@@ -2543,6 +2624,16 @@ export interface components {
             label_provenance: components["schemas"]["LabelProvenance"];
         };
         /**
+         * SubmissionDuplicatesResponse
+         * @description FR-25's 409 body: the matches the submitter must confirm before the submission is saved.
+         */
+        SubmissionDuplicatesResponse: {
+            /** Detail */
+            detail: string;
+            /** Matches */
+            matches: components["schemas"]["DuplicateMatchItem"][];
+        };
+        /**
          * SubmissionPropertyValueRequest
          * @description One value for a property, with the optional justification the registry's strength rule can
          *     ask for. Shaped like the catalogue's own property write, with a size bound on each part.
@@ -2561,7 +2652,9 @@ export interface components {
          *     the caller sent (FR-82). `label_provenance` states which designation each label field is
          *     (FR-98): the suggested term is offered as the catalogue's preferred term, and the synonyms as
          *     synonyms. The three `reference_*` fields describe one check and are all present or all absent;
-         *     a new test always has them.
+         *     a new test always has them. `duplicate_confirmed_at` is when the server saved a submission whose
+         *     request carried `confirm_not_duplicate` and that matched something (FR-25), and is null
+         *     otherwise.
          */
         SubmissionResponse: {
             /**
@@ -2593,6 +2686,8 @@ export interface components {
             reference_checked_at: string | null;
             /** Reference Status */
             reference_status: number | null;
+            /** Duplicate Confirmed At */
+            duplicate_confirmed_at: string | null;
             /** Organisation */
             organisation: string | null;
             /**
@@ -5452,6 +5547,15 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"] | components["schemas"]["TermsAcceptanceRequiredResponse"];
                 };
             };
+            /** @description The submission matches an active catalogue entry or an open submission, and the request did not set `confirm_not_duplicate`. `matches[]` lists them. Nothing was saved. Send the request again with `confirm_not_duplicate` set to true if it is a different test. */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SubmissionDuplicatesResponse"];
+                };
+            };
             /** @description The request is not acceptable. `detail` says why for a term that cannot be cleaned and for a SNOMED CT code that is malformed, unknown to the AU edition, inactive, has no reported status or has no fully specified name, and for `notes` or `organisation` that carry an invisible character, and for a `reference_url` that is not a usable web address, points at an internal address, answers with a failing status, redirects too often, times out or cannot be found. `issues[]` names each property problem: an unknown, deprecated or out-of-scope property, a value its datatype refuses, or a property required for submission with no value. A missing `preferred_term`, an unrecognised field, or a part of the request over its size bound fails validation before the route runs. */
             422: {
                 headers: {
@@ -5497,6 +5601,68 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    check_submission_duplicates_api_v1_submissions_duplicate_check_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["DuplicateCheckRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DuplicateCheckResponse"];
+                };
+            };
+            /** @description No credential, or one that could not be verified. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The caller is authenticated but does not hold `submission.create`, or has not accepted the current terms of use (the body then carries a `code` that says so). The current terms of use have not been accepted. The body carries `code: terms_acceptance_required`. Accept them with `POST /auth/terms/acceptance` and try again. Never carries `WWW-Authenticate`. */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"] | components["schemas"]["TermsAcceptanceRequiredResponse"];
+                };
+            };
+            /** @description The request is not acceptable: a term that cannot be cleaned, a SNOMED CT code that is malformed or fails its check digit, a missing `preferred_term`, an unrecognised field, or a part of the request over its size bound. */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+            /** @description An address exceeded its request budget (FR-22): an anonymous caller its anonymous budget, or a caller whose credentials the API kept rejecting its budget for rejected credentials. Wait for the number of seconds in `Retry-After`, then try again. A valid credential is never counted. The body's `bulk_artefacts` names where to fetch the whole catalogue instead. */
+            429: {
+                headers: {
+                    /** @description Whole seconds until the caller's request budget is available again. */
+                    "Retry-After"?: number;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RateLimitedResponse"];
                 };
             };
         };
