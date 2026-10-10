@@ -1086,3 +1086,80 @@ describe("accessibility (NFR-31)", () => {
     expect(screen.getAllByRole("complementary")).toHaveLength(1);
   });
 });
+
+describe("the Propose a change link (FR-35, NFR-20)", () => {
+  const PROPOSE = { name: "Propose a change" };
+
+  async function renderAs(
+    status: "signed-in" | "signed-out" | "restoring" | "unavailable",
+    entryOverrides: Record<string, unknown> = {},
+  ) {
+    stubApi([
+      { ...ENTRY_OK, body: entry(entryOverrides) },
+      HISTORY_OK,
+      {
+        method: "GET",
+        path: "/auth/me",
+        status: 200,
+        body: {
+          authenticated: true,
+          user: {
+            username: "jo",
+            display_name: "Jo Citizen",
+            organisation: "Acme Pathology",
+            status: "active",
+          },
+          roles: ["observer"],
+          permissions: [],
+          mfa_satisfied: false,
+        },
+      },
+    ]);
+    await renderRoute(`/catalogue/${KEY}`, {
+      auth: { status, getAccessToken: () => Promise.resolve("test-token") },
+    });
+    await screen.findByRole("heading", { level: 1, name: "Ferritin" });
+  }
+
+  it("shows for a signed-in reader of an active entry, whatever their permissions, aimed at that entry", async () => {
+    await renderAs("signed-in");
+
+    expect(await screen.findByRole("link", PROPOSE)).toHaveAttribute(
+      "href",
+      `/submissions/new?entry=${KEY}`,
+    );
+  });
+
+  it.each(["signed-out", "restoring", "unavailable"] as const)(
+    "does not show while the visitor is %s",
+    async (status) => {
+      await renderAs(status);
+
+      expect(screen.queryByRole("link", PROPOSE)).not.toBeInTheDocument();
+    },
+  );
+
+  it.each(["draft", "deprecated", "withdrawn"])(
+    "does not show for a %s entry",
+    async (entryStatus) => {
+      await renderAs("signed-in", { status: entryStatus });
+
+      expect(screen.queryByRole("link", PROPOSE)).not.toBeInTheDocument();
+    },
+  );
+
+  it("opens the amendment form for the entry", async () => {
+    await renderAs("signed-in");
+
+    await userEvent.click(await screen.findByRole("link", PROPOSE));
+
+    expect(
+      await screen.findByRole("heading", { level: 1, name: "Propose a change" }),
+    ).toBeVisible();
+    expect(await screen.findByLabelText("Other name 1")).toBeVisible();
+    expect(screen.getByRole("link", { name: "Ferritin" })).toHaveAttribute(
+      "href",
+      `/catalogue/${KEY}`,
+    );
+  });
+});

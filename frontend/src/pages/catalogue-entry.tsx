@@ -4,12 +4,14 @@ import { useEffect } from "react";
 import { useEntryDetail } from "../api/queries.ts";
 import type { components } from "../api/schema.ts";
 import { ApiError } from "../api/unwrap.ts";
+import { useAuthStatus } from "../auth/auth-status.ts";
 import { EntryBindings } from "../catalogue/entry-bindings.tsx";
 import { EntryHistoryList } from "../catalogue/entry-history-list.tsx";
 import { EntryMetadata } from "../catalogue/entry-metadata.tsx";
 import { EntryTerms } from "../catalogue/entry-terms.tsx";
 import { statusLabelFor, statusToneFor } from "../catalogue/status-options.ts";
 import { Breadcrumb } from "../components/breadcrumb.tsx";
+import { buttonClassName } from "../components/button-class-name.ts";
 import { Button } from "../components/button.tsx";
 import { CodeChip } from "../components/code-chip.tsx";
 import { DetailLayout } from "../components/detail-layout.tsx";
@@ -26,6 +28,10 @@ import { useDocumentTitle } from "../shell/use-document-title.ts";
  * One published catalogue entry, read anonymously (FR-17, FR-18, FR-20,
  * NFR-31): its terms, and any retired SNOMED CT codes, beside its details
  * (properties included) and recent changes.
+ *
+ * A signed-in reader of an active entry also sees a "Propose a change" link
+ * (FR-35). It checks sign-in and status and no permission (NFR-20): the form
+ * it opens shows the server's refusal to a user who may not propose.
  *
  * The API answers a key that does not exist and a key that is not public with
  * the same 404, so the page cannot tell them apart and does not try. A key that
@@ -71,6 +77,7 @@ function EntryView({
 }) {
   useDocumentTitle(`${entry.preferred_term} — NPTC Catalogue`);
   const { message, politeness, announce } = useAnnounce();
+  const canPropose = useAuthStatus() === "signed-in" && entry.status === "active";
 
   useEffect(() => {
     if (refreshFailed) {
@@ -100,6 +107,17 @@ function EntryView({
               />
               {entry.has_open_finding ? <FindingIndicator /> : null}
             </span>
+          }
+          actions={
+            canPropose ? (
+              <Link
+                to="/submissions/new"
+                search={{ entry: entry.business_key }}
+                className={buttonClassName("secondary")}
+              >
+                Propose a change
+              </Link>
+            ) : null
           }
         />
 
