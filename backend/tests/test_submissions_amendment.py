@@ -39,6 +39,7 @@ from nptc.submissions.errors import (
     SubmissionCodeRefusedError,
 )
 from nptc.submissions.reference_check import (
+    HttpReferenceChecker,
     ReferenceCheckFailedError,
     ReferenceCheckResult,
     ReferenceFailure,
@@ -624,6 +625,35 @@ def test_a_reference_that_fails_its_check_saves_nothing(app_session: Session) ->
             reference_checker=checker,
         )
 
+    _assert_nothing_saved(app_session, user, before)
+
+
+@pytest.mark.req("FR-27")
+@pytest.mark.req("FR-35")
+@pytest.mark.integration
+@pytest.mark.parametrize("blank", ["", "   "], ids=["empty", "spaces"])
+def test_a_blank_reference_is_refused_rather_than_stored_as_none(
+    app_session: Session, blank: str
+) -> None:
+    """A link that is present but blank is a failed check, not an omitted one, so it never reaches
+    the database's not-blank constraint."""
+    user, ctx = _submitter(app_session)
+    entry = _entry(app_session)
+    before = _audit_event_count(app_session)
+
+    with pytest.raises(ReferenceCheckFailedError) as excinfo:
+        _create(
+            app_session,
+            ctx,
+            AmendmentInput(
+                entry_business_key=entry.business_key,
+                synonyms=["Na (serum)"],
+                reference_url=blank,
+            ),
+            reference_checker=HttpReferenceChecker(probe=lambda: True),
+        )
+
+    assert excinfo.value.reason == ReferenceFailure.INVALID_URL
     _assert_nothing_saved(app_session, user, before)
 
 

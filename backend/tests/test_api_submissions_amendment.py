@@ -33,7 +33,12 @@ from nptc.submissions.reference_check import (
     ReferenceCheckUnavailableError,
     ReferenceFailure,
 )
-from nptc_shared.terminology import AU_LANGUAGE_TAG, StubConcept
+from nptc_shared.terminology import (
+    AU_LANGUAGE_TAG,
+    Operation,
+    StubConcept,
+    TerminologyTimeoutError,
+)
 
 
 def _load(name: str) -> Any:
@@ -365,6 +370,21 @@ def test_a_malformed_code_is_422_and_nothing_is_stored(api: ApiTestApp) -> None:
     response = _post(api, token, _entry(api), snomed_code="391483009")
 
     assert response.status_code == 422, response.text
+    _assert_nothing_saved(api, user, before)
+
+
+@pytest.mark.req("FR-54")
+@pytest.mark.req("FR-35")
+@pytest.mark.integration
+def test_a_terminology_outage_is_503_and_nothing_is_stored(api: ApiTestApp) -> None:
+    api.terminology.seed_error(Operation.LOOKUP, TerminologyTimeoutError("timed out"))
+    token, user = _token(api, Role.MEMBER)
+    before = _audit_event_count(api)
+
+    response = _post(api, token, _entry(api), snomed_code=_CODE)
+
+    assert response.status_code == 503, response.text
+    assert "terminology server" in response.json()["detail"]
     _assert_nothing_saved(api, user, before)
 
 
