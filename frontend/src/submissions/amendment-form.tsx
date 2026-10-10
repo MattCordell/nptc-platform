@@ -5,6 +5,7 @@ import { refusalDetail } from "../api/conflicts.ts";
 import { useCreateAmendment, useEntryDetail, useSession } from "../api/queries.ts";
 import type { components } from "../api/schema.ts";
 import { ApiError } from "../api/unwrap.ts";
+import { statusLabelFor } from "../catalogue/status-options.ts";
 import { useCodeSelection } from "../catalogue/use-code-selection.ts";
 import { buttonClassName } from "../components/button-class-name.ts";
 import { Button } from "../components/button.tsx";
@@ -18,7 +19,6 @@ import { PageContainer } from "../components/page-container.tsx";
 import { PageHeader } from "../components/page-header.tsx";
 import { useAnnounce } from "../components/use-announce.ts";
 import { NotFoundPage } from "../shell/not-found-page.tsx";
-import { useDocumentTitle } from "../shell/use-document-title.ts";
 import { SubmissionCodeField } from "./code-field.tsx";
 import {
   FIELD_IDS,
@@ -73,7 +73,11 @@ export function AmendmentForm({ entryKey }: { entryKey: string }) {
     return <NotFoundPage />;
   }
   if (entry.data !== undefined) {
-    return <AmendmentView entry={entry.data} />;
+    return entry.data.status === "active" ? (
+      <AmendmentView entry={entry.data} />
+    ) : (
+      <NotAmendable entry={entry.data} />
+    );
   }
   return (
     <section aria-labelledby={HEADING_ID}>
@@ -94,6 +98,39 @@ export function AmendmentForm({ entryKey }: { entryKey: string }) {
         ) : (
           <p className="m-0">Loading entry…</p>
         )}
+      </PageContainer>
+    </section>
+  );
+}
+
+/**
+ * Shown in place of the form for an entry that is not active, such as a deprecated
+ * one reached by a saved link. The server refuses it too; this saves the user typing
+ * a proposal that cannot be sent.
+ */
+function NotAmendable({ entry }: { entry: EntryDetail }) {
+  return (
+    <section aria-labelledby={HEADING_ID}>
+      <PageContainer className="py-6">
+        <PageHeader id={HEADING_ID} title="Propose a change" />
+        <Card>
+          <div className="flex flex-col gap-4">
+            <p className="m-0">
+              {NO_LONGER_AMENDABLE} &ldquo;{entry.preferred_term}&rdquo; is{" "}
+              {statusLabelFor(entry.status).toLowerCase()}, and only an active entry can
+              be changed.
+            </p>
+            <div>
+              <Link
+                to="/catalogue/$businessKey"
+                params={{ businessKey: entry.business_key }}
+                className={buttonClassName("secondary")}
+              >
+                Back to the entry
+              </Link>
+            </div>
+          </div>
+        </Card>
       </PageContainer>
     </section>
   );
@@ -135,7 +172,6 @@ function CurrentEntry({ entry }: { entry: EntryDetail }) {
 }
 
 function AmendmentView({ entry }: { entry: EntryDetail }) {
-  useDocumentTitle("Propose a change — NPTC Catalogue");
   const session = useSession();
   const create = useCreateAmendment();
   const { message, politeness, announce } = useAnnounce();

@@ -14,7 +14,9 @@ cannot propose, the form shows the server's refusal when you send it, and nothin
 2. Choose **Propose a change**, beside the entry's name.
 
 The link shows only when you are signed in and the entry is active. A draft, deprecated or
-withdrawn entry cannot be amended, so it has no link. A visitor who is not signed in sees no
+withdrawn entry cannot be amended, so it has no link. If you open the form for such an entry from
+a saved link, the page says **This entry can no longer be amended** and gives the entry's
+status, instead of showing the form. A visitor who is not signed in sees no
 link, and a page that is still checking your sign-in shows none yet.
 
 The form opens at `/submissions/new?entry=` followed by the entry's key, for example
@@ -36,7 +38,7 @@ You must give at least one new other name or a SNOMED CT code. Everything else i
 | --- | --- |
 | **New other names** | Other names to add to the entry. Choose **Add another name** for more rows, or paste a list separated by semicolons to get one row per name. Empty rows are ignored. |
 | **SNOMED CT code** | A code to propose for the entry. Search by term or by code, then choose a result. The form shows its fully specified name and AU preferred term, which the terminology server supplies. See [Choosing a code](submitting-a-new-test.md#choosing-a-code). |
-| **Reference link** | A web page that supports the change. If you give one, the platform checks that the page answers. |
+| **Reference link** | A web page that supports the change, such as a guideline or a supplier's test directory. If you give one, the platform checks that the page answers. |
 | **Notes** | Anything a reviewer should know. |
 | **Organisation** | Filled in from your profile. Change it if the change comes from a different organisation. |
 | **Proposed by** | Your name. You cannot change it. |
@@ -50,7 +52,7 @@ Nothing you typed is lost.
 
 | What you see | What it means | What to do |
 | --- | --- | --- |
-| **This entry can no longer be amended.** followed by a reason | The entry stopped being active after you opened the form. The reason names its status. | Go back to the entry. Contact an administrator if you think the status is wrong. |
+| **This entry can no longer be amended.** followed by a reason | The entry stopped being active after you opened the form. The reason names its status. Your answers stay on the page. | Go back to the entry. Contact an administrator if you think the status is wrong. |
 | A sentence saying there is nothing to propose | The entry already has every name and code you gave. | Add a name or a code the entry does not have. |
 | A message under **New other names** | A name is empty after cleaning, or holds an invisible character. | Retype the name. |
 | A message under **SNOMED CT code** | The terminology server rules the code out, could not be reached, or gave an answer the platform could not use. | Choose another code, or clear the code and propose names alone. |

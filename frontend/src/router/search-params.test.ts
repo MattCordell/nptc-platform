@@ -466,6 +466,7 @@ describe("every validator is idempotent", () => {
     ["validateReleaseCompareSearch", validateReleaseCompareSearch],
     ["validateSignInSearch", validateSignInSearch],
     ["validateAdminCatalogueSearch", validateAdminCatalogueSearch],
+    ["validateSubmissionNewSearch", validateSubmissionNewSearch],
   ];
 
   it.each(cases)(
@@ -487,6 +488,12 @@ describe("validateSubmissionNewSearch (FR-35)", () => {
     expect(validateSubmissionNewSearch({ entry: "NPTC-000006" })).toEqual({
       entry: "NPTC-000006",
     });
+  });
+
+  it("is idempotent on a key it kept", () => {
+    const once = validateSubmissionNewSearch({ entry: " NPTC-000006 " });
+
+    expect(validateSubmissionNewSearch(once as Record<string, unknown>)).toEqual(once);
   });
 
   it.each([[""], ["   "], [42], [["NPTC-000006"]], [null]])(

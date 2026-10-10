@@ -285,7 +285,8 @@ const submissionNewRoute = createRoute({
     search: SubmissionNewSearchInput,
   ) => SubmissionNewSearch,
   component: SubmissionNewPage,
-  head: titled("Submit a new test"),
+  head: ({ match }) =>
+    titled(match.search.entry === undefined ? "Submit a new test" : "Propose a change")(),
 });
 
 const submissionDetailRoute = createRoute({

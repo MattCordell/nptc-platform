@@ -200,6 +200,12 @@ describe("the amendment form (FR-35)", () => {
     expect(screen.getByLabelText("Other name 1")).toBeVisible();
     expect(screen.getByLabelText("SNOMED CT code")).toBeVisible();
     expect(screen.getByLabelText("Reference link")).toBeVisible();
+    expect(describedBy(screen.getByLabelText("Reference link"))).toContain(
+      "supplier's test directory",
+    );
+    expect(describedBy(screen.getByLabelText("Reference link"))).not.toContain(
+      "published method",
+    );
     expect(screen.getByLabelText("Notes")).toBeVisible();
     expect(screen.getByLabelText("Organisation")).toBeVisible();
     expect(screen.queryByText("Properties")).not.toBeInTheDocument();
@@ -554,6 +560,73 @@ describe("what the server refuses (FR-35, FR-43, NFR-20, NFR-45)", () => {
     expect(
       await screen.findByText(/The change could not be proposed\. Check your connection/),
     ).toBeVisible();
+  });
+});
+
+describe("an entry that is not active (FR-35)", () => {
+  it.each([
+    ["deprecated", "Deprecated"],
+    ["withdrawn", "Withdrawn"],
+  ])(
+    "says a %s entry can no longer be amended, in place of the form",
+    async (status, label) => {
+      const calls = stubApi([ME, { ...ENTRY_OK, body: entry({ status }) }, CREATED]);
+
+      await renderRoute(`/submissions/new?entry=${KEY}`, SIGNED_IN);
+
+      const message = await screen.findByText(/This entry can no longer be amended\./);
+      expect(message).toHaveTextContent(`is ${label.toLowerCase()}`);
+      expect(screen.queryByLabelText("Other name 1")).not.toBeInTheDocument();
+      expect(
+        screen.queryByRole("button", { name: "Propose change" }),
+      ).not.toBeInTheDocument();
+      expect(screen.getByRole("link", { name: "Back to the entry" })).toHaveAttribute(
+        "href",
+        `/catalogue/${KEY}`,
+      );
+      expect(writes(calls)).toHaveLength(0);
+    },
+  );
+
+  it("has no axe violations on the notice", async () => {
+    stubApi([ME, { ...ENTRY_OK, body: entry({ status: "deprecated" }) }]);
+
+    const { container } = await renderRoute(`/submissions/new?entry=${KEY}`, SIGNED_IN);
+    await screen.findByText(/This entry can no longer be amended\./);
+
+    await expectNoA11yViolations(container);
+  });
+});
+
+describe("the page title (FR-35)", () => {
+  it("names the amendment form while the entry is still loading", async () => {
+    stubApi([ME, { ...ENTRY_OK, neverSettles: true }]);
+
+    await renderRoute(`/submissions/new?entry=${KEY}`, SIGNED_IN);
+
+    expect(await screen.findByText("Loading entry…")).toBeVisible();
+    await waitFor(() => expect(document.title).toBe("Propose a change — NPTC Catalogue"));
+  });
+
+  it("names the amendment form when the entry fails to load", async () => {
+    stubApi([ME, { ...ENTRY_OK, status: 500, body: { detail: "boom" } }]);
+
+    await renderRoute(`/submissions/new?entry=${KEY}`, SIGNED_IN);
+
+    await screen.findByRole("button", { name: "Try again" });
+    expect(document.title).toBe("Propose a change — NPTC Catalogue");
+  });
+
+  it("keeps the new-test title when there is no entry", async () => {
+    stubApi([
+      ME,
+      { method: "GET", path: "/registry/properties", status: 200, body: { items: [] } },
+    ]);
+
+    await renderRoute("/submissions/new", SIGNED_IN);
+
+    await screen.findByLabelText("Test name (required)");
+    expect(document.title).toBe("Submit a new test — NPTC Catalogue");
   });
 });
 
