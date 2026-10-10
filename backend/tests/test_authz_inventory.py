@@ -160,6 +160,9 @@ COVERED_WRITE_ROUTES = frozenset(
         # per-entry outcome list rather than a whole-request 409. Negative-
         # auth coverage lives in `test_api_catalogue_properties.py`.
         RouteKey(method="POST", path="/catalogue/entries/bulk/properties/{key}"),
+        # The new-test submission route (FR-23, FR-80). Negative-auth coverage lives in
+        # `test_api_submissions.py`.
+        RouteKey(method="POST", path="/submissions"),
         # issue #249: the entry's own core-column write route - status.
         # Negative-auth coverage lives in
         # `test_api_catalogue_entries.py`.

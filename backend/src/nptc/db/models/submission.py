@@ -122,7 +122,7 @@ class Submission(Base):
     )
     snomed_code: Mapped[str | None] = mapped_column(Text, nullable=True, active_history=True)
     snomed_fsn: Mapped[str | None] = mapped_column(Text, nullable=True, active_history=True)
-    property_values: Mapped[dict[str, object]] = mapped_column(
+    property_values: Mapped[dict[str, list[dict[str, object]]]] = mapped_column(
         JSONB, nullable=False, server_default=text("'{}'::jsonb"), active_history=True
     )
     notes: Mapped[str | None] = mapped_column(Text, nullable=True, active_history=True)

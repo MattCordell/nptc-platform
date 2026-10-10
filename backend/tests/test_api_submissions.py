@@ -1,0 +1,602 @@
+"""`POST /api/v1/submissions` (FR-23, FR-24, FR-26, FR-27, FR-80, NFR-08, NFR-45).
+
+The real app over a stub identity provider, with the terminology client replaced by a stub
+(`api_app_support`). Each refusal asserts that nothing was stored, counted for the submitter this
+test created, because `backend/tests` shares one Postgres container (see `CLAUDE.md`).
+"""
+
+from __future__ import annotations
+
+import importlib.util
+import re
+import sys
+import uuid
+from collections.abc import Iterator
+from pathlib import Path
+from typing import Any
+
+import pytest
+from sqlalchemy import func, select
+from sqlalchemy.engine import Connection
+
+from nptc.api.errors import TERMS_ACCEPTANCE_REQUIRED_CODE
+from nptc.audit.diffing import REDACTED_KEY
+from nptc.auth.permissions import Role
+from nptc.db.models.audit import AuditEvent
+from nptc.db.models.property_definition import PropertyDefinition, PropertyOrigin, PropertyScope
+from nptc.db.models.submission import Submission
+from nptc.db.models.user import User
+from nptc.db.models.user_identity import UserIdentity
+from nptc_shared.terminology import (
+    AU_LANGUAGE_TAG,
+    SNOMED_SYSTEM,
+    ConceptProperty,
+    Designation,
+    LookupResult,
+    Operation,
+    StubConcept,
+    TerminologyStatusError,
+    TerminologyTimeoutError,
+)
+
+
+def _load(name: str) -> Any:
+    spec = importlib.util.spec_from_file_location(name, Path(__file__).parent / f"{name}.py")
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+_api_support = _load("api_app_support")
+build_api_test_app = _api_support.build_api_test_app
+ApiTestApp = _api_support.ApiTestApp
+
+latest_audit_event = _load("audit_support").latest_audit_event
+
+_CODE = "391483001"
+_FSN = "Microscopy (acid fast bacilli) (procedure)"
+_FSN_USE_CODE = "900000000000003001"
+_PROFILE_ORGANISATION = "Profile Pathology"
+_PATH = "/submissions"
+_UUID = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}")
+
+
+@pytest.fixture
+def api(app_db: Connection) -> Iterator[ApiTestApp]:
+    yield from build_api_test_app(app_db)
+
+
+def _subject() -> str:
+    return f"sub-submit-{uuid.uuid4().hex[:10]}"
+
+
+def _token(api: ApiTestApp, role: Role, *, accept_terms: bool = True) -> tuple[str, User]:
+    """A token holding exactly `role`, and the user it belongs to, whose profile names an
+    organisation. An administrator gets the MFA claim the realm demands for that role."""
+    subject = _subject()
+    token = api.token_for_role(
+        subject=subject,
+        role=role,
+        with_mfa=role is Role.ADMINISTRATOR,
+        replace_roles=True,
+        accept_terms=accept_terms,
+    )
+    user = api.session.execute(
+        select(User)
+        .join(UserIdentity, UserIdentity.user_id == User.id)
+        .where(UserIdentity.subject == subject)
+    ).scalar_one()
+    user.organisation = _PROFILE_ORGANISATION
+    api.session.flush()
+    return token, user
+
+
+def _submission_count(api: ApiTestApp, user: User) -> int:
+    return api.session.execute(
+        select(func.count()).select_from(Submission).where(Submission.submitter_id == user.id)
+    ).scalar_one()
+
+
+def _audit_event_count(api: ApiTestApp) -> int:
+    return api.session.execute(select(func.count()).select_from(AuditEvent)).scalar_one()
+
+
+def _post(api: ApiTestApp, token: str | None, **body: object) -> Any:
+    payload: dict[str, object] = {"preferred_term": "Serum sodium"}
+    payload.update(body)
+    return api.post(_PATH, token=token, json=payload)
+
+
+def _seed_concept(api: ApiTestApp, *, active: bool = True) -> None:
+    api.terminology.add_concept(
+        StubConcept(
+            code=_CODE,
+            fsn=_FSN,
+            preferred_terms={AU_LANGUAGE_TAG: "Acid fast bacilli microscopy"},
+            active=active,
+        )
+    )
+
+
+def _property(
+    api: ApiTestApp,
+    key: str,
+    *,
+    scope: PropertyScope = PropertyScope.SUBMISSION,
+    required: bool = False,
+    max_length: int | None = None,
+) -> None:
+    api.session.add(
+        PropertyDefinition(
+            key=key,
+            label=key.replace("_", " ").title(),
+            datatype="string",
+            cardinality="0..1",
+            scope=scope,
+            required_for_submission=required,
+            required_for_publication=False,
+            filterable=False,
+            origin=PropertyOrigin.ADMIN,
+            display_order=0,
+            constraints={"maxLength": max_length} if max_length is not None else {},
+        )
+    )
+    api.session.flush()
+
+
+# --- who may submit (FR-80) --------------------------------------------------------------------
+
+
+@pytest.mark.req("FR-23")
+@pytest.mark.req("FR-80")
+@pytest.mark.integration
+def test_a_provisional_user_creates_a_submission_in_state_submitted(api: ApiTestApp) -> None:
+    token, user = _token(api, Role.PROVISIONAL)
+
+    response = _post(api, token, synonyms=["Sodium, serum"], notes="Seen on a new panel")
+
+    assert response.status_code == 201, response.text
+    body = response.json()
+    assert body["kind"] == "new_test"
+    assert body["state"] == "Submitted"
+    assert body["preferred_term"] == "Serum sodium"
+    assert body["synonyms"] == ["Sodium, serum"]
+    assert body["notes"] == "Seen on a new panel"
+    assert body["organisation"] == _PROFILE_ORGANISATION
+    assert body["row_version"] == 1
+    stored = api.session.execute(
+        select(Submission).where(Submission.submitter_id == user.id)
+    ).scalar_one()
+    assert str(stored.id) == body["id"]
+    assert stored.state == "Submitted"
+    assert stored.organisation == _PROFILE_ORGANISATION
+
+
+@pytest.mark.req("FR-80")
+@pytest.mark.integration
+@pytest.mark.parametrize(
+    "role",
+    [Role.PROVISIONAL, Role.MEMBER, Role.REVIEWER, Role.ADMINISTRATOR],
+    ids=lambda r: r.value,
+)
+def test_every_role_that_holds_submission_create_can_submit(api: ApiTestApp, role: Role) -> None:
+    token, user = _token(api, role)
+
+    response = _post(api, token)
+
+    assert response.status_code == 201, response.text
+    assert _submission_count(api, user) == 1
+
+
+@pytest.mark.req("FR-80")
+@pytest.mark.integration
+def test_an_observer_is_refused_with_403_and_nothing_is_stored(api: ApiTestApp) -> None:
+    token, user = _token(api, Role.OBSERVER)
+    before = _audit_event_count(api)
+
+    response = _post(api, token)
+
+    assert response.status_code == 403, response.text
+    assert "WWW-Authenticate" not in response.headers
+    assert _submission_count(api, user) == 0
+    assert _audit_event_count(api) == before
+    for role in Role:
+        assert role.value not in response.text
+    assert not _UUID.search(response.text)
+
+
+@pytest.mark.req("FR-80")
+@pytest.mark.integration
+def test_an_anonymous_caller_is_refused_with_401(api: ApiTestApp) -> None:
+    response = _post(api, None)
+
+    assert response.status_code == 401, response.text
+    assert response.headers["WWW-Authenticate"] == "Bearer"
+
+
+@pytest.mark.req("NFR-45")
+@pytest.mark.integration
+def test_a_user_who_has_not_accepted_the_current_terms_is_refused(api: ApiTestApp) -> None:
+    token, user = _token(api, Role.PROVISIONAL, accept_terms=False)
+    before = _audit_event_count(api)
+
+    refused = _post(api, token)
+
+    assert refused.status_code == 403, refused.text
+    assert refused.json()["code"] == TERMS_ACCEPTANCE_REQUIRED_CODE
+    assert _submission_count(api, user) == 0
+    assert _audit_event_count(api) == before
+
+    api.accept_current_terms(user.id)
+    accepted = _post(api, token)
+
+    assert accepted.status_code == 201, accepted.text
+
+
+# --- the request body (FR-23, FR-24) -----------------------------------------------------------
+
+
+@pytest.mark.req("FR-23")
+@pytest.mark.integration
+def test_a_request_without_a_preferred_term_is_422(api: ApiTestApp) -> None:
+    token, user = _token(api, Role.PROVISIONAL)
+
+    response = api.post(_PATH, token=token, json={"notes": "No name given"})
+
+    assert response.status_code == 422, response.text
+    assert _submission_count(api, user) == 0
+
+
+@pytest.mark.req("FR-23")
+@pytest.mark.integration
+@pytest.mark.parametrize("term", ["", "   "], ids=["empty", "blank"])
+def test_a_blank_preferred_term_is_422(api: ApiTestApp, term: str) -> None:
+    token, user = _token(api, Role.PROVISIONAL)
+
+    response = _post(api, token, preferred_term=term)
+
+    assert response.status_code == 422, response.text
+    assert _submission_count(api, user) == 0
+
+
+@pytest.mark.req("FR-24")
+@pytest.mark.integration
+@pytest.mark.parametrize("field", ["length", "snomed_fsn", "state", "submitter_id", "kind"])
+def test_a_field_the_caller_may_not_supply_is_422(api: ApiTestApp, field: str) -> None:
+    """`length` is computed (FR-24), the FSN is served (FR-82), and state, kind and submitter are
+    set by the platform."""
+    token, user = _token(api, Role.PROVISIONAL)
+
+    response = _post(api, token, **{field: 12})
+
+    assert response.status_code == 422, response.text
+    assert _submission_count(api, user) == 0
+
+
+@pytest.mark.req("FR-23")
+@pytest.mark.integration
+@pytest.mark.parametrize(
+    ("requested", "expected"),
+    [("Other Pathology", "Other Pathology"), ("  ", None)],
+    ids=["override", "blank_means_none"],
+)
+def test_the_request_can_override_the_organisation_copy(
+    api: ApiTestApp, requested: str, expected: str | None
+) -> None:
+    token, user = _token(api, Role.PROVISIONAL)
+
+    response = _post(api, token, organisation=requested)
+
+    assert response.status_code == 201, response.text
+    assert response.json()["organisation"] == expected
+    stored = api.session.execute(
+        select(Submission).where(Submission.submitter_id == user.id)
+    ).scalar_one()
+    assert stored.organisation == expected
+
+
+@pytest.mark.req("FR-23")
+@pytest.mark.integration
+def test_the_organisation_copy_outlives_the_profile_value(api: ApiTestApp) -> None:
+    """Closing an account clears the profile (NFR-17), and the submission keeps its own copy."""
+    token, user = _token(api, Role.PROVISIONAL)
+    created = _post(api, token)
+    assert created.status_code == 201, created.text
+
+    user.organisation = None
+    api.session.flush()
+
+    stored = api.session.execute(
+        select(Submission).where(Submission.submitter_id == user.id)
+    ).scalar_one()
+    assert stored.organisation == _PROFILE_ORGANISATION
+
+
+# --- property values (FR-24) -------------------------------------------------------------------
+
+
+@pytest.mark.req("FR-24")
+@pytest.mark.integration
+def test_submission_scoped_values_are_validated_and_stored(api: ApiTestApp) -> None:
+    _property(api, "api_sub_analyte")
+    token, _ = _token(api, Role.PROVISIONAL)
+
+    response = _post(
+        api,
+        token,
+        property_values={"api_sub_analyte": [{"value": "Sodium", "justification": "Per panel"}]},
+    )
+
+    assert response.status_code == 201, response.text
+    assert response.json()["property_values"] == {
+        "api_sub_analyte": [{"value": "Sodium", "justification": "Per panel"}]
+    }
+
+
+def _issues(response: Any) -> list[tuple[str, str]]:
+    return [(issue["property_key"], issue["code"]) for issue in response.json()["issues"]]
+
+
+@pytest.mark.req("FR-24")
+@pytest.mark.integration
+def test_a_property_outside_submission_scope_is_422(api: ApiTestApp) -> None:
+    _property(api, "api_sub_maintenance", scope=PropertyScope.MAINTENANCE)
+    token, user = _token(api, Role.PROVISIONAL)
+
+    response = _post(api, token, property_values={"api_sub_maintenance": [{"value": "x"}]})
+
+    assert response.status_code == 422, response.text
+    assert _issues(response) == [("api_sub_maintenance", "out-of-scope")]
+    assert _submission_count(api, user) == 0
+
+
+@pytest.mark.req("FR-24")
+@pytest.mark.integration
+def test_a_computed_field_given_as_a_property_is_422(api: ApiTestApp) -> None:
+    token, user = _token(api, Role.PROVISIONAL)
+
+    response = _post(api, token, property_values={"length": [{"value": 12}]})
+
+    assert response.status_code == 422, response.text
+    assert _issues(response) == [("length", "unknown-property")]
+    assert _submission_count(api, user) == 0
+
+
+@pytest.mark.req("FR-24")
+@pytest.mark.integration
+def test_a_value_the_registry_handler_refuses_is_422(api: ApiTestApp) -> None:
+    _property(api, "api_sub_short", max_length=3)
+    token, user = _token(api, Role.PROVISIONAL)
+
+    response = _post(api, token, property_values={"api_sub_short": [{"value": "too long"}]})
+
+    assert response.status_code == 422, response.text
+    assert [key for key, _ in _issues(response)] == ["api_sub_short"]
+    assert _submission_count(api, user) == 0
+
+
+@pytest.mark.req("FR-24")
+@pytest.mark.integration
+def test_a_missing_required_property_is_422(api: ApiTestApp) -> None:
+    _property(api, "api_sub_required", required=True)
+    token, user = _token(api, Role.PROVISIONAL)
+
+    refused = _post(api, token)
+
+    assert refused.status_code == 422, refused.text
+    assert ("api_sub_required", "required-property-missing") in _issues(refused)
+    assert _submission_count(api, user) == 0
+
+    accepted = _post(api, token, property_values={"api_sub_required": [{"value": "given"}]})
+
+    assert accepted.status_code == 201, accepted.text
+
+
+# --- the SNOMED CT code (FR-26) ----------------------------------------------------------------
+
+
+@pytest.mark.req("FR-26")
+@pytest.mark.req("FR-06")
+@pytest.mark.req("FR-82")
+@pytest.mark.integration
+def test_the_stored_fsn_comes_from_the_terminology_server(api: ApiTestApp) -> None:
+    _seed_concept(api)
+    token, user = _token(api, Role.PROVISIONAL)
+
+    response = _post(api, token, snomed_code=_CODE)
+
+    assert response.status_code == 201, response.text
+    body = response.json()
+    assert body["snomed_code"] == _CODE
+    assert isinstance(body["snomed_code"], str)
+    assert body["snomed_fsn"] == _FSN
+    stored = api.session.execute(
+        select(Submission).where(Submission.submitter_id == user.id)
+    ).scalar_one()
+    assert (stored.snomed_code, stored.snomed_fsn) == (_CODE, _FSN)
+    assert [(r.operation, r.detail) for r in api.terminology.requests] == [
+        (Operation.LOOKUP, _CODE)
+    ]
+
+
+@pytest.mark.req("FR-26")
+@pytest.mark.integration
+def test_a_submission_without_a_code_asks_the_terminology_server_nothing(
+    api: ApiTestApp,
+) -> None:
+    token, _ = _token(api, Role.PROVISIONAL)
+
+    response = _post(api, token)
+
+    assert response.status_code == 201, response.text
+    assert response.json()["snomed_code"] is None
+    assert response.json()["snomed_fsn"] is None
+    assert api.terminology.requests == ()
+
+
+@pytest.mark.req("FR-26")
+@pytest.mark.integration
+def test_an_unknown_code_is_refused_with_a_reason(api: ApiTestApp) -> None:
+    api.terminology.seed_error(
+        Operation.LOOKUP, TerminologyStatusError("not found", status_code=404)
+    )
+    token, user = _token(api, Role.PROVISIONAL)
+    before = _audit_event_count(api)
+
+    response = _post(api, token, snomed_code=_CODE)
+
+    assert response.status_code == 422, response.text
+    assert "not found" in response.json()["detail"]
+    assert _CODE not in response.text
+    assert _submission_count(api, user) == 0
+    assert _audit_event_count(api) == before
+
+
+@pytest.mark.req("FR-26")
+@pytest.mark.integration
+def test_an_inactive_code_is_refused_with_a_reason(api: ApiTestApp) -> None:
+    _seed_concept(api, active=False)
+    token, user = _token(api, Role.PROVISIONAL)
+
+    response = _post(api, token, snomed_code=_CODE)
+
+    assert response.status_code == 422, response.text
+    assert "inactive" in response.json()["detail"]
+    assert _submission_count(api, user) == 0
+
+
+@pytest.mark.req("FR-26")
+@pytest.mark.req("FR-82")
+@pytest.mark.integration
+def test_a_code_whose_active_status_is_not_reported_is_refused(api: ApiTestApp) -> None:
+    api.terminology.seed_lookup(
+        _CODE,
+        LookupResult(
+            code=_CODE,
+            system=SNOMED_SYSTEM,
+            display="Acid fast bacilli microscopy",
+            designations=(
+                Designation(value=_FSN, use_system=SNOMED_SYSTEM, use_code=_FSN_USE_CODE),
+            ),
+            properties=(),
+        ),
+    )
+    token, user = _token(api, Role.PROVISIONAL)
+
+    response = _post(api, token, snomed_code=_CODE)
+
+    assert response.status_code == 422, response.text
+    assert "did not say whether" in response.json()["detail"]
+    assert _submission_count(api, user) == 0
+
+
+@pytest.mark.req("FR-26")
+@pytest.mark.req("FR-82")
+@pytest.mark.integration
+def test_a_code_with_no_served_fsn_is_refused(api: ApiTestApp) -> None:
+    api.terminology.seed_lookup(
+        _CODE,
+        LookupResult(
+            code=_CODE,
+            system=SNOMED_SYSTEM,
+            display="Acid fast bacilli microscopy",
+            properties=(ConceptProperty(code="inactive", value="false", value_type="boolean"),),
+        ),
+    )
+    token, user = _token(api, Role.PROVISIONAL)
+
+    response = _post(api, token, snomed_code=_CODE)
+
+    assert response.status_code == 422, response.text
+    assert "fully specified name" in response.json()["detail"]
+    assert _submission_count(api, user) == 0
+
+
+@pytest.mark.req("FR-06")
+@pytest.mark.integration
+@pytest.mark.parametrize("code", ["not-a-code", "391483009"], ids=["malformed", "bad_check_digit"])
+def test_a_malformed_code_is_422_without_asking_the_server(api: ApiTestApp, code: str) -> None:
+    _seed_concept(api)
+    token, user = _token(api, Role.PROVISIONAL)
+
+    response = _post(api, token, snomed_code=code)
+
+    assert response.status_code == 422, response.text
+    assert api.terminology.requests == ()
+    assert _submission_count(api, user) == 0
+
+
+@pytest.mark.req("FR-54")
+@pytest.mark.integration
+def test_a_terminology_outage_is_503_and_nothing_is_stored(api: ApiTestApp) -> None:
+    api.terminology.seed_error(Operation.LOOKUP, TerminologyTimeoutError("timed out"))
+    token, user = _token(api, Role.PROVISIONAL)
+    before = _audit_event_count(api)
+
+    response = _post(api, token, snomed_code=_CODE)
+
+    assert response.status_code == 503, response.text
+    assert "terminology server" in response.json()["detail"]
+    assert _submission_count(api, user) == 0
+    assert _audit_event_count(api) == before
+
+
+# --- the response and the audit event ----------------------------------------------------------
+
+
+@pytest.mark.req("NFR-08")
+@pytest.mark.integration
+def test_the_audit_event_records_the_content_and_withholds_the_organisation(
+    api: ApiTestApp,
+) -> None:
+    _seed_concept(api)
+    token, user = _token(api, Role.PROVISIONAL)
+
+    response = _post(api, token, snomed_code=_CODE, notes="A supporting note")
+
+    assert response.status_code == 201, response.text
+    event = latest_audit_event(
+        api.session, entity_type="submission", entity_id=response.json()["id"]
+    )
+    assert event.action == "submission.created"
+    assert event.actor_user_id == user.id
+    assert event.before is None
+    assert event.after is not None
+    assert event.after["preferred_term"] == "Serum sodium"
+    assert event.after["snomed_code"] == _CODE
+    assert event.after["snomed_fsn"] == _FSN
+    assert event.after["notes"] == "A supporting note"
+    assert event.after["state"] == "Submitted"
+    assert event.after[REDACTED_KEY] == ["organisation"]
+    assert _PROFILE_ORGANISATION not in str(event.after)
+
+
+@pytest.mark.req("FR-98")
+@pytest.mark.integration
+def test_the_response_declares_which_designation_each_label_is(api: ApiTestApp) -> None:
+    _seed_concept(api)
+    token, _ = _token(api, Role.PROVISIONAL)
+
+    response = _post(api, token, snomed_code=_CODE)
+
+    assert response.status_code == 201, response.text
+    assert response.json()["label_provenance"] == {
+        "preferred_term": {"designation": "au_preferred_term", "semantic_tag": "not_applicable"},
+        "synonyms": {"designation": "synonym", "semantic_tag": "not_applicable"},
+        "snomed_fsn": {"designation": "fsn", "semantic_tag": "intact"},
+    }
+
+
+@pytest.mark.req("NFR-04")
+@pytest.mark.integration
+def test_the_response_names_no_user(api: ApiTestApp) -> None:
+    """Who submitted is the read routes' rule (FR-42); this route returns no user id (NFR-04)."""
+    token, user = _token(api, Role.PROVISIONAL)
+
+    response = _post(api, token)
+
+    assert response.status_code == 201, response.text
+    assert str(user.id) not in response.text
+    assert "submitter" not in response.json()
