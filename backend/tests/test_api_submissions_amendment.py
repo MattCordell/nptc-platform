@@ -422,6 +422,7 @@ def test_a_terminology_outage_is_503_and_nothing_is_stored(api: ApiTestApp) -> N
 
     assert response.status_code == 503, response.text
     assert "terminology server" in response.json()["detail"]
+    assert response.json()["field"] == "snomed_code"
     _assert_nothing_saved(api, user, before)
 
 
@@ -496,6 +497,7 @@ def test_a_reference_that_fails_its_check_stores_nothing(
     response = _post(api, token, _entry(api), synonyms=["Na (serum)"], reference_url=_REFERENCE_URL)
 
     assert response.status_code == status_code, response.text
+    assert response.json()["field"] == "reference_url"
     assert _REFERENCE_URL not in response.text
     _assert_nothing_saved(api, user, before)
 

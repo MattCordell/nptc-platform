@@ -91,6 +91,7 @@ from nptc.api.errors import (
     DuplicateMatchItem,
     PropertyValidationResponse,
     SubmissionDuplicatesResponse,
+    SubmissionFieldRefusalResponse,
     duplicate_match_item,
 )
 from nptc.api.labels import (
@@ -129,13 +130,14 @@ _RESPONSE_403: Final[dict[str, Any]] = {
         "the current terms of use (the body then carries a `code` that says so)."
     ),
 }
-#: Three 422 body shapes reach a caller: a typed domain error (`ErrorResponse`: an unusable term,
-#: a code the terminology server rules out, or a reference link that fails its check, each with its
-#: own sentence), the field-level body
+#: Four 422 body shapes reach a caller: a refusal that names its field
+#: (`SubmissionFieldRefusalResponse`: an unusable term, a code the terminology server rules out, an
+#: invisible character in `notes` or `organisation`, or a reference link that fails its check), a
+#: refusal with no field (`ErrorResponse`: a malformed code), the property-level body
 #: (`PropertyValidationResponse`), or a pydantic failure that never reaches the route body
-#: (`HTTPValidationError`). The union lets the first two register in `components/schemas`.
+#: (`HTTPValidationError`). The union lets the first three register in `components/schemas`.
 _RESPONSE_422: Final[dict[str, Any]] = {
-    "model": ErrorResponse | PropertyValidationResponse,
+    "model": SubmissionFieldRefusalResponse | ErrorResponse | PropertyValidationResponse,
     "description": (
         "The request is not acceptable. `detail` says why for a term that cannot be cleaned and "
         "for a SNOMED CT code that is malformed, unknown to the AU edition, inactive, has no "
@@ -144,7 +146,9 @@ _RESPONSE_422: Final[dict[str, Any]] = {
         "points at an internal address, answers with a failing status, redirects too often, times "
         "out or cannot be found. `issues[]` names each property problem: an unknown, "
         "deprecated or out-of-scope property, a value its datatype refuses, or a property "
-        "required for submission with no value. A missing `preferred_term`, an unrecognised "
+        "required for submission with no value. A refusal of one field carries `field`, the "
+        "request field to mark: `preferred_term`, `synonyms`, `snomed_code`, `reference_url`, "
+        "`notes` or `organisation`. A missing `preferred_term`, an unrecognised "
         "field, or a part of the request over its size bound fails validation before the route "
         "runs."
     ),
@@ -166,10 +170,11 @@ _RESPONSE_502: Final[dict[str, Any]] = {
     "description": "The terminology server's response could not be used.",
 }
 _RESPONSE_503: Final[dict[str, Any]] = {
-    "model": ErrorResponse,
+    "model": SubmissionFieldRefusalResponse | ErrorResponse,
     "description": (
         "The terminology server could not be reached, or a rate limit persisted through "
         "retries, or the platform has no outbound internet access to check the `reference_url`. "
+        "`field` is `snomed_code` for the first two and `reference_url` for the last. "
         "Nothing was saved, and the same request can be sent again. May carry a `Retry-After` "
         "header."
     ),
@@ -242,7 +247,7 @@ _RESPONSE_409_AMENDMENT: Final[dict[str, Any]] = {
     ),
 }
 _RESPONSE_422_AMENDMENT: Final[dict[str, Any]] = {
-    "model": ErrorResponse,
+    "model": SubmissionFieldRefusalResponse | ErrorResponse,
     "description": (
         "The request is not acceptable. `detail` says why for an amendment with nothing left "
         "to propose (no synonym and no code, or only synonyms and a code the entry already "
@@ -251,8 +256,10 @@ _RESPONSE_422_AMENDMENT: Final[dict[str, Any]] = {
         "fully specified name, for `notes` or `organisation` that carry an invisible character, "
         "and for a `reference_url` that is not a usable web address, points at an internal "
         "address, answers with a failing status, redirects too often, times out or cannot be "
-        "found. A malformed `entry_business_key`, an unrecognised field, or a part of the "
-        "request over its size bound fails validation before the route runs."
+        "found. A refusal of one field carries `field`: `synonyms`, `snomed_code`, "
+        "`reference_url`, `notes` or `organisation`. A malformed `entry_business_key`, an "
+        "unrecognised field, or a part of the request over its size bound fails validation "
+        "before the route runs."
     ),
 }
 

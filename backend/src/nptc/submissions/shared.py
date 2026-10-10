@@ -12,9 +12,10 @@ from nptc.submissions.errors import (
     FreeTextField,
     FreeTextRefusedError,
     SubmissionCodeRefusedError,
+    SubmissionCodeUnavailableError,
 )
 from nptc.terminology.concepts import resolve_concept
-from nptc.terminology.errors import ConceptNotFoundError
+from nptc.terminology.errors import ConceptNotFoundError, TerminologyUnavailableError
 from nptc_shared.terminology import TerminologyClient
 from nptc_shared.text import find_invisible_characters, normalise_for_comparison
 
@@ -48,6 +49,10 @@ def resolve_code(client: TerminologyClient, code: str) -> tuple[str, str]:
         concept = resolve_concept(client, code)
     except ConceptNotFoundError:
         raise SubmissionCodeRefusedError(CodeRefusal.NOT_FOUND) from None
+    except TerminologyUnavailableError as unavailable:
+        raise SubmissionCodeUnavailableError(
+            str(unavailable), retry_after=unavailable.retry_after
+        ) from unavailable
     if concept.active is None:
         raise SubmissionCodeRefusedError(CodeRefusal.STATUS_NOT_REPORTED)
     if not concept.active:

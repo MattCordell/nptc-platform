@@ -2718,6 +2718,20 @@ export interface components {
             matches: components["schemas"]["DuplicateMatchItem"][];
         };
         /**
+         * SubmissionFieldRefusalResponse
+         * @description A refusal of one field of a submission, with the field named so a form can mark it without
+         *     reading `detail`. `field` is one of the request's own field names.
+         */
+        SubmissionFieldRefusalResponse: {
+            /** Detail */
+            detail: string;
+            /**
+             * Field
+             * @enum {string}
+             */
+            field: "preferred_term" | "synonyms" | "snomed_code" | "reference_url" | "notes" | "organisation";
+        };
+        /**
          * SubmissionPropertyValueRequest
          * @description One value for a property, with the optional justification the registry's strength rule can
          *     ask for. Shaped like the catalogue's own property write, with a size bound on each part.
@@ -5719,13 +5733,13 @@ export interface operations {
                     "application/json": components["schemas"]["SubmissionDuplicatesResponse"];
                 };
             };
-            /** @description The request is not acceptable. `detail` says why for a term that cannot be cleaned and for a SNOMED CT code that is malformed, unknown to the AU edition, inactive, has no reported status or has no fully specified name, and for `notes` or `organisation` that carry an invisible character, and for a `reference_url` that is not a usable web address, points at an internal address, answers with a failing status, redirects too often, times out or cannot be found. `issues[]` names each property problem: an unknown, deprecated or out-of-scope property, a value its datatype refuses, or a property required for submission with no value. A missing `preferred_term`, an unrecognised field, or a part of the request over its size bound fails validation before the route runs. */
+            /** @description The request is not acceptable. `detail` says why for a term that cannot be cleaned and for a SNOMED CT code that is malformed, unknown to the AU edition, inactive, has no reported status or has no fully specified name, and for `notes` or `organisation` that carry an invisible character, and for a `reference_url` that is not a usable web address, points at an internal address, answers with a failing status, redirects too often, times out or cannot be found. `issues[]` names each property problem: an unknown, deprecated or out-of-scope property, a value its datatype refuses, or a property required for submission with no value. A refusal of one field carries `field`, the request field to mark: `preferred_term`, `synonyms`, `snomed_code`, `reference_url`, `notes` or `organisation`. A missing `preferred_term`, an unrecognised field, or a part of the request over its size bound fails validation before the route runs. */
             422: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["HTTPValidationError"] | components["schemas"]["ErrorResponse"] | components["schemas"]["PropertyValidationResponse"];
+                    "application/json": components["schemas"]["HTTPValidationError"] | components["schemas"]["SubmissionFieldRefusalResponse"] | components["schemas"]["ErrorResponse"] | components["schemas"]["PropertyValidationResponse"];
                 };
             };
             /** @description Either the caller has used up their submission quota (FR-43), or an anonymous or repeatedly rejected address has used up its request budget (FR-22, a `RateLimitedResponse`). For a quota refusal, new tests and amendments share one counter. `limit` is `hourly` when the quota is a number of submissions in a rolling hour, and the response then carries `Retry-After`, the whole seconds until a submission can be made. `limit` is `lifetime` when the quota is a total, and the response carries no `Retry-After`, because waiting does not lift it. Nothing was saved, and a used-up quota is recorded in the audit trail. `limit` is `concurrent` when an earlier submission from the same user is still being processed. The response then carries a short `Retry-After`, and the refusal is not audited, because no limit was reached. */
@@ -5757,13 +5771,13 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description The terminology server could not be reached, or a rate limit persisted through retries, or the platform has no outbound internet access to check the `reference_url`. Nothing was saved, and the same request can be sent again. May carry a `Retry-After` header. */
+            /** @description The terminology server could not be reached, or a rate limit persisted through retries, or the platform has no outbound internet access to check the `reference_url`. `field` is `snomed_code` for the first two and `reference_url` for the last. Nothing was saved, and the same request can be sent again. May carry a `Retry-After` header. */
             503: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
+                    "application/json": components["schemas"]["SubmissionFieldRefusalResponse"] | components["schemas"]["ErrorResponse"];
                 };
             };
         };
@@ -5826,13 +5840,13 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description The request is not acceptable. `detail` says why for an amendment with nothing left to propose (no synonym and no code, or only synonyms and a code the entry already has), for a synonym that cannot be cleaned, for a SNOMED CT code that is malformed, unknown to the AU edition, inactive, has no reported status or has no fully specified name, for `notes` or `organisation` that carry an invisible character, and for a `reference_url` that is not a usable web address, points at an internal address, answers with a failing status, redirects too often, times out or cannot be found. A malformed `entry_business_key`, an unrecognised field, or a part of the request over its size bound fails validation before the route runs. */
+            /** @description The request is not acceptable. `detail` says why for an amendment with nothing left to propose (no synonym and no code, or only synonyms and a code the entry already has), for a synonym that cannot be cleaned, for a SNOMED CT code that is malformed, unknown to the AU edition, inactive, has no reported status or has no fully specified name, for `notes` or `organisation` that carry an invisible character, and for a `reference_url` that is not a usable web address, points at an internal address, answers with a failing status, redirects too often, times out or cannot be found. A refusal of one field carries `field`: `synonyms`, `snomed_code`, `reference_url`, `notes` or `organisation`. A malformed `entry_business_key`, an unrecognised field, or a part of the request over its size bound fails validation before the route runs. */
             422: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
+                    "application/json": components["schemas"]["SubmissionFieldRefusalResponse"] | components["schemas"]["ErrorResponse"];
                 };
             };
             /** @description Either the caller has used up their submission quota (FR-43), or an anonymous or repeatedly rejected address has used up its request budget (FR-22, a `RateLimitedResponse`). For a quota refusal, new tests and amendments share one counter. `limit` is `hourly` when the quota is a number of submissions in a rolling hour, and the response then carries `Retry-After`, the whole seconds until a submission can be made. `limit` is `lifetime` when the quota is a total, and the response carries no `Retry-After`, because waiting does not lift it. Nothing was saved, and a used-up quota is recorded in the audit trail. `limit` is `concurrent` when an earlier submission from the same user is still being processed. The response then carries a short `Retry-After`, and the refusal is not audited, because no limit was reached. */
@@ -5864,13 +5878,13 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description The terminology server could not be reached, or a rate limit persisted through retries, or the platform has no outbound internet access to check the `reference_url`. Nothing was saved, and the same request can be sent again. May carry a `Retry-After` header. */
+            /** @description The terminology server could not be reached, or a rate limit persisted through retries, or the platform has no outbound internet access to check the `reference_url`. `field` is `snomed_code` for the first two and `reference_url` for the last. Nothing was saved, and the same request can be sent again. May carry a `Retry-After` header. */
             503: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
+                    "application/json": components["schemas"]["SubmissionFieldRefusalResponse"] | components["schemas"]["ErrorResponse"];
                 };
             };
         };

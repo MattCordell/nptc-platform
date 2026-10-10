@@ -36,9 +36,8 @@ from sqlalchemy.orm import Session
 
 from nptc.catalogue.queries import PUBLIC_STATUSES
 from nptc.catalogue.search import apply_similarity_threshold
-from nptc.catalogue.term_hygiene import clean_term
 from nptc.db.models.submission import CLOSED_SUBMISSION_STATES
-from nptc.submissions.terms import distinct_synonyms
+from nptc.submissions.terms import TermField, clean_submission_term, distinct_synonyms
 from nptc_shared.sctid import SCTID
 
 __all__ = [
@@ -242,7 +241,7 @@ def check_duplicates(
     `nptc.catalogue.term_hygiene.TermCleaningError` for a term that cannot be cleaned and
     `nptc_shared.sctid.InvalidSCTIDError` for a malformed code. The terminology server is not
     asked."""
-    cleaned = clean_term(preferred_term)
+    cleaned = clean_submission_term(preferred_term, TermField.PREFERRED_TERM)
     return find_duplicates(
         session,
         preferred_term=cleaned,
