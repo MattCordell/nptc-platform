@@ -31,6 +31,12 @@ match can appear between the 409 and the resend. `duplicate_confirmed_at` is the
 the save, the same value as `created_at`, and says the request carried a confirmation. A submission
 that matched nothing has an empty array and no time.
 
+**An amendment names its entry by `entry_id` (FR-35).** The column is set on an amendment and null
+on a new test, and a check says so. It is a foreign key to `catalogue_entry.id`, not the business
+key, so the link survives anything that happens to the key's text. `preferred_term` is required on
+every row, so an amendment stores a copy of the entry's preferred term as it was when the
+submitter proposed the change. The copy is context for a reviewer, never a proposed rename.
+
 **`organisation` is the submitter's own copy** of the profile value, pre-filled and editable.
 Closing an account clears the profile (NFR-17); the copy stays, and the audit policy withholds it
 as it does on `app_user`.
@@ -90,6 +96,9 @@ _REFERENCE_CHECK_COMPLETE_SQL = (
     "AND (reference_url IS NULL) = (reference_status IS NULL)"
 )
 _NEW_TEST_HAS_REFERENCE_SQL = "kind <> 'new_test' OR reference_url IS NOT NULL"
+#: An amendment has an entry and a new test has none. Both sides of the `=` are plain booleans, so
+#: neither can be NULL and the check cannot pass by being unknown.
+_AMENDMENT_LINKS_ENTRY_SQL = "(kind = 'amendment') = (entry_id IS NOT NULL)"
 _DUPLICATE_MATCHES_IS_ARRAY_SQL = "jsonb_typeof(duplicate_matches) = 'array'"
 #: A confirmation time exists exactly when there is something to confirm.
 _DUPLICATE_CONFIRMATION_COMPLETE_SQL = (
@@ -106,6 +115,7 @@ class Submission(Base):
         {
             "kind",
             "state",
+            "entry_id",
             "preferred_term",
             "synonyms",
             "snomed_code",
@@ -139,6 +149,7 @@ class Submission(Base):
         CheckConstraint(_REFERENCE_URL_NOT_BLANK_SQL, name="reference_url_not_blank"),
         CheckConstraint(_REFERENCE_CHECK_COMPLETE_SQL, name="reference_check_complete"),
         CheckConstraint(_NEW_TEST_HAS_REFERENCE_SQL, name="new_test_has_reference"),
+        CheckConstraint(_AMENDMENT_LINKS_ENTRY_SQL, name="amendment_links_entry"),
         CheckConstraint(_DUPLICATE_MATCHES_IS_ARRAY_SQL, name="duplicate_matches_is_array"),
         CheckConstraint(
             _DUPLICATE_CONFIRMATION_COMPLETE_SQL, name="duplicate_confirmation_complete"
@@ -159,6 +170,13 @@ class Submission(Base):
     # A quoted literal: an unquoted `server_default` string is rendered verbatim as SQL.
     state: Mapped[str] = mapped_column(
         Text, nullable=False, server_default=text("'Submitted'"), active_history=True
+    )
+    entry_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("catalogue_entry.id"),
+        nullable=True,
+        index=True,
+        active_history=True,
     )
     preferred_term: Mapped[str] = mapped_column(Text, nullable=False, active_history=True)
     synonyms: Mapped[list[str]] = mapped_column(
