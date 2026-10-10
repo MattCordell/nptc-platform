@@ -25,6 +25,7 @@ from nptc.api.errors import TERMS_ACCEPTANCE_REQUIRED_CODE
 from nptc.auth.permissions import Role
 from nptc.db.models.audit import AuditEvent
 from nptc.db.models.catalogue_entry import CatalogueEntry, CatalogueEntryStatus
+from nptc.db.models.code_binding import CodeBinding
 from nptc.db.models.submission import Submission
 from nptc.db.models.user import User
 from nptc.db.models.user_identity import UserIdentity
@@ -370,6 +371,42 @@ def test_a_malformed_code_is_422_and_nothing_is_stored(api: ApiTestApp) -> None:
     response = _post(api, token, _entry(api), snomed_code="391483009")
 
     assert response.status_code == 422, response.text
+    _assert_nothing_saved(api, user, before)
+
+
+@pytest.mark.req("FR-35")
+@pytest.mark.integration
+def test_the_current_code_with_a_new_synonym_saves_the_synonym_alone(api: ApiTestApp) -> None:
+    token, _ = _token(api, Role.MEMBER)
+    entry = _entry(api)
+    api.session.add(CodeBinding(entry_id=entry.id, code=_CODE, fsn=_FSN))
+    api.session.flush()
+
+    response = _post(api, token, entry, synonyms=["Na (serum)"], snomed_code=_CODE)
+
+    assert response.status_code == 201, response.text
+    body = response.json()
+    assert body["synonyms"] == ["Na (serum)"]
+    assert body["snomed_code"] is None
+    assert body["entry_business_key"] == entry.business_key
+
+
+@pytest.mark.req("FR-35")
+@pytest.mark.integration
+def test_the_current_code_alone_is_422_even_when_the_terminology_server_is_down(
+    api: ApiTestApp,
+) -> None:
+    token, user = _token(api, Role.MEMBER)
+    entry = _entry(api)
+    api.session.add(CodeBinding(entry_id=entry.id, code=_CODE, fsn=_FSN))
+    api.session.flush()
+    api.terminology.seed_error(Operation.LOOKUP, TerminologyTimeoutError("timed out"))
+    before = _audit_event_count(api)
+
+    response = _post(api, token, entry, snomed_code=_CODE)
+
+    assert response.status_code == 422, response.text
+    assert "already carries" in response.json()["detail"]
     _assert_nothing_saved(api, user, before)
 
 

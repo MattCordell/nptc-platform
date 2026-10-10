@@ -584,7 +584,7 @@ _DETAIL_AMENDMENT_REFUSED: Final[dict[AmendmentRefusal, str]] = {
     ),
     AmendmentRefusal.CODE_ALREADY_BOUND: (
         "This entry already carries this SNOMED CT code, so it is not a change. Propose a "
-        "different code, or send only the new synonyms."
+        "different code, or a synonym the entry does not have."
     ),
 }
 #: FR-35. Names the status, which is the reason the submitter needs. Only the three statuses

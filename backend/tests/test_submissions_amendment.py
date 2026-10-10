@@ -50,6 +50,7 @@ from nptc_shared.terminology import (
     StubConcept,
     StubTerminologyClient,
     TerminologyStatusError,
+    TerminologyTimeoutError,
 )
 
 
@@ -420,26 +421,56 @@ def test_a_retired_synonym_can_be_proposed_again(app_session: Session) -> None:
 
 @pytest.mark.req("FR-35")
 @pytest.mark.integration
-def test_a_code_the_entry_already_carries_is_refused(app_session: Session) -> None:
+def test_a_code_the_entry_already_carries_is_refused_without_asking_the_server(
+    app_session: Session,
+) -> None:
+    """The server is down, so a lookup would answer 503. The refusal is a 422 because the code is
+    compared with the entry's binding first."""
     user, ctx = _submitter(app_session)
     entry = _entry(app_session)
     _bind(app_session, entry, status=CodeBindingStatus.ACTIVE)
+    client = StubTerminologyClient()
+    client.seed_error(Operation.LOOKUP, TerminologyTimeoutError("timed out"))
     before = _audit_event_count(app_session)
 
     with pytest.raises(AmendmentRefusedError) as excinfo:
         _create(
             app_session,
             ctx,
-            AmendmentInput(
-                entry_business_key=entry.business_key,
-                synonyms=["Na (serum)"],
-                snomed_code=_CODE,
-            ),
-            _client(),
+            AmendmentInput(entry_business_key=entry.business_key, snomed_code=_CODE),
+            client,
         )
 
     assert excinfo.value.reason == AmendmentRefusal.CODE_ALREADY_BOUND
     _assert_nothing_saved(app_session, user, before)
+
+
+@pytest.mark.req("FR-35")
+@pytest.mark.integration
+def test_a_code_the_entry_already_carries_is_dropped_and_the_new_synonym_kept(
+    app_session: Session,
+) -> None:
+    """A form may pre-fill the entry's current code. The synonym is the change."""
+    _, ctx = _submitter(app_session)
+    entry = _entry(app_session)
+    _bind(app_session, entry, status=CodeBindingStatus.ACTIVE)
+    client = StubTerminologyClient()
+    client.seed_error(Operation.LOOKUP, TerminologyTimeoutError("timed out"))
+
+    submission = _create(
+        app_session,
+        ctx,
+        AmendmentInput(
+            entry_business_key=entry.business_key,
+            synonyms=["Na (serum)"],
+            snomed_code=_CODE,
+        ),
+        client,
+    )
+
+    assert submission.synonyms == ["Na (serum)"]
+    assert submission.snomed_code is None
+    assert submission.snomed_fsn is None
 
 
 @pytest.mark.req("FR-35")

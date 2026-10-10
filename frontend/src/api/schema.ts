@@ -5707,7 +5707,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description The request is not acceptable. `detail` says why for an amendment that proposes no change (no synonym and no code, every synonym already on the entry, or the code the entry already carries), for a synonym that cannot be cleaned, for a SNOMED CT code that is malformed, unknown to the AU edition, inactive, has no reported status or has no fully specified name, for `notes` or `organisation` that carry an invisible character, and for a `reference_url` that is not a usable web address, points at an internal address, answers with a failing status, redirects too often, times out or cannot be found. A malformed `entry_business_key`, an unrecognised field, or a part of the request over its size bound fails validation before the route runs. */
+            /** @description The request is not acceptable. `detail` says why for an amendment with nothing left to propose (no synonym and no code, or only synonyms and a code the entry already has), for a synonym that cannot be cleaned, for a SNOMED CT code that is malformed, unknown to the AU edition, inactive, has no reported status or has no fully specified name, for `notes` or `organisation` that carry an invisible character, and for a `reference_url` that is not a usable web address, points at an internal address, answers with a failing status, redirects too often, times out or cannot be found. A malformed `entry_business_key`, an unrecognised field, or a part of the request over its size bound fails validation before the route runs. */
             422: {
                 headers: {
                     [name: string]: unknown;

@@ -96,7 +96,7 @@ class AmendmentRefusal(StrEnum):
     NOTHING_PROPOSED = "nothing-proposed"
     #: Synonyms were sent, and the entry already has every one, and no code was sent.
     NOTHING_NEW = "nothing-new"
-    #: The code is the one the entry already carries.
+    #: The code is the one the entry already carries, and no synonym is left to propose.
     CODE_ALREADY_BOUND = "code-already-bound"
 
 

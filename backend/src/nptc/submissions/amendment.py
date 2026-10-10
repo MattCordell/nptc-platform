@@ -16,8 +16,10 @@ answer 404 for any status but `active`, so a caller holding `amendment.propose` 
 draft key exists.
 
 **A change must change something.** A synonym the entry already holds is dropped, as a repeated
-synonym is on a new test, and the amendment is refused if nothing is left to propose. A code equal to
-the code the entry carries is refused too, because it proposes no change.
+synonym is on a new test, and so is a code equal to the entry's active SNOMED CT code. The amendment
+is refused only if nothing is left to propose. A form that pre-fills the current code therefore
+still saves the new synonyms. The code is compared as sent, before the terminology server is asked,
+so a code that changes nothing costs no lookup and an outage cannot turn that refusal into a 503.
 
 **An amendment carries no property values and takes no duplicate check.** The duplicate check
 compares a proposed new test with the catalogue, and an amendment would match its own entry.
@@ -90,7 +92,7 @@ def create_amendment_submission(
 
     Raises `nptc.catalogue.errors.EntryNotFoundError` for a business key no entry has,
     `AmendmentEntryNotActiveError` for an entry that is not active, `AmendmentRefusedError` for an
-    amendment that proposes no change, `nptc.catalogue.term_hygiene.TermCleaningError` for a synonym
+    amendment with nothing left to propose, `nptc.catalogue.term_hygiene.TermCleaningError` for a synonym
     that is empty or carries an invisible character, `FreeTextRefusedError` for the same in `notes`
     or `organisation`, `nptc.terminology.errors` and `nptc_shared.sctid.InvalidSCTIDError` for a
     code that is malformed or cannot be looked up, `SubmissionCodeRefusedError` for a code the
@@ -119,17 +121,17 @@ def create_amendment_submission(
         )
     )
 
-    if not synonyms and content.snomed_code is None:
-        raise AmendmentRefusedError(
-            AmendmentRefusal.NOTHING_NEW if content.synonyms else AmendmentRefusal.NOTHING_PROPOSED
-        )
+    code_is_current = content.snomed_code is not None and _entry_carries_code(
+        session, entry.id, content.snomed_code
+    )
+    proposed_code = None if code_is_current else content.snomed_code
+    if not synonyms and proposed_code is None:
+        raise AmendmentRefusedError(_nothing_to_propose(content, code_is_current))
 
     snomed_code: str | None = None
     snomed_fsn: str | None = None
-    if content.snomed_code is not None:
-        snomed_code, snomed_fsn = resolve_code(terminology_client, content.snomed_code)
-        if _entry_carries_code(session, entry.id, snomed_code):
-            raise AmendmentRefusedError(AmendmentRefusal.CODE_ALREADY_BOUND)
+    if proposed_code is not None:
+        snomed_code, snomed_fsn = resolve_code(terminology_client, proposed_code)
 
     reference: ReferenceCheckResult | None = (
         None if content.reference_url is None else reference_checker.check(content.reference_url)
@@ -163,6 +165,12 @@ def create_amendment_submission(
         kind=ChangeKind.CREATED,
     )
     return submission
+
+
+def _nothing_to_propose(content: AmendmentInput, code_is_current: bool) -> AmendmentRefusal:
+    if code_is_current:
+        return AmendmentRefusal.CODE_ALREADY_BOUND
+    return AmendmentRefusal.NOTHING_NEW if content.synonyms else AmendmentRefusal.NOTHING_PROPOSED
 
 
 def _entry_carries_code(session: Session, entry_id: uuid.UUID, code: str) -> bool:

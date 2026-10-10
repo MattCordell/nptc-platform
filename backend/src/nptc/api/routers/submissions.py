@@ -61,6 +61,7 @@ from pydantic import (
     field_validator,
     model_validator,
 )
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from nptc.api.dependencies import (
@@ -89,6 +90,7 @@ from nptc.api.routers.auth import ErrorResponse
 from nptc.auth.permissions import Permission
 from nptc.catalogue.entries import BUSINESS_KEY_PATTERN
 from nptc.catalogue.property_values import PropertyValueInput
+from nptc.db.models.catalogue_entry import CatalogueEntry
 from nptc.db.models.submission import Submission
 from nptc.registry.handlers import DatatypeRegistry
 from nptc.settings import ApiSettings
@@ -187,9 +189,9 @@ _RESPONSE_409_AMENDMENT: Final[dict[str, Any]] = {
 _RESPONSE_422_AMENDMENT: Final[dict[str, Any]] = {
     "model": ErrorResponse,
     "description": (
-        "The request is not acceptable. `detail` says why for an amendment that proposes no "
-        "change (no synonym and no code, every synonym already on the entry, or the code the "
-        "entry already carries), for a synonym that cannot be cleaned, for a SNOMED CT code that "
+        "The request is not acceptable. `detail` says why for an amendment with nothing left "
+        "to propose (no synonym and no code, or only synonyms and a code the entry already "
+        "has), for a synonym that cannot be cleaned, for a SNOMED CT code that "
         "is malformed, unknown to the AU edition, inactive, has no reported status or has no "
         "fully specified name, for `notes` or `organisation` that carry an invisible character, "
         "and for a `reference_url` that is not a usable web address, points at an internal "
@@ -448,7 +450,7 @@ def create_submission(
         terminology_client=terminology_client,
         reference_checker=reference_checker,
     )
-    return _to_response(submission, settings)
+    return _to_response(session, submission, settings)
 
 
 @router.post(
@@ -482,7 +484,7 @@ def create_amendment(
         terminology_client=terminology_client,
         reference_checker=reference_checker,
     )
-    return _to_response(submission, settings, entry_business_key=body.entry_business_key)
+    return _to_response(session, submission, settings)
 
 
 @router.post(
@@ -504,9 +506,19 @@ def check_submission_duplicates(
     return DuplicateCheckResponse(matches=[duplicate_match_item(match) for match in matches])
 
 
+def _entry_business_key(session: Session, submission: Submission) -> str | None:
+    """The business key of the entry an amendment names, read from the stored link."""
+    if submission.entry_id is None:
+        return None
+    return session.execute(
+        select(CatalogueEntry.business_key).where(CatalogueEntry.id == submission.entry_id)
+    ).scalar_one()
+
+
 def _to_response(
-    submission: Submission, settings: ApiSettings, *, entry_business_key: str | None = None
+    session: Session, submission: Submission, settings: ApiSettings
 ) -> SubmissionResponse:
+    entry_business_key = _entry_business_key(session, submission)
     return SubmissionResponse(
         id=submission.id,
         kind=submission.kind,
