@@ -478,8 +478,7 @@ def test_registration_page_shows_the_notice_and_links_without_a_checkbox(realm: 
     assert "/login/nptc/css/nptc.css" in page
     assert 'id="kc-registration-notice"' in page
     assert (
-        "The organisation recorded on a submission stays with it after your account closes."
-        in page
+        "The organisation recorded on a submission stays with it after your account closes." in page
     )
     assert f'href="{FRONTEND_BASE_URL}/privacy"' in page
     assert f'href="{FRONTEND_BASE_URL}/terms"' in page
