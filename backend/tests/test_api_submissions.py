@@ -22,6 +22,7 @@ from sqlalchemy.engine import Connection
 from nptc.api.errors import TERMS_ACCEPTANCE_REQUIRED_CODE
 from nptc.audit.diffing import REDACTED_KEY
 from nptc.auth.permissions import Role
+from nptc.db.bootstrap import seed_system_properties
 from nptc.db.models.audit import AuditEvent
 from nptc.db.models.property_definition import PropertyDefinition, PropertyOrigin, PropertyScope
 from nptc.db.models.submission import Submission
@@ -38,6 +39,7 @@ from nptc_shared.terminology import (
     TerminologyStatusError,
     TerminologyTimeoutError,
 )
+from nptc_shared.terminology.models import Edition, ValidationResult
 
 
 def _load(name: str) -> Any:
@@ -60,6 +62,11 @@ _FSN = "Microscopy (acid fast bacilli) (procedure)"
 _FSN_USE_CODE = "900000000000003001"
 _PROFILE_ORGANISATION = "Profile Pathology"
 _PATH = "/submissions"
+_SNOMED = "http://snomed.info/sct"
+_SPECIMEN_ROOT = "123038009"
+_SERUM = "119364003"
+_SPECIMEN_VALUE_SET_URI = "http://snomed.info/sct?fhir_vs=ecl/%3C%3C123038009"
+_SPECIMEN_EDITION = Edition(module_id="au", label="au")
 _UUID = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}")
 
 
@@ -516,7 +523,11 @@ def test_a_code_with_no_served_fsn_is_refused(api: ApiTestApp) -> None:
 
 @pytest.mark.req("FR-06")
 @pytest.mark.integration
-@pytest.mark.parametrize("code", ["not-a-code", "391483009"], ids=["malformed", "bad_check_digit"])
+@pytest.mark.parametrize(
+    "code",
+    ["not-a-code", "391483009", "", " 391483001"],
+    ids=["malformed", "bad_check_digit", "empty", "padded"],
+)
 def test_a_malformed_code_is_422_without_asking_the_server(api: ApiTestApp, code: str) -> None:
     _seed_concept(api)
     token, user = _token(api, Role.PROVISIONAL)
@@ -600,3 +611,91 @@ def test_the_response_names_no_user(api: ApiTestApp) -> None:
     assert response.status_code == 201, response.text
     assert str(user.id) not in response.text
     assert "submitter" not in response.json()
+
+
+@pytest.mark.req("FR-06")
+@pytest.mark.integration
+def test_a_code_sent_as_a_number_is_422_never_coerced_to_text(api: ApiTestApp) -> None:
+    """The defect class the platform exists to remove: an SCTID that passed through a number."""
+    _seed_concept(api)
+    token, user = _token(api, Role.PROVISIONAL)
+
+    response = _post(api, token, snomed_code=int(_CODE))
+
+    assert response.status_code == 422, response.text
+    assert api.terminology.requests == ()
+    assert _submission_count(api, user) == 0
+
+
+# --- coded properties go through the same registry handlers (FR-77, FR-89) ---------------------
+
+
+def _seed_specimen_validation(api: ApiTestApp, *codes: str) -> None:
+    seed_system_properties(api.session)
+    api.session.flush()
+    for code in codes:
+        api.terminology.seed_validate_code(
+            code,
+            ValidationResult(code=code, result=True),
+            value_set_url=_SPECIMEN_VALUE_SET_URI,
+            edition=_SPECIMEN_EDITION,
+        )
+
+
+@pytest.mark.req("FR-24")
+@pytest.mark.req("FR-77")
+@pytest.mark.integration
+def test_a_coded_property_is_checked_against_its_value_set_by_the_registry(
+    api: ApiTestApp,
+) -> None:
+    _seed_specimen_validation(api, _SERUM)
+    token, _ = _token(api, Role.PROVISIONAL)
+
+    response = _post(
+        api,
+        token,
+        property_values={"specimen": [{"value": {"system": _SNOMED, "code": _SERUM}}]},
+    )
+
+    assert response.status_code == 201, response.text
+    assert response.json()["property_values"] == {
+        "specimen": [{"value": {"system": _SNOMED, "code": _SERUM}, "justification": None}]
+    }
+
+
+@pytest.mark.req("FR-89")
+@pytest.mark.integration
+def test_the_specimen_root_beside_a_named_specimen_is_422(api: ApiTestApp) -> None:
+    _seed_specimen_validation(api, _SPECIMEN_ROOT, _SERUM)
+    token, user = _token(api, Role.PROVISIONAL)
+
+    response = _post(
+        api,
+        token,
+        property_values={
+            "specimen": [
+                {"value": {"system": _SNOMED, "code": _SERUM}},
+                {"value": {"system": _SNOMED, "code": _SPECIMEN_ROOT}},
+            ]
+        },
+    )
+
+    assert response.status_code == 422, response.text
+    assert _issues(response) == [("specimen", "specimen-root-conflict")]
+    assert _submission_count(api, user) == 0
+
+
+@pytest.mark.req("FR-24")
+@pytest.mark.integration
+def test_a_maintenance_only_system_property_is_422(api: ApiTestApp) -> None:
+    """`usage_guidance` is the catalogue's own maintenance-scope property: a submitter cannot set
+    what only a maintainer may."""
+    seed_system_properties(api.session)
+    api.session.flush()
+    token, user = _token(api, Role.PROVISIONAL)
+
+    response = _post(api, token, property_values={"usage_guidance": [{"value": "Fasting"}]})
+
+    assert response.status_code == 422, response.text
+    assert _issues(response) == [("usage_guidance", "out-of-scope")]
+    assert _submission_count(api, user) == 0

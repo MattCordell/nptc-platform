@@ -730,3 +730,20 @@ def test_every_property_problem_is_reported_at_once(app_session: Session) -> Non
     assert ("length", "unknown-property") in codes
     assert ("sub_maintenance_only", "out-of-scope") in codes
     assert ("sub_required", "required-property-missing") in codes
+
+
+@pytest.mark.req("FR-24")
+@pytest.mark.integration
+def test_a_maintenance_only_property_marked_required_does_not_block_a_submission(
+    app_session: Session,
+) -> None:
+    """A submitter cannot supply a property whose scope excludes submissions, so it cannot be
+    demanded of them either."""
+    _property(
+        app_session, "sub_maintenance_required", scope=PropertyScope.MAINTENANCE, required=True
+    )
+    _, ctx = _submitter(app_session)
+
+    submission = _create(app_session, ctx, NewTestSubmissionInput(preferred_term="Serum sodium"))
+
+    assert submission.property_values == {}
