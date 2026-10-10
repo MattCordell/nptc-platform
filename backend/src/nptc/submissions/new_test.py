@@ -59,9 +59,9 @@ from nptc.submissions.errors import (
     SubmissionCodeRefusedError,
 )
 from nptc.submissions.reference_check import ReferenceChecker
+from nptc.submissions.terms import distinct_synonyms
 from nptc.terminology.concepts import resolve_concept
 from nptc.terminology.errors import ConceptNotFoundError
-from nptc_shared.similarity import collision_key
 from nptc_shared.terminology import TerminologyClient
 from nptc_shared.text import find_invisible_characters, normalise_for_comparison
 
@@ -117,7 +117,7 @@ def create_new_test_submission(
         raise ValueError("a submission needs a human submitter, but the audit context has none")
 
     preferred_term = clean_term(content.preferred_term)
-    synonyms = _distinct_synonyms(preferred_term, content.synonyms)
+    synonyms = distinct_synonyms(preferred_term, content.synonyms)
     notes = _clean_free_text(content.notes, field=FreeTextField.NOTES, multiline=True)
     organisation = (
         profile_organisation
@@ -165,20 +165,6 @@ def create_new_test_submission(
         kind=ChangeKind.CREATED,
     )
     return submission
-
-
-def _distinct_synonyms(preferred_term: str, terms: Sequence[str]) -> list[str]:
-    """Every term cleaned, then each dropped if its comparison key was already seen, the
-    preferred term's included. Cleaning runs first, so a bad term is refused even when a duplicate."""
-    seen = {collision_key(preferred_term)}
-    distinct: list[str] = []
-    for term in terms:
-        cleaned = clean_term(term)
-        key = collision_key(cleaned)
-        if key not in seen:
-            seen.add(key)
-            distinct.append(cleaned)
-    return distinct
 
 
 def _clean_free_text(text: str | None, *, field: FreeTextField, multiline: bool) -> str | None:

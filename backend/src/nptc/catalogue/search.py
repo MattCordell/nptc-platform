@@ -91,6 +91,7 @@ __all__ = [
     "SearchCursorQueryMismatchError",
     "SearchHit",
     "SearchPage",
+    "apply_similarity_threshold",
     "search_entries",
     "search_facets",
 ]
@@ -140,6 +141,13 @@ _CURSOR_QUERY_DIGEST_BYTES: Final[int] = 8
 _SET_THRESHOLD_SQL = text(
     "SELECT set_config('pg_trgm.similarity_threshold', CAST(:threshold AS text), true)"
 )
+
+
+def apply_similarity_threshold(session: Session) -> None:
+    """Sets `SIMILARITY_THRESHOLD` for the `%` operator on this transaction, so every trigram
+    match in the platform agrees on what "similar" means. It reverts on commit."""
+    session.execute(_SET_THRESHOLD_SQL, {"threshold": SIMILARITY_THRESHOLD})
+
 
 #: The scoring half, and only the scoring half: `(entry_id, score)`, typed
 #: through `.columns(...)` so it works as a CTE (see the module docstring).
@@ -601,7 +609,7 @@ def search_entries(
 
     # Transaction-scoped, and restated in `scored`'s WHERE (see the module
     # docstring).
-    session.execute(_SET_THRESHOLD_SQL, {"threshold": SIMILARITY_THRESHOLD})
+    apply_similarity_threshold(session)
 
     statement = build_search_statement(
         filters=filters,
@@ -654,7 +662,7 @@ def search_facets(
         raise EmptySearchQueryError(
             "a search query must contain at least one non-whitespace character"
         )
-    session.execute(_SET_THRESHOLD_SQL, {"threshold": SIMILARITY_THRESHOLD})
+    apply_similarity_threshold(session)
     scored = _SCORED_SQL.cte("scored")
     return compute_facets(
         session,
