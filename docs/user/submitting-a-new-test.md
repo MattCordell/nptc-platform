@@ -16,7 +16,7 @@ Fields marked **(required)** must be filled in before you can submit.
 | Field | What to enter |
 | --- | --- |
 | **Test name (required)** | The name the test is requested by. |
-| **Other names** | Other names the test is known by. Choose **Add another name** for more rows, or paste a list separated by semicolons to fill one row per name. Empty rows are ignored. |
+| **Other names** | Other names the test is known by. Choose **Add another name** for more rows, or paste a list separated by semicolons to get one row per name. A pasted list never overwrites text already in a row: it replaces only the text you selected, and the pasted names go in the rows after it. Empty rows are ignored. |
 | **SNOMED CT code** | Optional. Search by term or by code, then choose a result. See [Choosing a code](#choosing-a-code). |
 | **Properties** | One field for each property an administrator has made part of a proposal. A property marked **(required)** needs a value. This list changes when an administrator changes a property, so it can differ from what this guide shows. |
 | **Reference link (required)** | A web page that supports the test, such as a guideline or a published method. |
@@ -61,7 +61,7 @@ top. Choose a problem in the list to move to its field. Nothing you typed is los
 | What you see | What it means | What to do |
 | --- | --- | --- |
 | A message under **Reference link** | The page could not be used. The message gives the reason, such as a status code or a host name that does not exist. A message that the platform cannot reach the internet means the platform could not check the link, and the link may be fine. | Fix the link and submit again. For the internet message, try again later or contact an administrator. |
-| A message under **SNOMED CT code** | The terminology server rules the code out, or could not be reached. | Choose another code, or clear the code and submit without one. |
+| A message under **SNOMED CT code** | The terminology server rules the code out, could not be reached, or gave an answer the platform could not use. | Choose another code, or clear the code and submit without one. |
 | A message under **Test name** or **Other names** | A name is empty after cleaning, or holds an invisible character. | Retype the name. |
 | A message under a property | The value is not allowed for that property. | Correct the value. |
 | **You have reached the limit** | You have used up your submission quota. | See [Submission limits](#submission-limits). |

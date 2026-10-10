@@ -265,6 +265,49 @@ describe("SubmissionNewPage fields", () => {
     expect(screen.getByLabelText("Other name 3")).toHaveValue("Ferritin level");
   });
 
+  it("keeps what a row holds when a list is pasted into it", async () => {
+    stubApi([ME, DEFINITIONS]);
+    const user = userEvent.setup();
+    await renderPage();
+
+    await user.type(screen.getByLabelText("Other name 1"), "Ferritin");
+    await user.paste("Fe store; Serum Fe");
+
+    expect(screen.getByLabelText("Other name 1")).toHaveValue("Ferritin");
+    expect(screen.getByLabelText("Other name 2")).toHaveValue("Fe store");
+    expect(screen.getByLabelText("Other name 3")).toHaveValue("Serum Fe");
+  });
+
+  it("replaces only the selected text with a pasted list", async () => {
+    stubApi([ME, DEFINITIONS]);
+    const user = userEvent.setup();
+    await renderPage();
+    const first = screen.getByLabelText("Other name 1");
+
+    await user.type(first, "Ferritin old");
+    (first as HTMLInputElement).setSelectionRange(8, 12);
+    await user.paste("Fe store; Serum Fe");
+
+    expect(screen.getByLabelText("Other name 1")).toHaveValue("Ferritin");
+    expect(screen.getByLabelText("Other name 2")).toHaveValue("Fe store");
+    expect(screen.getByLabelText("Other name 3")).toHaveValue("Serum Fe");
+  });
+
+  it("keeps the values of two different properties as each is edited", async () => {
+    stubApi([ME, DEFINITIONS]);
+    const user = userEvent.setup();
+    await renderPage();
+
+    await user.type(screen.getByLabelText("Assay method (required)"), "Immunoassay");
+    await user.type(screen.getByLabelText("Clinical use 1"), "Iron stores");
+    await user.type(screen.getByLabelText("Assay method (required)"), " (batch)");
+
+    expect(screen.getByLabelText("Assay method (required)")).toHaveValue(
+      "Immunoassay (batch)",
+    );
+    expect(screen.getByLabelText("Clinical use 1")).toHaveValue("Iron stores");
+  });
+
   it("adds and removes other names and drops blank ones from the request", async () => {
     const calls = stubApi([ME, DEFINITIONS, NO_MATCHES, CREATED]);
     const user = userEvent.setup();
@@ -376,6 +419,31 @@ describe("SubmissionNewPage code", () => {
     await screen.findByText("Your test was submitted");
 
     expect(bodyOf(calls, "/submissions")).not.toHaveProperty("snomed_code");
+  });
+
+  it("marks the code field when the server's answer about the code is unusable", async () => {
+    stubApi([
+      ME,
+      DEFINITIONS,
+      PROCEDURES,
+      CONCEPT,
+      NO_MATCHES,
+      refusal(502, {
+        detail: "The terminology server's response could not be used.",
+        field: "snomed_code",
+      }),
+    ]);
+    const user = userEvent.setup();
+    await renderPage();
+    await fillRequired(user);
+    await pickCode(user);
+
+    await submit(user);
+
+    const field = screen.getByLabelText("SNOMED CT code");
+    await waitFor(() => expect(field).toHaveAttribute("aria-invalid", "true"));
+    expect(describedBy(field)).toContain("response could not be used");
+    expect(describedBy(field)).not.toContain("could not be reached");
   });
 
   it("marks the code field when the server cannot check the code on submit", async () => {

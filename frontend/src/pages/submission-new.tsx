@@ -99,9 +99,21 @@ export function SubmissionNewPage() {
     return errors.find((error) => error.fieldId === fieldId)?.message;
   }
 
-  /** Applies an edit and drops the errors that described the text it replaced. */
-  function edit(patch: Partial<SubmissionValues>, clears: (fieldId: string) => boolean) {
-    setValues((previous) => ({ ...previous, ...patch }));
+  /**
+   * Applies an edit and drops the errors that described the text it replaced. A change
+   * that builds on the current values takes a function of them, so two edits made before a
+   * re-render both land.
+   */
+  function edit(
+    patch:
+      | Partial<SubmissionValues>
+      | ((previous: SubmissionValues) => Partial<SubmissionValues>),
+    clears: (fieldId: string) => boolean,
+  ) {
+    setValues((previous) => ({
+      ...previous,
+      ...(typeof patch === "function" ? patch(previous) : patch),
+    }));
     setErrors((current) =>
       current.some((error) => clears(error.fieldId))
         ? current.filter((error) => !clears(error.fieldId))
@@ -282,8 +294,11 @@ export function SubmissionNewPage() {
                     params={definition.form_control.params}
                     slots={values.slots[definition.key] ?? []}
                     onChange={(next: PropertyValueSlot[]) =>
-                      edit({ slots: { ...values.slots, [definition.key]: next } }, (id) =>
-                        isPropertyField(id, definition.key),
+                      edit(
+                        (previous) => ({
+                          slots: { ...previous.slots, [definition.key]: next },
+                        }),
+                        (id) => isPropertyField(id, definition.key),
                       )
                     }
                     errors={errors}
