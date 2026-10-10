@@ -447,9 +447,10 @@ def test_every_operation_declares_the_429_with_its_retry_after_header() -> None:
     for operation in operations:
         refusal = operation["responses"]["429"]
         assert refusal["headers"]["Retry-After"]["schema"]["type"] == "integer"
-        assert refusal["content"]["application/json"]["schema"] == {
-            "$ref": "#/components/schemas/RateLimitedResponse"
-        }
+        declared = refusal["content"]["application/json"]["schema"]
+        assert {"$ref": "#/components/schemas/RateLimitedResponse"} in declared.get(
+            "anyOf", [declared]
+        )
     body = schema["components"]["schemas"]["RateLimitedResponse"]
     assert set(body["required"]) == {"detail", "bulk_artefacts"}
 

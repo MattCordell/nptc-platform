@@ -2432,6 +2432,19 @@ export interface components {
          * @enum {string}
          */
         QuotaLimit: "lifetime" | "hourly";
+        /** RateLimitedResponse */
+        RateLimitedResponse: {
+            /**
+             * Detail
+             * @description One sentence saying what to do next.
+             */
+            detail: string;
+            /**
+             * Bulk Artefacts
+             * @description Where to fetch the bulk release artefacts instead of paging the API.
+             */
+            bulk_artefacts: string;
+        };
         /**
          * ReinstateDesignationRequest
          * @description The body of `POST .../designations/reinstatement`.
@@ -2904,19 +2917,6 @@ export interface components {
              * @constant
              */
             code: "terms_acceptance_required";
-        };
-        /** RateLimitedResponse */
-        RateLimitedResponse: {
-            /**
-             * Detail
-             * @description One sentence saying what to do next.
-             */
-            detail: string;
-            /**
-             * Bulk Artefacts
-             * @description Where to fetch the bulk release artefacts instead of paging the API.
-             */
-            bulk_artefacts: string;
         };
     };
     responses: never;
@@ -5628,15 +5628,15 @@ export interface operations {
                     "application/json": components["schemas"]["HTTPValidationError"] | components["schemas"]["ErrorResponse"] | components["schemas"]["PropertyValidationResponse"];
                 };
             };
-            /** @description The caller has used up their submission quota (FR-43). New tests and amendments share one counter. `limit` is `hourly` when the quota is a number of submissions in a rolling hour, and the response then carries `Retry-After`, the whole seconds until a submission can be made. `limit` is `lifetime` when the quota is a total, and the response carries no `Retry-After`, because waiting does not lift it. Nothing was saved, and the refusal is recorded in the audit trail. */
+            /** @description Either the caller has used up their submission quota (FR-43), or an anonymous or repeatedly rejected address has used up its request budget (FR-22, a `RateLimitedResponse`). For a quota refusal, new tests and amendments share one counter. `limit` is `hourly` when the quota is a number of submissions in a rolling hour, and the response then carries `Retry-After`, the whole seconds until a submission can be made. `limit` is `lifetime` when the quota is a total, and the response carries no `Retry-After`, because waiting does not lift it. Nothing was saved, and the quota refusal is recorded in the audit trail. */
             429: {
                 headers: {
-                    /** @description Whole seconds until the caller can submit again. Only on `hourly`. */
+                    /** @description Whole seconds until the caller can try again. Always present on a request budget refusal, and on a quota refusal only when `limit` is `hourly`. */
                     "Retry-After"?: number;
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["SubmissionQuotaResponse"];
+                    "application/json": components["schemas"]["SubmissionQuotaResponse"] | components["schemas"]["RateLimitedResponse"];
                 };
             };
             /** @description The service is misconfigured, not a caller mistake - a malformed `NPTC_TX_*` value. Retrying will not clear it. */
@@ -5735,15 +5735,15 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description The caller has used up their submission quota (FR-43). New tests and amendments share one counter. `limit` is `hourly` when the quota is a number of submissions in a rolling hour, and the response then carries `Retry-After`, the whole seconds until a submission can be made. `limit` is `lifetime` when the quota is a total, and the response carries no `Retry-After`, because waiting does not lift it. Nothing was saved, and the refusal is recorded in the audit trail. */
+            /** @description Either the caller has used up their submission quota (FR-43), or an anonymous or repeatedly rejected address has used up its request budget (FR-22, a `RateLimitedResponse`). For a quota refusal, new tests and amendments share one counter. `limit` is `hourly` when the quota is a number of submissions in a rolling hour, and the response then carries `Retry-After`, the whole seconds until a submission can be made. `limit` is `lifetime` when the quota is a total, and the response carries no `Retry-After`, because waiting does not lift it. Nothing was saved, and the quota refusal is recorded in the audit trail. */
             429: {
                 headers: {
-                    /** @description Whole seconds until the caller can submit again. Only on `hourly`. */
+                    /** @description Whole seconds until the caller can try again. Always present on a request budget refusal, and on a quota refusal only when `limit` is `hourly`. */
                     "Retry-After"?: number;
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["SubmissionQuotaResponse"];
+                    "application/json": components["schemas"]["SubmissionQuotaResponse"] | components["schemas"]["RateLimitedResponse"];
                 };
             };
             /** @description The service is misconfigured, not a caller mistake - a malformed `NPTC_TX_*` value. Retrying will not clear it. */

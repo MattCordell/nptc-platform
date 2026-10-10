@@ -97,6 +97,7 @@ from nptc.api.labels import (
     LabelProvenance,
     fsn_provenance,
 )
+from nptc.api.rate_limit import RateLimitedResponse
 from nptc.api.routers.auth import ErrorResponse
 from nptc.auth.authorisation import resolve_quota
 from nptc.auth.permissions import Permission
@@ -186,18 +187,22 @@ class SubmissionQuotaResponse(BaseModel):
 
 
 _RESPONSE_429: Final[dict[str, Any]] = {
-    "model": SubmissionQuotaResponse,
+    "model": SubmissionQuotaResponse | RateLimitedResponse,
     "description": (
-        "The caller has used up their submission quota (FR-43). New tests and amendments share one "
-        "counter. `limit` is `hourly` when the quota is a number of submissions in a rolling hour, "
-        "and the response then carries `Retry-After`, the whole seconds until a submission can "
-        "be made. `limit` is `lifetime` when the quota is a total, and the response carries no "
-        "`Retry-After`, because waiting does not lift it. Nothing was saved, and the refusal "
-        "is recorded in the audit trail."
+        "Either the caller has used up their submission quota (FR-43), or an anonymous or "
+        "repeatedly rejected address has used up its request budget (FR-22, a `RateLimitedResponse`). "
+        "For a quota refusal, new tests and amendments share one counter. `limit` is `hourly` when "
+        "the quota is a number of submissions in a rolling hour, and the response then carries "
+        "`Retry-After`, the whole seconds until a submission can be made. `limit` is `lifetime` "
+        "when the quota is a total, and the response carries no `Retry-After`, because waiting "
+        "does not lift it. Nothing was saved, and the quota refusal is recorded in the audit trail."
     ),
     "headers": {
         "Retry-After": {
-            "description": "Whole seconds until the caller can submit again. Only on `hourly`.",
+            "description": (
+                "Whole seconds until the caller can try again. Always present on a request budget "
+                "refusal, and on a quota refusal only when `limit` is `hourly`."
+            ),
             "schema": {"type": "integer", "minimum": 1},
         }
     },

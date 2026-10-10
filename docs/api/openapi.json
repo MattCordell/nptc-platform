@@ -4274,10 +4274,10 @@
             }
           },
           "429": {
-            "description": "The caller has used up their submission quota (FR-43). New tests and amendments share one counter. `limit` is `hourly` when the quota is a number of submissions in a rolling hour, and the response then carries `Retry-After`, the whole seconds until a submission can be made. `limit` is `lifetime` when the quota is a total, and the response carries no `Retry-After`, because waiting does not lift it. Nothing was saved, and the refusal is recorded in the audit trail.",
+            "description": "Either the caller has used up their submission quota (FR-43), or an anonymous or repeatedly rejected address has used up its request budget (FR-22, a `RateLimitedResponse`). For a quota refusal, new tests and amendments share one counter. `limit` is `hourly` when the quota is a number of submissions in a rolling hour, and the response then carries `Retry-After`, the whole seconds until a submission can be made. `limit` is `lifetime` when the quota is a total, and the response carries no `Retry-After`, because waiting does not lift it. Nothing was saved, and the quota refusal is recorded in the audit trail.",
             "headers": {
               "Retry-After": {
-                "description": "Whole seconds until the caller can submit again. Only on `hourly`.",
+                "description": "Whole seconds until the caller can try again. Always present on a request budget refusal, and on a quota refusal only when `limit` is `hourly`.",
                 "schema": {
                   "type": "integer",
                   "minimum": 1.0
@@ -4287,7 +4287,15 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/SubmissionQuotaResponse"
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/SubmissionQuotaResponse"
+                    },
+                    {
+                      "$ref": "#/components/schemas/RateLimitedResponse"
+                    }
+                  ],
+                  "title": "Response 429 Create Submission Api V1 Submissions Post"
                 }
               }
             }
@@ -4411,10 +4419,10 @@
             }
           },
           "429": {
-            "description": "The caller has used up their submission quota (FR-43). New tests and amendments share one counter. `limit` is `hourly` when the quota is a number of submissions in a rolling hour, and the response then carries `Retry-After`, the whole seconds until a submission can be made. `limit` is `lifetime` when the quota is a total, and the response carries no `Retry-After`, because waiting does not lift it. Nothing was saved, and the refusal is recorded in the audit trail.",
+            "description": "Either the caller has used up their submission quota (FR-43), or an anonymous or repeatedly rejected address has used up its request budget (FR-22, a `RateLimitedResponse`). For a quota refusal, new tests and amendments share one counter. `limit` is `hourly` when the quota is a number of submissions in a rolling hour, and the response then carries `Retry-After`, the whole seconds until a submission can be made. `limit` is `lifetime` when the quota is a total, and the response carries no `Retry-After`, because waiting does not lift it. Nothing was saved, and the quota refusal is recorded in the audit trail.",
             "headers": {
               "Retry-After": {
-                "description": "Whole seconds until the caller can submit again. Only on `hourly`.",
+                "description": "Whole seconds until the caller can try again. Always present on a request budget refusal, and on a quota refusal only when `limit` is `hourly`.",
                 "schema": {
                   "type": "integer",
                   "minimum": 1.0
@@ -4424,7 +4432,15 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/SubmissionQuotaResponse"
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/SubmissionQuotaResponse"
+                    },
+                    {
+                      "$ref": "#/components/schemas/RateLimitedResponse"
+                    }
+                  ],
+                  "title": "Response 429 Create Amendment Api V1 Submissions Amendments Post"
                 }
               }
             }
@@ -8077,6 +8093,26 @@
         "title": "QuotaLimit",
         "description": "Which limit was reached. A fixed set, so the API can name it without echoing anything."
       },
+      "RateLimitedResponse": {
+        "properties": {
+          "detail": {
+            "description": "One sentence saying what to do next.",
+            "title": "Detail",
+            "type": "string"
+          },
+          "bulk_artefacts": {
+            "description": "Where to fetch the bulk release artefacts instead of paging the API.",
+            "title": "Bulk Artefacts",
+            "type": "string"
+          }
+        },
+        "required": [
+          "detail",
+          "bulk_artefacts"
+        ],
+        "title": "RateLimitedResponse",
+        "type": "object"
+      },
       "ReinstateDesignationRequest": {
         "properties": {
           "term": {
@@ -9038,26 +9074,6 @@
           "code"
         ],
         "title": "TermsAcceptanceRequiredResponse",
-        "type": "object"
-      },
-      "RateLimitedResponse": {
-        "properties": {
-          "detail": {
-            "description": "One sentence saying what to do next.",
-            "title": "Detail",
-            "type": "string"
-          },
-          "bulk_artefacts": {
-            "description": "Where to fetch the bulk release artefacts instead of paging the API.",
-            "title": "Bulk Artefacts",
-            "type": "string"
-          }
-        },
-        "required": [
-          "detail",
-          "bulk_artefacts"
-        ],
-        "title": "RateLimitedResponse",
         "type": "object"
       }
     }
