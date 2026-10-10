@@ -125,7 +125,7 @@ describe("refusalDetail", () => {
 });
 
 describe("asFieldRefusal", () => {
-  it.each([422, 503])("narrows a %s that names a submission field", (status) => {
+  it.each([422, 502, 503])("narrows a %s that names a submission field", (status) => {
     const body = {
       detail: "The reference link could not be reached.",
       field: "reference_url",

@@ -4446,11 +4446,19 @@
             }
           },
           "502": {
-            "description": "The terminology server's response could not be used.",
+            "description": "The terminology server's response could not be used. `field` is `snomed_code` when it was checking the `snomed_code`.",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/SubmissionFieldRefusalResponse"
+                    },
+                    {
+                      "$ref": "#/components/schemas/ErrorResponse"
+                    }
+                  ],
+                  "title": "Response 502 Create Submission Api V1 Submissions Post"
                 }
               }
             }
@@ -4607,11 +4615,19 @@
             }
           },
           "502": {
-            "description": "The terminology server's response could not be used.",
+            "description": "The terminology server's response could not be used. `field` is `snomed_code` when it was checking the `snomed_code`.",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/SubmissionFieldRefusalResponse"
+                    },
+                    {
+                      "$ref": "#/components/schemas/ErrorResponse"
+                    }
+                  ],
+                  "title": "Response 502 Create Amendment Api V1 Submissions Amendments Post"
                 }
               }
             }
@@ -4693,7 +4709,7 @@
             }
           },
           "422": {
-            "description": "The request is not acceptable: a term that cannot be cleaned, a SNOMED CT code that is malformed or fails its check digit, a missing `preferred_term`, an unrecognised field, or a part of the request over its size bound.",
+            "description": "The request is not acceptable: a term that cannot be cleaned, a SNOMED CT code that is malformed or fails its check digit, a missing `preferred_term`, an unrecognised field, or a part of the request over its size bound. A refusal of a term or the code carries `field`, as on the create route.",
             "content": {
               "application/json": {
                 "schema": {

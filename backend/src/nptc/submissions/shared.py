@@ -13,9 +13,16 @@ from nptc.submissions.errors import (
     FreeTextRefusedError,
     SubmissionCodeRefusedError,
     SubmissionCodeUnavailableError,
+    SubmissionCodeUpstreamError,
 )
+from nptc.submissions.terms import SubmissionCodeMalformedError
 from nptc.terminology.concepts import resolve_concept
-from nptc.terminology.errors import ConceptNotFoundError, TerminologyUnavailableError
+from nptc.terminology.errors import (
+    ConceptNotFoundError,
+    TerminologyUnavailableError,
+    TerminologyUpstreamError,
+)
+from nptc_shared.sctid import InvalidSCTIDError
 from nptc_shared.terminology import TerminologyClient
 from nptc_shared.text import find_invisible_characters, normalise_for_comparison
 
@@ -49,6 +56,10 @@ def resolve_code(client: TerminologyClient, code: str) -> tuple[str, str]:
         concept = resolve_concept(client, code)
     except ConceptNotFoundError:
         raise SubmissionCodeRefusedError(CodeRefusal.NOT_FOUND) from None
+    except InvalidSCTIDError as malformed:
+        raise SubmissionCodeMalformedError(str(malformed)) from None
+    except TerminologyUpstreamError as unusable:
+        raise SubmissionCodeUpstreamError(str(unusable)) from unusable
     except TerminologyUnavailableError as unavailable:
         raise SubmissionCodeUnavailableError(
             str(unavailable), retry_after=unavailable.retry_after

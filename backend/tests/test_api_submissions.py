@@ -46,6 +46,7 @@ from nptc_shared.terminology import (
     LookupResult,
     Operation,
     StubConcept,
+    TerminologyProtocolError,
     TerminologyStatusError,
     TerminologyTimeoutError,
 )
@@ -541,6 +542,39 @@ def test_a_code_with_no_served_fsn_is_refused(api: ApiTestApp) -> None:
     assert "fully specified name" in response.json()["detail"]
     assert response.json()["field"] == "snomed_code"
     assert _submission_count(api, user) == 0
+
+
+@pytest.mark.req("FR-06")
+@pytest.mark.req("FR-26")
+@pytest.mark.integration
+@pytest.mark.parametrize("code", ["not-a-code", "391483009"], ids=["malformed", "bad_check_digit"])
+def test_a_malformed_code_names_the_code_field(api: ApiTestApp, code: str) -> None:
+    token, _ = _token(api, Role.PROVISIONAL)
+
+    created = _post(api, token, snomed_code=code)
+    checked = _check(api, token, snomed_code=code)
+
+    assert created.status_code == checked.status_code == 422
+    assert created.json()["field"] == checked.json()["field"] == "snomed_code"
+    assert code not in created.text + checked.text
+
+
+@pytest.mark.req("FR-54")
+@pytest.mark.req("FR-26")
+@pytest.mark.integration
+def test_an_unusable_terminology_answer_is_502_and_names_the_code_field(
+    api: ApiTestApp,
+) -> None:
+    api.terminology.seed_error(Operation.LOOKUP, TerminologyProtocolError("not a Parameters"))
+    token, user = _token(api, Role.PROVISIONAL)
+    before = _audit_event_count(api)
+
+    response = _post(api, token, snomed_code=_CODE)
+
+    assert response.status_code == 502, response.text
+    assert response.json()["field"] == "snomed_code"
+    assert _submission_count(api, user) == 0
+    assert _audit_event_count(api) == before
 
 
 @pytest.mark.req("FR-06")

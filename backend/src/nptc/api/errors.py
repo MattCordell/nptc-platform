@@ -124,6 +124,7 @@ from nptc.submissions.errors import (
     FreeTextRefusedError,
     SubmissionCodeRefusedError,
     SubmissionCodeUnavailableError,
+    SubmissionCodeUpstreamError,
     SubmissionDuplicatesFoundError,
 )
 from nptc.submissions.reference_check import (
@@ -131,7 +132,7 @@ from nptc.submissions.reference_check import (
     ReferenceCheckUnavailableError,
     ReferenceFailure,
 )
-from nptc.submissions.terms import SubmissionTermRefusedError
+from nptc.submissions.terms import SubmissionCodeMalformedError, SubmissionTermRefusedError
 from nptc.terminology.errors import (
     ConceptNotFoundError,
     TerminologyUnavailableError,
@@ -1142,6 +1143,21 @@ def register_exception_handlers(app: FastAPI, auth_settings: AuthSettings) -> No
         return _field_refusal(
             exc.http_status, _DETAIL_SUBMISSION_CODE_REFUSED[exc.reason], "snomed_code"
         )
+
+    @app.exception_handler(SubmissionCodeMalformedError)
+    async def _handle_submission_code_malformed(
+        _request: Request, exc: SubmissionCodeMalformedError
+    ) -> JSONResponse:
+        # The class name alone: the exception message quotes the caller's code.
+        _logger.info("SCTID refused: %s", type(exc).__name__)
+        return _field_refusal(422, _DETAIL_INVALID_SCTID, "snomed_code")
+
+    @app.exception_handler(SubmissionCodeUpstreamError)
+    async def _handle_submission_code_upstream(
+        _request: Request, exc: SubmissionCodeUpstreamError
+    ) -> JSONResponse:
+        _logger.error("terminology lookup refused, unusable response: %s", exc)
+        return _field_refusal(exc.http_status, _DETAIL_TERMINOLOGY_UPSTREAM, "snomed_code")
 
     @app.exception_handler(SubmissionTermRefusedError)
     async def _handle_submission_term_refused(

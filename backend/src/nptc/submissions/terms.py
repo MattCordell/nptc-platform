@@ -11,9 +11,11 @@ from collections.abc import Sequence
 from enum import StrEnum
 
 from nptc.catalogue.term_hygiene import TermCleaningError, clean_term
+from nptc_shared.sctid import InvalidSCTIDError
 from nptc_shared.similarity import collision_key
 
 __all__ = [
+    "SubmissionCodeMalformedError",
     "SubmissionTermRefusedError",
     "TermField",
     "clean_submission_term",
@@ -35,6 +37,13 @@ class SubmissionTermRefusedError(TermCleaningError):
     def __init__(self, field: TermField, cause: TermCleaningError) -> None:
         self.field = field
         super().__init__(str(cause))
+
+
+class SubmissionCodeMalformedError(InvalidSCTIDError):
+    """The SNOMED CT code on a submission is not a valid identifier. A subclass of
+    `InvalidSCTIDError`, which other routes raise with no field to name. Here beside the term
+    error because both the duplicate check and the create route need it, and this module imports
+    nothing else from the package."""
 
 
 def clean_submission_term(term: str, field: TermField) -> str:

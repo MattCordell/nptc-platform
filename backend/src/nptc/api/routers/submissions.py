@@ -166,8 +166,11 @@ _RESPONSE_500: Final[dict[str, Any]] = {
     ),
 }
 _RESPONSE_502: Final[dict[str, Any]] = {
-    "model": ErrorResponse,
-    "description": "The terminology server's response could not be used.",
+    "model": SubmissionFieldRefusalResponse | ErrorResponse,
+    "description": (
+        "The terminology server's response could not be used. `field` is `snomed_code` when "
+        "it was checking the `snomed_code`."
+    ),
 }
 _RESPONSE_503: Final[dict[str, Any]] = {
     "model": SubmissionFieldRefusalResponse | ErrorResponse,
@@ -293,7 +296,8 @@ _RESPONSES_DUPLICATE_CHECK: Final[dict[int | str, dict[str, Any]]] = {
         "description": (
             "The request is not acceptable: a term that cannot be cleaned, a SNOMED CT code that "
             "is malformed or fails its check digit, a missing `preferred_term`, an unrecognised "
-            "field, or a part of the request over its size bound."
+            "field, or a part of the request over its size bound. A refusal of a term or the code "
+            "carries `field`, as on the create route."
         ),
         "content": {
             "application/json": {

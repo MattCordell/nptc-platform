@@ -141,15 +141,15 @@ function bodyOf(
 }
 
 /**
- * A 422 or 503 from a submission route that names the request field it
+ * A 422, 502 or 503 from a submission route that names the request field it
  * concerns, or `null` if this refusal is anything else.
  *
  * Keyed on `field`, never on the wording of `detail`: the sentence is for
  * people and the server may reword it. A status alone is not enough, because
- * other routes send 422 and 503 with no field.
+ * other routes send 422, 502 and 503 with no field.
  */
 export function asFieldRefusal(error: unknown): SubmissionFieldRefusal | null {
-  const body = bodyOf(error, [422, 503]);
+  const body = bodyOf(error, [422, 502, 503]);
   if (
     body === null ||
     typeof body.detail !== "string" ||

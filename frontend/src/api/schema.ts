@@ -5762,13 +5762,13 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description The terminology server's response could not be used. */
+            /** @description The terminology server's response could not be used. `field` is `snomed_code` when it was checking the `snomed_code`. */
             502: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
+                    "application/json": components["schemas"]["SubmissionFieldRefusalResponse"] | components["schemas"]["ErrorResponse"];
                 };
             };
             /** @description The terminology server could not be reached, or a rate limit persisted through retries, or the platform has no outbound internet access to check the `reference_url`. `field` is `snomed_code` for the first two and `reference_url` for the last. Nothing was saved, and the same request can be sent again. May carry a `Retry-After` header. */
@@ -5869,13 +5869,13 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description The terminology server's response could not be used. */
+            /** @description The terminology server's response could not be used. `field` is `snomed_code` when it was checking the `snomed_code`. */
             502: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
+                    "application/json": components["schemas"]["SubmissionFieldRefusalResponse"] | components["schemas"]["ErrorResponse"];
                 };
             };
             /** @description The terminology server could not be reached, or a rate limit persisted through retries, or the platform has no outbound internet access to check the `reference_url`. `field` is `snomed_code` for the first two and `reference_url` for the last. Nothing was saved, and the same request can be sent again. May carry a `Retry-After` header. */
@@ -5929,7 +5929,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"] | components["schemas"]["TermsAcceptanceRequiredResponse"];
                 };
             };
-            /** @description The request is not acceptable: a term that cannot be cleaned, a SNOMED CT code that is malformed or fails its check digit, a missing `preferred_term`, an unrecognised field, or a part of the request over its size bound. */
+            /** @description The request is not acceptable: a term that cannot be cleaned, a SNOMED CT code that is malformed or fails its check digit, a missing `preferred_term`, an unrecognised field, or a part of the request over its size bound. A refusal of a term or the code carries `field`, as on the create route. */
             422: {
                 headers: {
                     [name: string]: unknown;
