@@ -38,6 +38,16 @@ def test_the_default_version_has_a_terms_file_marked_temporary() -> None:
     assert "Temporary text" in document.text
 
 
+@pytest.mark.req("NFR-46")
+def test_the_default_version_grants_the_contribution_licence_and_the_first_one_does_not() -> None:
+    licence = ("perpetual", "irrevocable", "worldwide", "royalty-free", "non-exclusive")
+    text = load_terms_document(DEFAULT_TERMS_VERSION).text
+
+    assert all(term in text for term in licence)
+    assert "keep ownership" in text
+    assert "licence" not in load_terms_document("2026-10-06").text
+
+
 @pytest.mark.req("NFR-47")
 def test_the_text_is_served_without_the_front_matter() -> None:
     document = load_terms_document(DEFAULT_TERMS_VERSION)
