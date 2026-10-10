@@ -1,4 +1,4 @@
-"""Refusals specific to creating a submission (FR-26)."""
+"""Refusals specific to creating a submission (FR-26, FR-35)."""
 
 from __future__ import annotations
 
@@ -6,9 +6,13 @@ from collections.abc import Sequence
 from enum import StrEnum
 from typing import ClassVar
 
+from nptc.db.models.catalogue_entry import CatalogueEntryStatus
 from nptc.submissions.duplicates import DuplicateMatch
 
 __all__ = [
+    "AmendmentEntryNotActiveError",
+    "AmendmentRefusal",
+    "AmendmentRefusedError",
     "CodeRefusal",
     "FreeTextField",
     "FreeTextRefusedError",
@@ -71,3 +75,36 @@ class SubmissionDuplicatesFoundError(Exception):
     def __init__(self, matches: Sequence[DuplicateMatch]) -> None:
         self.matches = tuple(matches)
         super().__init__(f"submission matches {len(self.matches)} existing record(s)")
+
+
+class AmendmentEntryNotActiveError(Exception):
+    """The entry an amendment names exists but is not `active`, so it cannot be amended (FR-35). The
+    status is carried so the response can name it; the message holds no caller text."""
+
+    http_status: ClassVar[int] = 409
+
+    def __init__(self, status: CatalogueEntryStatus) -> None:
+        self.status = status
+        super().__init__(f"amendment refused, entry is {status.value}")
+
+
+class AmendmentRefusal(StrEnum):
+    """Why an amendment proposes no change. A fixed set, so the API can name the reason without
+    echoing anything the caller typed."""
+
+    #: No synonym and no code were sent.
+    NOTHING_PROPOSED = "nothing-proposed"
+    #: Synonyms were sent, and the entry already has every one, and no code was sent.
+    NOTHING_NEW = "nothing-new"
+    #: The code is the one the entry already carries, and no synonym is left to propose.
+    CODE_ALREADY_BOUND = "code-already-bound"
+
+
+class AmendmentRefusedError(ValueError):
+    """The amendment would leave the entry as it is (FR-35)."""
+
+    http_status: ClassVar[int] = 422
+
+    def __init__(self, reason: AmendmentRefusal) -> None:
+        self.reason = reason
+        super().__init__(f"amendment refused: {reason.value}")

@@ -1,12 +1,21 @@
-"""The submission create route and its duplicate check (FR-23, FR-24, FR-25, FR-26, FR-27, FR-80,
-NFR-08, NFR-45).
+"""The submission create routes and the duplicate check (FR-23, FR-24, FR-25, FR-26, FR-27, FR-35,
+FR-80, NFR-08, NFR-45).
 
-The HTTP adapter over `nptc.submissions.new_test`; it re-implements no domain rule. A domain
+The HTTP adapter over `nptc.submissions.new_test` and `nptc.submissions.amendment`; it re-implements
+no domain rule. A domain
 exception carries `http_status` and `nptc.api.errors` maps it, so the route body has no try/except.
 
 **Authorisation:** `Permission.SUBMISSION_CREATE` (FR-44, FR-80). Provisional, Member, Reviewer and
 Administrator hold it and Observer does not. The terms gate applies to every non-GET route, so the
 route inherits it (NFR-45).
+
+**An amendment has its own route and permission (FR-35).** `POST /submissions/amendments` needs
+`Permission.AMENDMENT_PROPOSE`, which the same four roles hold. A separate route keeps the gate a
+static `permission_dep`, which `test_authz_inventory.py` can check, where a `kind` field in one body
+would need a gate chosen at run time. It names the entry by `entry_business_key`. An unknown key is
+a 404, and an entry that is not `active` is a 409 that names the status. There is no duplicate check
+and there are no property values, because an amendment would match its own entry. The reference link
+is optional, and a link that is given is fetched like a new test's.
 
 **A refused code is a 422, not a 404.** The route's resource exists; what is wrong is a value in
 the body. A 404 here would tell a client the endpoint is missing. The terminology server being
@@ -52,6 +61,7 @@ from pydantic import (
     field_validator,
     model_validator,
 )
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from nptc.api.dependencies import (
@@ -78,10 +88,13 @@ from nptc.api.labels import (
 )
 from nptc.api.routers.auth import ErrorResponse
 from nptc.auth.permissions import Permission
+from nptc.catalogue.entries import BUSINESS_KEY_PATTERN
 from nptc.catalogue.property_values import PropertyValueInput
+from nptc.db.models.catalogue_entry import CatalogueEntry
 from nptc.db.models.submission import Submission
 from nptc.registry.handlers import DatatypeRegistry
 from nptc.settings import ApiSettings
+from nptc.submissions.amendment import AmendmentInput, create_amendment_submission
 from nptc.submissions.duplicates import check_duplicates
 from nptc.submissions.new_test import NewTestSubmissionInput, create_new_test_submission
 from nptc.submissions.reference_check import MAX_URL_LENGTH
@@ -155,11 +168,55 @@ _RESPONSE_409: Final[dict[str, Any]] = {
     ),
 }
 
+_RESPONSE_403_AMENDMENT: Final[dict[str, Any]] = {
+    "model": ErrorResponse,
+    "description": (
+        "The caller is authenticated but does not hold `amendment.propose`, or has not accepted "
+        "the current terms of use (the body then carries a `code` that says so)."
+    ),
+}
+_RESPONSE_404_AMENDMENT: Final[dict[str, Any]] = {
+    "model": ErrorResponse,
+    "description": "No catalogue entry has the `entry_business_key`.",
+}
+_RESPONSE_409_AMENDMENT: Final[dict[str, Any]] = {
+    "model": ErrorResponse,
+    "description": (
+        "The entry exists but is not `active` (it is a draft, deprecated or withdrawn), so it "
+        "cannot be amended. `detail` names the status. Nothing was saved."
+    ),
+}
+_RESPONSE_422_AMENDMENT: Final[dict[str, Any]] = {
+    "model": ErrorResponse,
+    "description": (
+        "The request is not acceptable. `detail` says why for an amendment with nothing left "
+        "to propose (no synonym and no code, or only synonyms and a code the entry already "
+        "has), for a synonym that cannot be cleaned, for a SNOMED CT code that "
+        "is malformed, unknown to the AU edition, inactive, has no reported status or has no "
+        "fully specified name, for `notes` or `organisation` that carry an invisible character, "
+        "and for a `reference_url` that is not a usable web address, points at an internal "
+        "address, answers with a failing status, redirects too often, times out or cannot be "
+        "found. A malformed `entry_business_key`, an unrecognised field, or a part of the "
+        "request over its size bound fails validation before the route runs."
+    ),
+}
+
 _RESPONSES_CREATE: Final[dict[int | str, dict[str, Any]]] = {
     401: _RESPONSE_401,
     403: _RESPONSE_403,
     409: _RESPONSE_409,
     422: _RESPONSE_422,
+    500: _RESPONSE_500,
+    502: _RESPONSE_502,
+    503: _RESPONSE_503,
+}
+
+_RESPONSES_AMENDMENT: Final[dict[int | str, dict[str, Any]]] = {
+    401: _RESPONSE_401,
+    403: _RESPONSE_403_AMENDMENT,
+    404: _RESPONSE_404_AMENDMENT,
+    409: _RESPONSE_409_AMENDMENT,
+    422: _RESPONSE_422_AMENDMENT,
     500: _RESPONSE_500,
     502: _RESPONSE_502,
     503: _RESPONSE_503,
@@ -186,6 +243,7 @@ SessionDep = Annotated[Session, Depends(get_session)]
 RegistryDep = Annotated[DatatypeRegistry, Depends(get_datatype_registry)]
 TerminologyClientDep = Annotated[TerminologyClient, Depends(get_terminology_client)]
 _CREATE = Depends(permission_dep(Permission.SUBMISSION_CREATE))
+_PROPOSE_AMENDMENT = Depends(permission_dep(Permission.AMENDMENT_PROPOSE))
 
 
 #: Bounds on one request. A property key costs a registry query and a coded value can cost a
@@ -266,6 +324,25 @@ class CreateSubmissionRequest(BaseModel):
         return self
 
 
+class CreateAmendmentRequest(BaseModel):
+    """The body of `POST /submissions/amendments`.
+
+    `entry_business_key` names the active entry to amend. At least one new synonym or a
+    `snomed_code` is needed. `reference_url` is optional, and when it is given the server fetches it
+    before saving, as for a new test. `organisation` left out means the profile's value, and a
+    blank string means none. The size bounds are in the schema as `maxLength` and `maxItems`.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    entry_business_key: str = Field(pattern=BUSINESS_KEY_PATTERN.pattern, max_length=40)
+    synonyms: list[_Term] = Field(default_factory=list, max_length=_MAX_SYNONYMS)
+    snomed_code: str | None = Field(default=None, max_length=_MAX_SCTID_LENGTH)
+    reference_url: str | None = Field(default=None, max_length=MAX_URL_LENGTH)
+    notes: str | None = Field(default=None, max_length=_MAX_NOTES_LENGTH)
+    organisation: str | None = Field(default=None, max_length=_MAX_ORGANISATION_LENGTH)
+
+
 class DuplicateCheckRequest(BaseModel):
     """The body of `POST /submissions/duplicate-check`: the terms and code a submission would
     carry, with the same size bounds as the create body. The code is checked for format and check
@@ -302,8 +379,10 @@ class SubmissionResponse(BaseModel):
     `snomed_fsn` is the label the terminology server returned for `snomed_code`, never anything
     the caller sent (FR-82). `label_provenance` states which designation each label field is
     (FR-98): the suggested term is offered as the catalogue's preferred term, and the synonyms as
-    synonyms. The three `reference_*` fields describe one check and are all present or all absent;
-    a new test always has them. `duplicate_confirmed_at` is when the server saved a submission whose
+    synonyms. `entry_business_key` is the entry an amendment proposes to change, and null for a new
+    test; an amendment's `preferred_term` is a copy of that entry's term when it was proposed. The
+    three `reference_*` fields describe one check and are all present or all absent; a new test
+    always has them. `duplicate_confirmed_at` is when the server saved a submission whose
     request carried `confirm_not_duplicate` and that matched something (FR-25), and is null
     otherwise.
     """
@@ -313,6 +392,7 @@ class SubmissionResponse(BaseModel):
     id: uuid.UUID
     kind: str
     state: str
+    entry_business_key: str | None
     preferred_term: str
     synonyms: list[str]
     snomed_code: str | None
@@ -370,7 +450,41 @@ def create_submission(
         terminology_client=terminology_client,
         reference_checker=reference_checker,
     )
-    return _to_response(submission, settings)
+    return _to_response(session, submission, settings)
+
+
+@router.post(
+    "/amendments",
+    summary="Propose a change to a published entry",
+    status_code=201,
+    responses=_RESPONSES_AMENDMENT,
+    dependencies=[_PROPOSE_AMENDMENT],
+)
+def create_amendment(
+    session: SessionDep,
+    ctx: AuditContextDep,
+    principal: CurrentPrincipal,
+    terminology_client: TerminologyClientDep,
+    reference_checker: ReferenceCheckerDep,
+    settings: ApiSettingsDep,
+    body: Annotated[CreateAmendmentRequest, Body()],
+) -> SubmissionResponse:
+    submission = create_amendment_submission(
+        session,
+        ctx,
+        content=AmendmentInput(
+            entry_business_key=body.entry_business_key,
+            synonyms=body.synonyms,
+            snomed_code=body.snomed_code,
+            reference_url=body.reference_url,
+            notes=body.notes,
+            organisation=body.organisation,
+        ),
+        profile_organisation=principal.user_ref.organisation if principal.user_ref else None,
+        terminology_client=terminology_client,
+        reference_checker=reference_checker,
+    )
+    return _to_response(session, submission, settings)
 
 
 @router.post(
@@ -392,11 +506,24 @@ def check_submission_duplicates(
     return DuplicateCheckResponse(matches=[duplicate_match_item(match) for match in matches])
 
 
-def _to_response(submission: Submission, settings: ApiSettings) -> SubmissionResponse:
+def _entry_business_key(session: Session, submission: Submission) -> str | None:
+    """The business key of the entry an amendment names, read from the stored link."""
+    if submission.entry_id is None:
+        return None
+    return session.execute(
+        select(CatalogueEntry.business_key).where(CatalogueEntry.id == submission.entry_id)
+    ).scalar_one()
+
+
+def _to_response(
+    session: Session, submission: Submission, settings: ApiSettings
+) -> SubmissionResponse:
+    entry_business_key = _entry_business_key(session, submission)
     return SubmissionResponse(
         id=submission.id,
         kind=submission.kind,
         state=submission.state,
+        entry_business_key=entry_business_key,
         preferred_term=submission.preferred_term,
         synonyms=list(submission.synonyms),
         snomed_code=submission.snomed_code,

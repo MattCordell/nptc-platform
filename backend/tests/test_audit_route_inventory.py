@@ -281,7 +281,7 @@ def test_mutating_route_count_sanity_check(real_app_routes: dict[object, APIRout
     (issue #165): a route added or removed under `backend/src/nptc/api/
     routers` without updating this count is a signal to look again, not a
     silent drift in what "every mutating endpoint" means."""
-    assert len(real_app_routes) == 18, (
-        f"expected exactly 18 mutating routes, found {len(real_app_routes)}: "
+    assert len(real_app_routes) == 19, (
+        f"expected exactly 19 mutating routes, found {len(real_app_routes)}: "
         f"{sorted(str(r) for r in real_app_routes)}"
     )

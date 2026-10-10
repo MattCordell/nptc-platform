@@ -169,10 +169,11 @@ _SCAN_SOURCES: dict[str, str] = {
 #: The `local_codes` writers and `acknowledge_collision` write tables with no
 #: `catalogue_entry` row lock or collision lock to cycle against.
 #:
-#: `create_new_test_submission` takes no row lock and no collision lock, so there is no cycle to
-#: close, and it must not hold the append lock across the terminology server: that lock is global,
-#: and a slow lookup would stall every audit write. It runs its reads and lookups first and takes
-#: the lock just before its write. `test_submissions_new_test.py` pins that order, and any other
+#: `create_new_test_submission` and `create_amendment_submission` take no row lock and no collision
+#: lock, so there is no cycle to close, and neither may hold the append lock across the terminology
+#: server or the reference check: that lock is global, and a slow call would stall every audit
+#: write. Each runs its reads and network calls first and takes the lock just before its write.
+#: `test_submissions_new_test.py` and `test_submissions_amendment.py` pin that order, and any other
 #: writer in the package is held to the lock-first rule.
 #:
 #: `_save_for_one_entry` is the per-target body of `save_property_values_for_entries`
@@ -194,6 +195,7 @@ _EXEMPT_FUNCTIONS: frozenset[_FuncKey] = frozenset(
         ("local_codes", "create_snomed_map_row"),
         ("collisions", "acknowledge_collision"),
         ("submissions.new_test", "create_new_test_submission"),
+        ("submissions.amendment", "create_amendment_submission"),
     }
 )
 
@@ -590,15 +592,18 @@ def test_guard_scans_the_modules_outside_the_original_three() -> None:
 
 @pytest.mark.req("NFR-08")
 def test_guard_scans_the_submissions_package() -> None:
-    assert "submissions.new_test" in _SCAN_SOURCES
+    assert {"submissions.new_test", "submissions.amendment"} <= _SCAN_SOURCES.keys()
 
 
 @pytest.mark.req("NFR-08")
-def test_the_only_exempt_submissions_writer_is_the_one_named_with_a_reason() -> None:
+def test_the_only_exempt_submissions_writers_are_the_two_named_with_a_reason() -> None:
     """The scan reaches the package, so a new writer there fails the lock-first rule unless it is
     named, with a reason, in `_EXEMPT_FUNCTIONS`."""
     exempt_here = {key for key in _EXEMPT_FUNCTIONS if key[0].startswith("submissions.")}
-    assert exempt_here == {("submissions.new_test", "create_new_test_submission")}
+    assert exempt_here == {
+        ("submissions.new_test", "create_new_test_submission"),
+        ("submissions.amendment", "create_amendment_submission"),
+    }
     unexempted = {key for key in _derive_required_functions() if key[0].startswith("submissions.")}
     assert unexempted == set()
 

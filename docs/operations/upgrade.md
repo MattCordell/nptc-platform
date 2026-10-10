@@ -73,6 +73,7 @@ and/or `data-model.md`, so it gets no section of its own below.
 | [`0027_submission.py`](../../backend/migrations/versions/0027_submission.py) | `submission` (see [`data-model.md`](../architecture/data-model.md#submission-fr-23-fr-27-fr-28-fr-29-nfr-08)) | See [below](#0027_submissionpy) - an empty table on upgrade, and the downgrade discards every submission |
 | [`0028_submission_reference.py`](../../backend/migrations/versions/0028_submission_reference.py) | `submission.reference_url`, `reference_checked_at` and `reference_status` (see [`data-model.md`](../architecture/data-model.md#submission-fr-23-fr-27-fr-28-fr-29-nfr-08)) | See [below](#0028_submission_referencepy) - three nullable columns, and the downgrade discards every stored reference |
 | [`0029_submission_duplicate_confirmation.py`](../../backend/migrations/versions/0029_submission_duplicate_confirmation.py) | `submission.duplicate_confirmed_at` and `duplicate_matches` (see [`data-model.md`](../architecture/data-model.md#submission-fr-23-fr-27-fr-28-fr-29-nfr-08)) | See [below](#0029_submission_duplicate_confirmationpy) - two columns, and the downgrade discards every stored confirmation |
+| [`0030_submission_amendment_entry.py`](../../backend/migrations/versions/0030_submission_amendment_entry.py) | `submission.entry_id`, its foreign key and index, and a check tying it to `kind` (see [`data-model.md`](../architecture/data-model.md#submission-fr-23-fr-27-fr-28-fr-29-nfr-08)) | See [below](#0030_submission_amendment_entrypy) - one nullable column, and the downgrade discards the link of every stored amendment |
 
 ## Provisioning the app role's login
 
@@ -640,6 +641,20 @@ The API at this revision serves `POST /api/v1/submissions/duplicate-check` and a
 
 The downgrade drops the two columns, which discards every stored confirmation. Take a backup first
 if any submissions have been made.
+
+## `0030_submission_amendment_entry.py`
+
+Adds a nullable `entry_id` to `submission` (FR-35), with a foreign key to `catalogue_entry.id`, an
+index, and a check that an amendment has an entry and a new test has none. No amendment can exist
+at revision 0029, because no route created one. Every stored row is a new test and satisfies the
+check, so the upgrade is instant and needs no data step.
+
+The API at this revision serves `POST /api/v1/submissions/amendments`, and `SubmissionResponse`
+gains `entry_business_key`, which is null for a new test.
+
+The downgrade drops the column, which discards the link of every stored amendment. The rows stay,
+but an amendment without its entry cannot be applied, and the older check no longer rejects one.
+Delete or finish any amendments first, and take a backup if any have been made.
 
 ## Testcontainers and Docker
 

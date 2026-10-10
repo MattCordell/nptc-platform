@@ -4325,6 +4325,143 @@
         }
       }
     },
+    "/api/v1/submissions/amendments": {
+      "post": {
+        "tags": [
+          "submissions"
+        ],
+        "summary": "Propose a change to a published entry",
+        "operationId": "create_amendment_api_v1_submissions_amendments_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateAmendmentRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SubmissionResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No credential, or one that could not be verified.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The caller is authenticated but does not hold `amendment.propose`, or has not accepted the current terms of use (the body then carries a `code` that says so). The current terms of use have not been accepted. The body carries `code: terms_acceptance_required`. Accept them with `POST /auth/terms/acceptance` and try again. Never carries `WWW-Authenticate`.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/ErrorResponse"
+                    },
+                    {
+                      "$ref": "#/components/schemas/TermsAcceptanceRequiredResponse"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No catalogue entry has the `entry_business_key`.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The entry exists but is not `active` (it is a draft, deprecated or withdrawn), so it cannot be amended. `detail` names the status. Nothing was saved.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "The request is not acceptable. `detail` says why for an amendment with nothing left to propose (no synonym and no code, or only synonyms and a code the entry already has), for a synonym that cannot be cleaned, for a SNOMED CT code that is malformed, unknown to the AU edition, inactive, has no reported status or has no fully specified name, for `notes` or `organisation` that carry an invisible character, and for a `reference_url` that is not a usable web address, points at an internal address, answers with a failing status, redirects too often, times out or cannot be found. A malformed `entry_business_key`, an unrecognised field, or a part of the request over its size bound fails validation before the route runs.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "The service is misconfigured, not a caller mistake - a malformed `NPTC_TX_*` value. Retrying will not clear it.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "The terminology server's response could not be used.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "The terminology server could not be reached, or a rate limit persisted through retries, or the platform has no outbound internet access to check the `reference_url`. Nothing was saved, and the same request can be sent again. May carry a `Retry-After` header.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "An address exceeded its request budget (FR-22): an anonymous caller its anonymous budget, or a caller whose credentials the API kept rejecting its budget for rejected credentials. Wait for the number of seconds in `Retry-After`, then try again. A valid credential is never counted. The body's `bulk_artefacts` names where to fetch the whole catalogue instead.",
+            "headers": {
+              "Retry-After": {
+                "description": "Whole seconds until the caller's request budget is available again.",
+                "schema": {
+                  "type": "integer",
+                  "minimum": 1
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RateLimitedResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/submissions/duplicate-check": {
       "post": {
         "tags": [
@@ -6248,6 +6385,80 @@
         ],
         "title": "ControlKind",
         "description": "Named after the interaction, never after a datatype (ADR-0013 SS3)."
+      },
+      "CreateAmendmentRequest": {
+        "properties": {
+          "entry_business_key": {
+            "type": "string",
+            "maxLength": 40,
+            "pattern": "^NPTC-([0-9]{6,})$",
+            "title": "Entry Business Key"
+          },
+          "synonyms": {
+            "items": {
+              "type": "string",
+              "maxLength": 500
+            },
+            "type": "array",
+            "maxItems": 100,
+            "title": "Synonyms"
+          },
+          "snomed_code": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 18
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Snomed Code"
+          },
+          "reference_url": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 2048
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reference Url"
+          },
+          "notes": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 10000
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Notes"
+          },
+          "organisation": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 500
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Organisation"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "entry_business_key"
+        ],
+        "title": "CreateAmendmentRequest",
+        "description": "The body of `POST /submissions/amendments`.\n\n`entry_business_key` names the active entry to amend. At least one new synonym or a\n`snomed_code` is needed. `reference_url` is optional, and when it is given the server fetches it\nbefore saving, as for a new test. `organisation` left out means the profile's value, and a\nblank string means none. The size bounds are in the schema as `maxLength` and `maxItems`."
       },
       "CreatePropertyDefinitionRequest": {
         "properties": {
@@ -8354,6 +8565,17 @@
             "type": "string",
             "title": "State"
           },
+          "entry_business_key": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Entry Business Key"
+          },
           "preferred_term": {
             "type": "string",
             "title": "Preferred Term"
@@ -8487,6 +8709,7 @@
           "id",
           "kind",
           "state",
+          "entry_business_key",
           "preferred_term",
           "synonyms",
           "snomed_code",
@@ -8503,7 +8726,7 @@
           "label_provenance"
         ],
         "title": "SubmissionResponse",
-        "description": "The stored submission.\n\n`snomed_fsn` is the label the terminology server returned for `snomed_code`, never anything\nthe caller sent (FR-82). `label_provenance` states which designation each label field is\n(FR-98): the suggested term is offered as the catalogue's preferred term, and the synonyms as\nsynonyms. The three `reference_*` fields describe one check and are all present or all absent;\na new test always has them. `duplicate_confirmed_at` is when the server saved a submission whose\nrequest carried `confirm_not_duplicate` and that matched something (FR-25), and is null\notherwise."
+        "description": "The stored submission.\n\n`snomed_fsn` is the label the terminology server returned for `snomed_code`, never anything\nthe caller sent (FR-82). `label_provenance` states which designation each label field is\n(FR-98): the suggested term is offered as the catalogue's preferred term, and the synonyms as\nsynonyms. `entry_business_key` is the entry an amendment proposes to change, and null for a new\ntest; an amendment's `preferred_term` is a copy of that entry's term when it was proposed. The\nthree `reference_*` fields describe one check and are all present or all absent; a new test\nalways has them. `duplicate_confirmed_at` is when the server saved a submission whose\nrequest carried `confirm_not_duplicate` and that matched something (FR-25), and is null\notherwise."
       },
       "SubmittedPropertyValue": {
         "properties": {

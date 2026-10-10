@@ -1,4 +1,4 @@
-"""`submission` constraint, privilege and audit-policy tests (FR-23, FR-27, FR-28, FR-29, NFR-08).
+"""`submission` constraint, privilege and audit-policy tests (FR-23, FR-27, FR-28, FR-29, FR-35, NFR-08).
 
 Each violation gets its own test, because a failed statement aborts the surrounding transaction
 (25P02); see `test_db_catalogue_entry.py`.
@@ -43,13 +43,17 @@ def _insert_user(connection: Connection) -> object:
 
 
 _INSERT_SUBMISSION = text(
-    "INSERT INTO submission (kind, state, preferred_term, synonyms, snomed_code, snomed_fsn, "
-    "property_values, notes, reference_url, reference_checked_at, reference_status, "
+    "INSERT INTO submission (kind, state, entry_id, preferred_term, synonyms, snomed_code, "
+    "snomed_fsn, property_values, notes, reference_url, reference_checked_at, reference_status, "
     "duplicate_confirmed_at, duplicate_matches, submitter_id, organisation) "
-    "VALUES (:kind, :state, :preferred_term, CAST(:synonyms AS jsonb), :snomed_code, :snomed_fsn, "
-    "CAST(:property_values AS jsonb), :notes, :reference_url, :reference_checked_at, "
-    ":reference_status, :duplicate_confirmed_at, CAST(:duplicate_matches AS jsonb), "
-    ":submitter_id, :organisation) RETURNING id"
+    "VALUES (:kind, :state, :entry_id, :preferred_term, CAST(:synonyms AS jsonb), :snomed_code, "
+    ":snomed_fsn, CAST(:property_values AS jsonb), :notes, :reference_url, "
+    ":reference_checked_at, :reference_status, :duplicate_confirmed_at, "
+    "CAST(:duplicate_matches AS jsonb), :submitter_id, :organisation) RETURNING id"
+)
+_INSERT_ENTRY = text(
+    "INSERT INTO catalogue_entry (business_key, preferred_term) "
+    "VALUES (:business_key, 'Amendment target') RETURNING id"
 )
 #: Only the columns with a server default are left out, so a test sees the defaults themselves. A
 #: new test must carry its reference, which has no default.
@@ -61,12 +65,18 @@ _INSERT_MINIMAL_SUBMISSION = text(
 )
 
 
+def _insert_entry(connection: Connection) -> object:
+    business_key = f"NPTC-{uuid.uuid4().int % 900_000 + 100_000}"
+    return connection.execute(_INSERT_ENTRY, {"business_key": business_key}).scalar_one()
+
+
 def _insert_submission(connection: Connection, submitter_id: object, **overrides: object) -> object:
     """Inserts a valid row, then lets `overrides` replace any column, so a test aims at one
     constraint at a time. A JSON column is passed as JSON text."""
     values: dict[str, object] = {
         "kind": "new_test",
         "state": "Submitted",
+        "entry_id": None,
         "preferred_term": "Serum sodium",
         "synonyms": "[]",
         "snomed_code": None,
@@ -171,6 +181,7 @@ def test_a_submission_must_reference_a_real_user(db: Connection) -> None:
 _CHECK_VIOLATIONS: dict[str, dict[str, object]] = {
     "unknown_kind": {"kind": "retraction"},
     "unknown_state": {"state": "Approved"},
+    "amendment_without_entry": {"kind": "amendment"},
     "empty_preferred_term": {"preferred_term": ""},
     "blank_preferred_term": {"preferred_term": "   "},
     "synonyms_not_an_array": {"synonyms": '{"a": 1}'},
@@ -212,6 +223,44 @@ def test_check_constraints_refuse_a_malformed_row(
     assert exc_info.value.orig.sqlstate == _CHECK_VIOLATION  # type: ignore[union-attr]
 
 
+@pytest.mark.req("FR-35")
+@pytest.mark.integration
+def test_a_new_test_cannot_name_an_entry(db: Connection) -> None:
+    submitter = _insert_user(db)
+
+    with pytest.raises(IntegrityError) as exc_info:
+        _insert_submission(db, submitter, entry_id=_insert_entry(db))
+
+    assert exc_info.value.orig.sqlstate == _CHECK_VIOLATION  # type: ignore[union-attr]
+
+
+@pytest.mark.req("FR-35")
+@pytest.mark.integration
+def test_an_amendment_must_name_a_real_entry(db: Connection) -> None:
+    submitter = _insert_user(db)
+
+    with pytest.raises(IntegrityError) as exc_info:
+        _insert_submission(
+            db, submitter, kind="amendment", entry_id="00000000-0000-0000-0000-000000000000"
+        )
+
+    assert exc_info.value.orig.sqlstate == _FOREIGN_KEY_VIOLATION  # type: ignore[union-attr]
+
+
+@pytest.mark.req("FR-35")
+@pytest.mark.integration
+def test_an_amendment_with_an_entry_is_stored_with_the_link(db: Connection) -> None:
+    submitter = _insert_user(db)
+    entry_id = _insert_entry(db)
+
+    submission_id = _insert_submission(db, submitter, kind="amendment", entry_id=entry_id)
+
+    stored = db.execute(
+        text("SELECT entry_id FROM submission WHERE id = :id"), {"id": submission_id}
+    ).scalar_one()
+    assert stored == entry_id
+
+
 @pytest.mark.req("FR-27")
 @pytest.mark.integration
 def test_an_amendment_may_have_no_reference(db: Connection) -> None:
@@ -221,6 +270,7 @@ def test_an_amendment_may_have_no_reference(db: Connection) -> None:
         db,
         submitter,
         kind="amendment",
+        entry_id=_insert_entry(db),
         reference_url=None,
         reference_checked_at=None,
         reference_status=None,
@@ -255,6 +305,7 @@ def test_app_role_can_move_state_but_the_row_keeps_what_was_sent(app_db: Connect
 #: One refused statement per test: a privilege error aborts the transaction. The parameter ids name
 #: the column or verb, so a failure says which guarantee broke.
 _REFUSED_STATEMENTS = {
+    "update_entry_id": "UPDATE submission SET entry_id = NULL",
     "update_preferred_term": "UPDATE submission SET preferred_term = 'changed'",
     "update_snomed_code": "UPDATE submission SET snomed_code = NULL, snomed_fsn = NULL",
     "update_property_values": "UPDATE submission SET property_values = '{}'::jsonb",
@@ -295,6 +346,7 @@ def test_the_audit_policy_withholds_the_organisation_and_records_the_rest() -> N
         {
             "kind",
             "state",
+            "entry_id",
             "preferred_term",
             "synonyms",
             "snomed_code",

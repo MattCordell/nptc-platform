@@ -163,6 +163,9 @@ COVERED_WRITE_ROUTES = frozenset(
         # The new-test submission route (FR-23, FR-80). Negative-auth coverage lives in
         # `test_api_submissions.py`.
         RouteKey(method="POST", path="/submissions"),
+        # The amendment route (FR-35, FR-80). It needs `amendment.propose`, a different permission
+        # from the route above. Negative-auth coverage lives in `test_api_submissions.py`.
+        RouteKey(method="POST", path="/submissions/amendments"),
         # The duplicate check (FR-25). It writes nothing but is a POST, so it sits under the terms
         # gate too. Negative-auth coverage lives in `test_api_submissions.py`.
         RouteKey(method="POST", path="/submissions/duplicate-check"),

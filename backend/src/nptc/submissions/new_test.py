@@ -61,27 +61,19 @@ from nptc.registry.definitions import DeprecatedPropertyWriteError
 from nptc.registry.handlers import DatatypeRegistry
 from nptc.submissions.duplicates import find_duplicates
 from nptc.submissions.errors import (
-    CodeRefusal,
     FreeTextField,
-    FreeTextRefusedError,
-    SubmissionCodeRefusedError,
     SubmissionDuplicatesFoundError,
 )
 from nptc.submissions.reference_check import ReferenceChecker
+from nptc.submissions.shared import clean_free_text, resolve_code
 from nptc.submissions.terms import distinct_synonyms
-from nptc.terminology.concepts import resolve_concept
-from nptc.terminology.errors import ConceptNotFoundError
 from nptc_shared.terminology import TerminologyClient
-from nptc_shared.text import find_invisible_characters, normalise_for_comparison
 
 __all__ = ["NewTestSubmissionInput", "create_new_test_submission"]
 
 #: A submission accepts the properties whose scope reaches it. `maintenance` properties belong to
 #: the published catalogue alone (FR-09).
 SUBMISSION_SCOPES = frozenset({PropertyScope.SUBMISSION, PropertyScope.BOTH})
-
-#: Line breaks and tabs are formatting in a multi-line note, not a defect.
-_NOTE_FORMATTING = frozenset({chr(10), chr(13), chr(9)})
 
 
 @dataclass(frozen=True)
@@ -129,11 +121,11 @@ def create_new_test_submission(
 
     preferred_term = clean_term(content.preferred_term)
     synonyms = distinct_synonyms(preferred_term, content.synonyms)
-    notes = _clean_free_text(content.notes, field=FreeTextField.NOTES, multiline=True)
+    notes = clean_free_text(content.notes, field=FreeTextField.NOTES, multiline=True)
     organisation = (
         profile_organisation
         if content.organisation is None
-        else _clean_free_text(
+        else clean_free_text(
             content.organisation, field=FreeTextField.ORGANISATION, multiline=False
         )
     )
@@ -144,7 +136,7 @@ def create_new_test_submission(
     snomed_code: str | None = None
     snomed_fsn: str | None = None
     if content.snomed_code is not None:
-        snomed_code, snomed_fsn = _resolve_code(terminology_client, content.snomed_code)
+        snomed_code, snomed_fsn = resolve_code(terminology_client, content.snomed_code)
 
     matches = find_duplicates(
         session, preferred_term=preferred_term, synonyms=synonyms, snomed_code=snomed_code
@@ -190,39 +182,6 @@ def _database_now(session: Session) -> datetime:
     """The transaction's start time, which is what `created_at` takes, so the two columns of
     one row never disagree because the application server's clock differs from the database's."""
     return session.execute(select(func.now())).scalar_one()
-
-
-def _clean_free_text(text: str | None, *, field: FreeTextField, multiline: bool) -> str | None:
-    """`text` normalised like a term, or `None` if nothing is left. Refuses any invisible
-    character, except the formatting a multi-line note may carry."""
-    if text is None:
-        return None
-    normalised = normalise_for_comparison(text)
-    allowed = _NOTE_FORMATTING if multiline else frozenset()
-    refused = tuple(
-        found.codepoint
-        for found in find_invisible_characters(normalised)
-        if normalised[found.offset] not in allowed
-    )
-    if refused:
-        raise FreeTextRefusedError(field, refused)
-    return normalised or None
-
-
-def _resolve_code(client: TerminologyClient, code: str) -> tuple[str, str]:
-    """The code and the FSN the server returned for it, or a refusal. The edition's own answer
-    decides: an inactive or status-less concept is refused, never stored on a guess."""
-    try:
-        concept = resolve_concept(client, code)
-    except ConceptNotFoundError:
-        raise SubmissionCodeRefusedError(CodeRefusal.NOT_FOUND) from None
-    if concept.active is None:
-        raise SubmissionCodeRefusedError(CodeRefusal.STATUS_NOT_REPORTED)
-    if not concept.active:
-        raise SubmissionCodeRefusedError(CodeRefusal.INACTIVE)
-    if concept.fsn is None or not concept.fsn.strip():
-        raise SubmissionCodeRefusedError(CodeRefusal.NO_FSN)
-    return concept.code, concept.fsn
 
 
 def _check_property_values(
