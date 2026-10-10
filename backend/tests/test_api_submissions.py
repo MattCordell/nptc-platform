@@ -1168,6 +1168,19 @@ def test_a_malformed_code_is_422_on_the_check_without_asking_the_server(
     assert api.terminology.requests == ()
 
 
+@pytest.mark.req("FR-63")
+@pytest.mark.integration
+@pytest.mark.parametrize(
+    "term", ["", "   ", "Serum" + chr(0x200B) + "sodium"], ids=["empty", "blank", "invisible"]
+)
+def test_a_term_that_cannot_be_cleaned_is_422_on_the_check(api: ApiTestApp, term: str) -> None:
+    token, _ = _token(api, Role.PROVISIONAL)
+
+    response = _check(api, token, preferred_term=term)
+
+    assert response.status_code == 422, response.text
+
+
 @pytest.mark.req("FR-25")
 @pytest.mark.integration
 def test_the_check_refuses_an_unknown_field(api: ApiTestApp) -> None:
