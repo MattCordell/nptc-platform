@@ -99,6 +99,7 @@ from nptc.catalogue.property_value_sources import (
 from nptc.catalogue.property_values import PropertyDefinitionNotFoundError, PropertyValidationError
 from nptc.catalogue.search import EmptySearchQueryError, MalformedSearchCursorError
 from nptc.catalogue.term_hygiene import TermCleaningError
+from nptc.db.models.catalogue_entry import CatalogueEntryStatus
 from nptc.exports.semantic_tag import EmptyDisplayTermError, NotAServedFSNError
 from nptc.registry.definitions import (
     DeprecatedPropertyWriteError,
@@ -115,6 +116,9 @@ from nptc.registry.handlers import UnknownDatatypeError
 from nptc.settings import AuthSettings
 from nptc.submissions.duplicates import DuplicateMatch, MatchedOn, MatchSource
 from nptc.submissions.errors import (
+    AmendmentEntryNotActiveError,
+    AmendmentRefusal,
+    AmendmentRefusedError,
     CodeRefusal,
     FreeTextField,
     FreeTextRefusedError,
@@ -567,6 +571,33 @@ _DETAIL_SUBMISSION_CODE_REFUSED: Final[dict[CodeRefusal, str]] = {
     CodeRefusal.NO_FSN: (
         "The terminology server returned no fully specified name for this SNOMED CT code, "
         "so it cannot be submitted."
+    ),
+}
+#: FR-35. One sentence per reason, each naming what the submitter can change.
+_DETAIL_AMENDMENT_REFUSED: Final[dict[AmendmentRefusal, str]] = {
+    AmendmentRefusal.NOTHING_PROPOSED: (
+        "An amendment must propose at least one new synonym or a SNOMED CT code."
+    ),
+    AmendmentRefusal.NOTHING_NEW: (
+        "This entry already has every synonym in the amendment. Propose a synonym it does "
+        "not have, or a SNOMED CT code."
+    ),
+    AmendmentRefusal.CODE_ALREADY_BOUND: (
+        "This entry already carries this SNOMED CT code, so it is not a change. Propose a "
+        "different code, or send only the new synonyms."
+    ),
+}
+#: FR-35. Names the status, which is the reason the submitter needs. Only the three statuses
+#: other than `active` can be raised, so each has its own sentence.
+_DETAIL_AMENDMENT_ENTRY_NOT_ACTIVE: Final[dict[CatalogueEntryStatus, str]] = {
+    CatalogueEntryStatus.DRAFT: (
+        "This entry is a draft and is not yet published, so it cannot be amended."
+    ),
+    CatalogueEntryStatus.DEPRECATED: (
+        "This entry is deprecated, so it cannot be amended. Only an active entry can be."
+    ),
+    CatalogueEntryStatus.WITHDRAWN: (
+        "This entry is withdrawn, so it cannot be amended. Only an active entry can be."
     ),
 }
 _DETAIL_LOCAL_CODE_SYSTEM_ALREADY_DEPRECATED = "This local code system is already deprecated."
@@ -1074,6 +1105,28 @@ def register_exception_handlers(app: FastAPI, auth_settings: AuthSettings) -> No
         return JSONResponse(
             status_code=exc.http_status,
             content={"detail": _DETAIL_SUBMISSION_CODE_REFUSED[exc.reason]},
+        )
+
+    @app.exception_handler(AmendmentRefusedError)
+    async def _handle_amendment_refused(
+        _request: Request, exc: AmendmentRefusedError
+    ) -> JSONResponse:
+        # INFO: the reason is a fixed enum, so it is safe to log.
+        _logger.info("amendment refused: %s", exc.reason.value)
+        return JSONResponse(
+            status_code=exc.http_status,
+            content={"detail": _DETAIL_AMENDMENT_REFUSED[exc.reason]},
+        )
+
+    @app.exception_handler(AmendmentEntryNotActiveError)
+    async def _handle_amendment_entry_not_active(
+        _request: Request, exc: AmendmentEntryNotActiveError
+    ) -> JSONResponse:
+        # Only the status is logged: the business key is the caller's text.
+        _logger.info("amendment refused, entry is %s", exc.status.value)
+        return JSONResponse(
+            status_code=exc.http_status,
+            content={"detail": _DETAIL_AMENDMENT_ENTRY_NOT_ACTIVE[exc.status]},
         )
 
     @app.exception_handler(FreeTextRefusedError)

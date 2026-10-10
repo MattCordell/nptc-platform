@@ -31,9 +31,7 @@ depends_on: str | Sequence[str] | None = None
 
 
 def upgrade() -> None:
-    op.add_column(
-        "submission", sa.Column("entry_id", postgresql.UUID(as_uuid=True), nullable=True)
-    )
+    op.add_column("submission", sa.Column("entry_id", postgresql.UUID(as_uuid=True), nullable=True))
     op.create_foreign_key(
         op.f("fk_submission_entry_id_catalogue_entry"),
         "submission",
