@@ -40,6 +40,7 @@ describe("the gate's collection notice matches Keycloak's registration notice", 
     ["title", "nptcRegisterNoticeTitle"],
     ["visible", "nptcRegisterNoticeVisible"],
     ["retention", "nptcRegisterNoticeRetention"],
+    ["organisation", "nptcRegisterNoticeOrganisation"],
     ["access", "nptcRegisterNoticeAccess"],
     ["privacyLink", "nptcRegisterPrivacyLink"],
   ] as const)("says the same as %s", (field, key) => {

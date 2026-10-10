@@ -319,8 +319,10 @@ platform's look through a login theme named `nptc` in `deploy/keycloak/themes/np
   attribute `nptcFrontendBaseUrl`, which comes from `NPTC_FRONTEND_BASE_URL`. A client's own
   `baseUrl` is not used, because the `account-console` client's points at Keycloak. The page
   has no acceptance checkbox: acceptance is recorded by the platform after sign-in, not by
-  Keycloak ([ADR-0043](../adr/0043-terms-acceptance-storage.md)). The notice says only that
-  the retention period is still being settled, because OI-15 has not closed.
+  Keycloak ([ADR-0043](../adr/0043-terms-acceptance-storage.md)). The notice says that
+  the retention period is still being settled, because OI-15 has not closed. It also says
+  that the organisation recorded on a submission stays with it after the account closes. The
+  SPA's acceptance gate repeats both sentences, and a test keeps the two copies identical.
 - **Three copied templates.** The theme overrides `template.ftl` (the side panel),
   `register.ftl` (the notice, and no stock terms checkbox) and `login-config-totp.ftl`. The
   stock TOTP template points both labels at an id that does not exist, so its inputs have no

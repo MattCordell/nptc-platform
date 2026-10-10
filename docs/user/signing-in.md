@@ -16,7 +16,8 @@ account starts as a **Provisional** member; an administrator can grant further r
 later.
 
 The registration page explains how your details are used and links to the privacy policy
-and the terms of use. Both links open in a new tab, so your form stays as you left it.
+and the terms of use. It also says that the organisation recorded on a submission stays with
+it after your account closes. Both links open in a new tab, so your form stays as you left it.
 
 ## Accepting the terms of use
 
@@ -27,8 +28,9 @@ in, and again whenever the terms change.
 Until you accept, the catalogue shows a page called **Accept the terms of use** in place of
 the page you asked for. It shows:
 
-- how your details are used;
-- the full text of the terms;
+- how your details are used, including that the organisation recorded on a submission stays
+  with it after your account closes;
+- the full text of the terms, which includes the licence you grant for your contributions;
 - a box to tick; and
 - the buttons **Accept and continue** and **Sign out**.
 
@@ -58,7 +60,8 @@ If the terms change while you are editing, the catalogue refuses your next save 
 the gate. The page you were on stays where it was. Accept, then save again.
 
 > **Placeholder wording.** The terms text is temporary, and the privacy policy page is
-> still a placeholder. The registration notice says that the retention period is still
+> still a placeholder. The contribution licence is in the terms, but its wording awaits
+> legal confirmation. The registration notice says that the retention period is still
 > being settled. See [ADR-0043](../adr/0043-terms-acceptance-storage.md) for the design.
 
 ## Signing in

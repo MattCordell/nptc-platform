@@ -16,6 +16,8 @@ export const COLLECTION_NOTICE = {
   visible: "Platform administrators can see your identity and your interest records.",
   retention:
     "How long we keep your details is still being settled. The privacy policy will state it.",
+  organisation:
+    "The organisation recorded on a submission stays with it after your account closes.",
   access:
     "To ask for access to your details or to correct them, follow the privacy policy.",
   privacyLink: "Read the privacy policy",

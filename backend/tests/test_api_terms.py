@@ -72,7 +72,9 @@ def terms_files(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[Non
 
 @pytest.fixture
 def api(app_db: Connection, terms_files: None) -> Iterator[ApiTestApp]:
-    yield from build_api_test_app(app_db)
+    yield from build_api_test_app(
+        app_db, api_settings=_api_support.hermetic_api_settings(terms_current_version=FIRST)
+    )
 
 
 def _subject() -> str:
@@ -485,3 +487,50 @@ def test_a_write_verifies_the_token_once_for_the_gate_and_the_route(api: ApiTest
     api.post(_ACCEPT_PATH, token=token, json={"version": FIRST})
 
     assert verified == [token]
+
+
+# --- the packaged versions -------------------------------------------------
+
+_FIRST_PACKAGED = "2026-10-06"
+
+
+@pytest.fixture
+def packaged_api(app_db: Connection) -> Iterator[ApiTestApp]:
+    """The app reading the terms files shipped in the package, not the two fixture versions."""
+    documents.load_terms_document.cache_clear()
+    yield from build_api_test_app(app_db)
+    documents.load_terms_document.cache_clear()
+
+
+@pytest.mark.req("NFR-46")
+@pytest.mark.req("NFR-45")
+@pytest.mark.integration
+def test_a_user_who_accepted_the_first_packaged_version_must_accept_the_licence_version(
+    packaged_api: ApiTestApp,
+) -> None:
+    """The licence only binds a contributor who has accepted it, so the version that carries it
+    must stop earlier acceptances from counting."""
+    api = packaged_api
+    token = api.token_for_role(subject=_subject(), role=Role.ADMINISTRATOR, accept_terms=False)
+    api.set_api_settings(terms_current_version=_FIRST_PACKAGED)
+    assert _accept(api, token, _FIRST_PACKAGED).status_code == 200
+    assert _write(api, token).status_code == 201
+
+    api.set_api_settings(terms_current_version=documents.DEFAULT_TERMS_VERSION)
+    _assert_terms_refusal(_write(api, token))
+
+    assert _accept(api, token, documents.DEFAULT_TERMS_VERSION).status_code == 200
+    assert _write(api, token).status_code == 201
+
+
+@pytest.mark.req("NFR-46")
+@pytest.mark.integration
+def test_the_current_packaged_terms_serve_the_contribution_licence(
+    packaged_api: ApiTestApp,
+) -> None:
+    body = packaged_api.get("/auth/terms").json()
+
+    assert body["version"] == documents.DEFAULT_TERMS_VERSION
+    assert body["version"] != _FIRST_PACKAGED
+    for term in ("perpetual", "irrevocable", "worldwide", "royalty-free", "non-exclusive"):
+        assert term in body["text"]

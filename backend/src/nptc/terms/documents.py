@@ -24,8 +24,9 @@ from pydantic import BaseModel, ConfigDict
 
 from nptc.terms.errors import TermsFileMalformedError, TermsVersionNotFoundError
 
-#: The default `NPTC_TERMS_CURRENT_VERSION`, the version of the first (temporary) terms file.
-DEFAULT_TERMS_VERSION: Final = "2026-10-06"
+#: The default `NPTC_TERMS_CURRENT_VERSION`: the newest temporary terms file, which adds the
+#: contribution licence (NFR-46).
+DEFAULT_TERMS_VERSION: Final = "2026-10-10"
 
 _VERSION_PATTERN: Final = re.compile(r"\d{4}-\d{2}-\d{2}")
 _FENCE: Final = "---"

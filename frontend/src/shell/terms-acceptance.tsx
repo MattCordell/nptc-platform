@@ -26,6 +26,7 @@ function CollectionNotice() {
       <p className="m-0">{COLLECTION_NOTICE.collect}</p>
       <p className="m-0">{COLLECTION_NOTICE.visible}</p>
       <p className="m-0">{COLLECTION_NOTICE.retention}</p>
+      <p className="m-0">{COLLECTION_NOTICE.organisation}</p>
       <p className="m-0">{COLLECTION_NOTICE.access}</p>
       <p className="m-0">
         <Link
