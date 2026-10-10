@@ -64,7 +64,7 @@ from nptc.catalogue.changelog import validate_changelog_note
 from nptc.catalogue.entries import assert_entry_row_version, load_entry_for_update
 from nptc.catalogue.errors import ConflictReport, EntryNotFoundError, EntryVersionConflictError
 from nptc.db.models.catalogue_entry import CatalogueEntry
-from nptc.db.models.property_definition import PropertyDefinition, PropertyStatus
+from nptc.db.models.property_definition import PropertyDefinition, PropertyScope, PropertyStatus
 from nptc.db.models.property_value import PropertyValue
 from nptc.db.property_specs import spec_for
 from nptc.registry.definitions import DeprecatedPropertyWriteError
@@ -78,7 +78,9 @@ __all__ = [
     "PropertyDefinitionNotFoundError",
     "PropertyValidationError",
     "PropertyValueInput",
+    "PropertyValuesCheck",
     "PropertyWriteIssue",
+    "check_property_values",
     "save_property_values",
     "save_property_values_for_entries",
     "tally_bulk_outcomes",
@@ -304,6 +306,55 @@ def _preflight_property_write(
         *_validate_specimen_root_alone(definition.key, raw_values),
     )
     return _PropertyWritePreflight(definition=definition, write_issues=write_issues)
+
+
+@dataclass(frozen=True)
+class PropertyValuesCheck:
+    """What `check_property_values` found: the definition it checked against, and every issue.
+    `issues` is empty when the values are acceptable."""
+
+    definition: PropertyDefinition
+    issues: tuple[PropertyWriteIssue, ...]
+
+
+def check_property_values(
+    session: Session,
+    property_key: str,
+    values: Sequence[PropertyValueInput],
+    registry: DatatypeRegistry,
+    *,
+    scopes: frozenset[PropertyScope] | None = None,
+) -> PropertyValuesCheck:
+    """Validates `values` for `property_key` as `save_property_values` would, for a caller whose
+    values belong to no entry yet. Writes nothing and takes no lock.
+
+    Raises `PropertyDefinitionNotFoundError` for an unknown key and `DeprecatedPropertyWriteError`
+    (FR-11) for a deprecated one, as the write path does. Bad values are issues in the result,
+    never an exception.
+
+    A definition whose `scope` is outside `scopes` yields one `out-of-scope` issue and its values
+    are not validated: they would be refused anyway, and a coded value's check can reach the
+    terminology server. `None` accepts every scope.
+    """
+    definition = _load_active_property_definition(session, property_key)
+    if scopes is not None and definition.scope not in scopes:
+        allowed = ", ".join(sorted(scopes))
+        return PropertyValuesCheck(
+            definition=definition,
+            issues=(
+                PropertyWriteIssue(
+                    property_key=definition.key,
+                    label=definition.label,
+                    code="out-of-scope",
+                    message=(
+                        f"{definition.label} cannot be set here: its scope is {definition.scope}, "
+                        f"and only properties with scope {allowed} are accepted"
+                    ),
+                ),
+            ),
+        )
+    preflight = _preflight_property_write(definition, values, registry)
+    return PropertyValuesCheck(definition=definition, issues=preflight.write_issues)
 
 
 def save_property_values(

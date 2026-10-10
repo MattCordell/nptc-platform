@@ -70,6 +70,7 @@ and/or `data-model.md`, so it gets no section of its own below.
 | [`0024_retire_specimen_unconstrained.py`](../../backend/migrations/versions/0024_retire_specimen_unconstrained.py) | Drops `catalogue_entry.specimen_unconstrained` (see [`data-model.md`](../architecture/data-model.md#catalogue_entry-issue-46-fr-03-fr-38)) | See [below](#0024_retire_specimen_unconstrainedpy) - converts the flag to the specimen root first |
 | [`0025_property_index_owner_role.py`](../../backend/migrations/versions/0025_property_index_owner_role.py) | The `nptc_property_index_owner` role, which takes over ownership of `property_value` (see [`data-model.md`](../architecture/data-model.md#automatic-index-generation-issue-54-fr-13)) | See [below](#0025_property_index_owner_rolepy) - a non-superuser migration role needs membership of the new role |
 | [`0026_drop_designation_language.py`](../../backend/migrations/versions/0026_drop_designation_language.py) | Drops `designation.use`, `designation.language` and `designation_collision_acknowledgement.language` (see [`data-model.md`](../architecture/data-model.md#designation-issue-47-fr-04-fr-24-fr-37-fr-85)) | See [below](#0026_drop_designation_languagepy) - refuses to run if any row is not an en-AU synonym; re-emit any dataset made before this release |
+| [`0027_submission.py`](../../backend/migrations/versions/0027_submission.py) | `submission` (see [`data-model.md`](../architecture/data-model.md#submission-fr-23-fr-27-fr-28-fr-29-nfr-08)) | See [below](#0027_submissionpy) - an empty table on upgrade, and the downgrade discards every submission |
 
 ## Provisioning the app role's login
 
@@ -595,6 +596,19 @@ and the loader refuses a version 3 file with a message that names the version. S
 The downgrade re-adds `designation.use` (default `synonym`), `designation.language` and the
 acknowledgement's `language` (default `en-AU`), the CHECKs and indexes, and the `UPDATE` grant on
 `use` and `language`. Every row comes back as an en-AU synonym.
+
+## `0027_submission.py`
+
+Adds `submission` (FR-23, FR-27, FR-28, FR-29 - see
+[`data-model.md`](../architecture/data-model.md#submission-fr-23-fr-27-fr-28-fr-29-nfr-08)). It
+creates an empty table, so the upgrade itself is instant and needs no data step. The API at this
+revision serves `POST /api/v1/submissions`.
+
+The grants are in the migration. The app role may insert and read a submission and update only its
+`state`, `updated_at` and `row_version`. It may not delete one.
+
+The downgrade drops the table, which discards every submission and its content. Take a backup
+first if any have been made.
 
 ## Testcontainers and Docker
 

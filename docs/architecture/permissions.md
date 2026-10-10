@@ -43,7 +43,7 @@ directions. This is the strongest test in the issue: a PRD edit that adds a row,
 | PRD notation | Mechanism | Where |
 |---|---|---|
 | `Y (own)` / `Y (any)` | Two permissions (`SUBMISSION_WITHDRAW_OWN`/`_ANY`), resolved against the resource's `owner_user_id` | `nptc.auth.authorisation.may_act_on` |
-| `Y (max 5)` / `Y (20/hr)` | Not a permission — a numeric budget on the same `SUBMISSION_CREATE` permission | `nptc.auth.permissions.SubmissionQuota`/`QUOTAS`/`effective_quota` (defined and unit-tested; **not yet enforced** — no `submission` table exists) |
+| `Y (max 5)` / `Y (20/hr)` | Not a permission — a numeric budget on the same `SUBMISSION_CREATE` permission | `nptc.auth.permissions.SubmissionQuota`/`QUOTAS`/`effective_quota` (defined and unit-tested; **not yet enforced** — `POST /api/v1/submissions` does not yet count a user's submissions against it) |
 | "Promote Provisional to Member and no more" | `Permission.ROLE_GRANT_MEMBER` vs `ROLE_GRANT_ANY` | `nptc.auth.grants.grant_role` |
 
 A single permission plus an ownership `if` at the call site, or a predicate attached to a

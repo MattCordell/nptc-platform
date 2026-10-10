@@ -1,1 +1,1 @@
-"""Submission workflow state machine, interest records, internal comments. Phase P2."""
+"""Submissions: the new-test create path today; the workflow state machine, interest records and internal comments land in Phase P2."""

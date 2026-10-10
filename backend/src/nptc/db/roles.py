@@ -305,3 +305,11 @@ GRANT_TERMS_ACCEPTANCE_SQL = "GRANT SELECT, INSERT ON TABLE terms_acceptance TO 
 REVOKE_TERMS_ACCEPTANCE_WRITE_SQL = (
     "REVOKE UPDATE, DELETE, TRUNCATE ON TABLE terms_acceptance FROM nptc_app;"
 )
+
+#: FR-23, FR-28, FR-29: only the workflow's own columns are updatable, and `row_version` MUST be
+#: included, as in `GRANT_CATALOGUE_ENTRY_UPDATE_SQL`.
+GRANT_SUBMISSION_SQL = "GRANT SELECT, INSERT ON TABLE submission TO nptc_app;"
+GRANT_SUBMISSION_UPDATE_SQL = (
+    "GRANT UPDATE (state, updated_at, row_version) ON TABLE submission TO nptc_app;"
+)
+REVOKE_SUBMISSION_DELETE_SQL = "REVOKE DELETE, TRUNCATE ON TABLE submission FROM nptc_app;"

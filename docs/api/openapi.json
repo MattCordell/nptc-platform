@@ -4187,6 +4187,134 @@
         }
       }
     },
+    "/api/v1/submissions": {
+      "post": {
+        "tags": [
+          "submissions"
+        ],
+        "summary": "Submit a new test for the catalogue",
+        "operationId": "create_submission_api_v1_submissions_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateSubmissionRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SubmissionResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No credential, or one that could not be verified.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The caller is authenticated but does not hold `submission.create`, or has not accepted the current terms of use (the body then carries a `code` that says so). The current terms of use have not been accepted. The body carries `code: terms_acceptance_required`. Accept them with `POST /auth/terms/acceptance` and try again. Never carries `WWW-Authenticate`.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/ErrorResponse"
+                    },
+                    {
+                      "$ref": "#/components/schemas/TermsAcceptanceRequiredResponse"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "The request is not acceptable. `detail` says why for a term that cannot be cleaned and for a SNOMED CT code that is malformed, unknown to the AU edition, inactive, has no reported status or has no fully specified name, and for `notes` or `organisation` that carry an invisible character. `issues[]` names each property problem: an unknown, deprecated or out-of-scope property, a value its datatype refuses, or a property required for submission with no value. A missing `preferred_term`, an unrecognised field, or a part of the request over its size bound fails validation before the route runs.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/HTTPValidationError"
+                    },
+                    {
+                      "$ref": "#/components/schemas/ErrorResponse"
+                    },
+                    {
+                      "$ref": "#/components/schemas/PropertyValidationResponse"
+                    }
+                  ],
+                  "title": "Response 422 Create Submission Api V1 Submissions Post"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "The service is misconfigured, not a caller mistake - a malformed `NPTC_TX_*` value. Retrying will not clear it.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "The terminology server's response could not be used.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "The terminology server could not be reached, or a rate limit persisted through retries. Nothing was saved, and the same request can be sent again. May carry a `Retry-After` header.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "An address exceeded its request budget (FR-22): an anonymous caller its anonymous budget, or a caller whose credentials the API kept rejecting its budget for rejected credentials. Wait for the number of seconds in `Retry-After`, then try again. A valid credential is never counted. The body's `bulk_artefacts` names where to fetch the whole catalogue instead.",
+            "headers": {
+              "Retry-After": {
+                "description": "Whole seconds until the caller's request budget is available again.",
+                "schema": {
+                  "type": "integer",
+                  "minimum": 1
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RateLimitedResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/terminology/concepts/{code}": {
       "get": {
         "tags": [
@@ -6135,6 +6263,82 @@
         "title": "CreatePropertyDefinitionRequest",
         "description": "The body of `POST /registry/properties`. Every property created\nthrough this route is `origin = 'admin'` - there is no field to\nrequest otherwise; the four `origin = 'system'` rows are seeded once,\nat bootstrap, and never created through this API.\n\n`cardinality`/`scope`/`strength`/`binding_target` are typed against the\nexact `StrEnum`s `property_definition`'s own database `CHECK`\nconstraints close over - an invalid value is a pydantic 422 before the\nrequest reaches the ORM, not a database `CHECK` violation surfacing as\na 500. `datatype` stays a bare `str` deliberately - FR-77's own\nextension point, so admitting a new datatype never touches this router -\nand is instead validated by `create_definition` itself, against the live\n`DatatypeRegistry`, where `UnknownDatatypeError` becomes a typed 422\nrather than a broken row that only misbehaves at the first value write."
       },
+      "CreateSubmissionRequest": {
+        "properties": {
+          "preferred_term": {
+            "type": "string",
+            "maxLength": 500,
+            "title": "Preferred Term"
+          },
+          "synonyms": {
+            "items": {
+              "type": "string",
+              "maxLength": 500
+            },
+            "type": "array",
+            "maxItems": 100,
+            "title": "Synonyms"
+          },
+          "snomed_code": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 18
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Snomed Code"
+          },
+          "property_values": {
+            "additionalProperties": {
+              "items": {
+                "$ref": "#/components/schemas/SubmissionPropertyValueRequest"
+              },
+              "type": "array",
+              "maxItems": 25
+            },
+            "propertyNames": {
+              "maxLength": 100
+            },
+            "type": "object",
+            "maxProperties": 25,
+            "title": "Property Values"
+          },
+          "notes": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 10000
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Notes"
+          },
+          "organisation": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 500
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Organisation"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "preferred_term"
+        ],
+        "title": "CreateSubmissionRequest",
+        "description": "The body of `POST /submissions`.\n\n`property_values` maps a property key to the complete value list for that property. A key with\nan empty list counts as absent. `organisation` left out means the profile's value, and a blank\nstring means none. The size bounds are in the schema as `maxLength` and `maxItems`."
+      },
       "CurrentTermsResponse": {
         "properties": {
           "version": {
@@ -7850,6 +8054,173 @@
         ],
         "title": "SnomedSynonyms",
         "description": "The active binding's SNOMED CT synonyms, as the terminology server serves them today.\n\nNever stored, so never part of `row_version` or the audit trail. `terms` excludes the FSN\nand the binding's AU preferred term, and is not limited to en-AU: no FHIR operation\nseparates the AU-acceptable synonyms, so US spellings can appear (see\n`nptc.terminology.synonyms`). `status` is `unavailable` when the server could not answer;\n`terms` is then empty, which is not the same as `available` with no terms. A code missing\nfrom the current AU edition is `available` with no terms."
+      },
+      "SubmissionPropertyValueRequest": {
+        "properties": {
+          "value": {
+            "title": "Value"
+          },
+          "justification": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 2000
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Justification"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "value"
+        ],
+        "title": "SubmissionPropertyValueRequest",
+        "description": "One value for a property, with the optional justification the registry's strength rule can\nask for. Shaped like the catalogue's own property write, with a size bound on each part."
+      },
+      "SubmissionResponse": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Id"
+          },
+          "kind": {
+            "type": "string",
+            "title": "Kind"
+          },
+          "state": {
+            "type": "string",
+            "title": "State"
+          },
+          "preferred_term": {
+            "type": "string",
+            "title": "Preferred Term"
+          },
+          "synonyms": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Synonyms"
+          },
+          "snomed_code": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Snomed Code"
+          },
+          "snomed_fsn": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Snomed Fsn"
+          },
+          "property_values": {
+            "additionalProperties": {
+              "items": {
+                "$ref": "#/components/schemas/SubmittedPropertyValue"
+              },
+              "type": "array"
+            },
+            "type": "object",
+            "title": "Property Values"
+          },
+          "notes": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Notes"
+          },
+          "organisation": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Organisation"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Created At"
+          },
+          "row_version": {
+            "type": "integer",
+            "title": "Row Version"
+          },
+          "label_provenance": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/LabelProvenance"
+            },
+            "type": "object",
+            "title": "Label Provenance"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "kind",
+          "state",
+          "preferred_term",
+          "synonyms",
+          "snomed_code",
+          "snomed_fsn",
+          "property_values",
+          "notes",
+          "organisation",
+          "created_at",
+          "row_version",
+          "label_provenance"
+        ],
+        "title": "SubmissionResponse",
+        "description": "The stored submission.\n\n`snomed_fsn` is the label the terminology server returned for `snomed_code`, never anything\nthe caller sent (FR-82). `label_provenance` states which designation each label field is\n(FR-98): the suggested term is offered as the catalogue's preferred term, and the synonyms as\nsynonyms."
+      },
+      "SubmittedPropertyValue": {
+        "properties": {
+          "value": {
+            "title": "Value"
+          },
+          "justification": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Justification"
+          }
+        },
+        "type": "object",
+        "required": [
+          "value",
+          "justification"
+        ],
+        "title": "SubmittedPropertyValue",
+        "description": "One stored value, as the registry's handler accepted it."
       },
       "TermsAcceptanceRequest": {
         "properties": {
