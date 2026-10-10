@@ -17,6 +17,9 @@ results](searching-the-catalogue.md).
 - **Open finding** appears next to the status when an automated check has flagged the test.
   It says only that a finding exists. See [What the finding indicator
   means](viewing-the-finding-indicator.md).
+- **Propose a change** is a button at the right of the heading. It shows only when you are
+  signed in and the entry is active. It opens a form to suggest another name or a code. See
+  [Proposing a change to an entry](proposing-an-amendment.md).
 
 ## The main column
 
@@ -108,9 +111,10 @@ catalogue** to find the test by name or code.
 
 ## Using it with a keyboard or screen reader
 
-Press Tab to move through the page: the breadcrumb links, then any links and controls in the
-main column. A visible ring shows where you are. The page has one main heading, and each
-block below it has its own heading, so a screen reader can jump between **Terms**, **Retired
-SNOMED CT codes** (when it appears), **Details** and **Recent changes**. Status is always written in
-words as well as shown in colour. A screen reader announces it when the entry cannot be
-loaded or refreshed, and when **Recent changes** cannot be loaded.
+Press Tab to move through the page: the breadcrumb links, **Propose a change** when it shows,
+then any links and controls in the main column. A visible ring shows where you are. The page
+has one main heading, and each block below it has its own heading, so a screen reader can jump
+between **Terms**, **Retired SNOMED CT codes** (when it appears), **Details** and **Recent
+changes**. Status is always written in words as well as shown in colour. A screen reader
+announces it when the entry cannot be loaded or refreshed, and when **Recent changes** cannot
+be loaded.

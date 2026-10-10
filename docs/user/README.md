@@ -27,11 +27,14 @@
   screen at `/admin/audit`: filters, paging and export.
 - [Submitting a new test](submitting-a-new-test.md) — issue #547. The form at
   `/submissions/new` for Provisional users, Members, Reviewers and Administrators.
+- [Proposing a change to an entry](proposing-an-amendment.md) — issue #548. The same form in
+  amendment mode, opened from **Propose a change** on an active entry's page.
 - [Reading the preferred-term length distribution report](reading-the-length-distribution-report.md)
   — issue #152, API-only; there is no admin screen for this report yet.
 
 [Roles](roles.md) covers Administrator and Reviewer. Members and Provisional users have
-one screen so far, [Submitting a new test](submitting-a-new-test.md), and Anonymous/Observer
+two screens so far, [Submitting a new test](submitting-a-new-test.md) and [Proposing a change
+to an entry](proposing-an-amendment.md), and Anonymous/Observer
 use is self-explanatory from the public catalogue itself.
 
 Populated as the corresponding UI lands — see the documentation-impact table in
