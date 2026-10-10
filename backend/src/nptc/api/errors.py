@@ -113,7 +113,12 @@ from nptc.registry.definitions import (
 )
 from nptc.registry.handlers import UnknownDatatypeError
 from nptc.settings import AuthSettings
-from nptc.submissions.errors import CodeRefusal, FreeTextRefusedError, SubmissionCodeRefusedError
+from nptc.submissions.errors import (
+    CodeRefusal,
+    FreeTextField,
+    FreeTextRefusedError,
+    SubmissionCodeRefusedError,
+)
 from nptc.terminology.errors import (
     ConceptNotFoundError,
     TerminologyUnavailableError,
@@ -337,10 +342,18 @@ _DETAIL_TERM_CLEANING = (
     "This term could not be saved. It may be empty after whitespace cleaning, or "
     "contain a character that must be corrected by hand before it can be stored."
 )
-_DETAIL_FREE_TEXT_REFUSED = (
-    "The notes or the organisation contain an invisible character, such as a zero-width space "
-    "or a text-direction override. Remove it and send the request again."
-)
+#: One fixed sentence per field, so the response says which field to fix without echoing anything
+#: the caller typed.
+_DETAIL_FREE_TEXT_REFUSED: Final[dict[FreeTextField, str]] = {
+    FreeTextField.NOTES: (
+        "The notes contain an invisible character, such as a zero-width space or a "
+        "text-direction override. Remove it and send the request again."
+    ),
+    FreeTextField.ORGANISATION: (
+        "The organisation contains an invisible character, such as a zero-width space or a "
+        "text-direction override. Remove it and send the request again."
+    ),
+}
 _DETAIL_ALREADY_RETIRED = "This designation has already been retired."
 #: Shared by two addressing conventions: add, amend and retire address a
 #: designation by its currently-*active* term, reinstate by its currently-
@@ -654,8 +667,6 @@ _REFUSALS: Final[dict[type[Exception], _Refusal]] = {
     ),
     ChangelogNoteError: _Refusal(_DETAIL_CHANGELOG_NOTE, "changelog note refused: %s", _name),
     TermCleaningError: _Refusal(_DETAIL_TERM_CLEANING, "term refused: %s", _name),
-    # The class name alone: the message carries codepoints taken from caller text.
-    FreeTextRefusedError: _Refusal(_DETAIL_FREE_TEXT_REFUSED, "free text refused: %s", _name),
     DesignationAlreadyRetiredError: _Refusal(
         _DETAIL_ALREADY_RETIRED, "retire refused, already retired: %s"
     ),
@@ -952,6 +963,17 @@ def register_exception_handlers(app: FastAPI, auth_settings: AuthSettings) -> No
         return JSONResponse(
             status_code=exc.http_status,
             content={"detail": _DETAIL_SUBMISSION_CODE_REFUSED[exc.reason]},
+        )
+
+    @app.exception_handler(FreeTextRefusedError)
+    async def _handle_free_text_refused(
+        _request: Request, exc: FreeTextRefusedError
+    ) -> JSONResponse:
+        # Logged as the field alone: the exception message carries codepoints taken from caller text.
+        _logger.info("free text refused: %s", exc.field.value)
+        return JSONResponse(
+            status_code=exc.http_status,
+            content={"detail": _DETAIL_FREE_TEXT_REFUSED[exc.field]},
         )
 
     @app.exception_handler(TerminologyUnavailableError)

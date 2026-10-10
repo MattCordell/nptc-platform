@@ -828,7 +828,11 @@ def test_free_text_with_an_invisible_character_is_422_with_a_fixed_reason(
     response = _post(api, token, **{field: "text" + _ZERO_WIDTH_SPACE + "more"})
 
     assert response.status_code == 422, response.text
-    assert "invisible character" in response.json()["detail"]
+    detail = response.json()["detail"]
+    other = "organisation" if field == "notes" else "notes"
+    assert "invisible character" in detail
+    assert field in detail
+    assert other not in detail
     assert _ZERO_WIDTH_SPACE not in response.text
     assert "200B" not in response.text.upper()
     assert _submission_count(api, user) == 0

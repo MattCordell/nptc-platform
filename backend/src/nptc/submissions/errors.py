@@ -5,7 +5,7 @@ from __future__ import annotations
 from enum import StrEnum
 from typing import ClassVar
 
-__all__ = ["CodeRefusal", "FreeTextRefusedError", "SubmissionCodeRefusedError"]
+__all__ = ["CodeRefusal", "FreeTextField", "FreeTextRefusedError", "SubmissionCodeRefusedError"]
 
 
 class CodeRefusal(StrEnum):
@@ -32,6 +32,14 @@ class SubmissionCodeRefusedError(ValueError):
         super().__init__(f"SNOMED CT code refused: {reason.value}")
 
 
+class FreeTextField(StrEnum):
+    """The free-text fields of a submission. A fixed set, so the API can name which one was refused
+    without echoing anything the caller typed."""
+
+    NOTES = "notes"
+    ORGANISATION = "organisation"
+
+
 class FreeTextRefusedError(ValueError):
     """A free-text field carries an invisible character with no single deterministic repair, such
     as a zero-width space or a text-direction override (FR-63). The message names the field and the
@@ -39,6 +47,6 @@ class FreeTextRefusedError(ValueError):
 
     http_status: ClassVar[int] = 422
 
-    def __init__(self, field: str, codepoints: tuple[str, ...]) -> None:
+    def __init__(self, field: FreeTextField, codepoints: tuple[str, ...]) -> None:
         self.field = field
-        super().__init__(f"{field} contains an invisible character: {', '.join(codepoints)}")
+        super().__init__(f"{field.value} contains an invisible character: {', '.join(codepoints)}")

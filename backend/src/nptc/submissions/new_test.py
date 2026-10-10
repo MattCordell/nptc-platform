@@ -47,7 +47,12 @@ from nptc.db.models.property_definition import PropertyDefinition, PropertyScope
 from nptc.db.models.submission import Submission, SubmissionKind, SubmissionState
 from nptc.registry.definitions import DeprecatedPropertyWriteError
 from nptc.registry.handlers import DatatypeRegistry
-from nptc.submissions.errors import CodeRefusal, FreeTextRefusedError, SubmissionCodeRefusedError
+from nptc.submissions.errors import (
+    CodeRefusal,
+    FreeTextField,
+    FreeTextRefusedError,
+    SubmissionCodeRefusedError,
+)
 from nptc.terminology.concepts import resolve_concept
 from nptc.terminology.errors import ConceptNotFoundError
 from nptc_shared.similarity import collision_key
@@ -102,11 +107,13 @@ def create_new_test_submission(
 
     preferred_term = clean_term(content.preferred_term)
     synonyms = _distinct_synonyms(preferred_term, content.synonyms)
-    notes = _clean_free_text(content.notes, field="notes", multiline=True)
+    notes = _clean_free_text(content.notes, field=FreeTextField.NOTES, multiline=True)
     organisation = (
         profile_organisation
         if content.organisation is None
-        else _clean_free_text(content.organisation, field="organisation", multiline=False)
+        else _clean_free_text(
+            content.organisation, field=FreeTextField.ORGANISATION, multiline=False
+        )
     )
 
     property_values = {key: items for key, items in content.property_values.items() if items}
@@ -158,7 +165,7 @@ def _distinct_synonyms(preferred_term: str, terms: Sequence[str]) -> list[str]:
     return distinct
 
 
-def _clean_free_text(text: str | None, *, field: str, multiline: bool) -> str | None:
+def _clean_free_text(text: str | None, *, field: FreeTextField, multiline: bool) -> str | None:
     """`text` normalised like a term, or `None` if nothing is left. Refuses any invisible
     character, except the formatting a multi-line note may carry."""
     if text is None:
