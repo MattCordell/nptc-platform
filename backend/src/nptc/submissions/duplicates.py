@@ -36,13 +36,17 @@ from sqlalchemy.orm import Session
 
 from nptc.catalogue.queries import PUBLIC_STATUSES
 from nptc.catalogue.search import apply_similarity_threshold
+from nptc.catalogue.term_hygiene import clean_term
 from nptc.db.models.submission import CLOSED_SUBMISSION_STATES
+from nptc.submissions.terms import distinct_synonyms
+from nptc_shared.sctid import SCTID
 
 __all__ = [
     "MAX_MATCHES_PER_SOURCE",
     "DuplicateMatch",
     "MatchSource",
     "MatchedOn",
+    "check_duplicates",
     "find_duplicates",
 ]
 
@@ -224,3 +228,24 @@ def find_duplicates(
         )
         for row in rows
     ]
+
+
+def check_duplicates(
+    session: Session,
+    *,
+    preferred_term: str,
+    synonyms: Sequence[str],
+    snomed_code: str | None,
+) -> list[DuplicateMatch]:
+    """`find_duplicates` for terms exactly as a caller typed them: cleaned and de-duplicated the way
+    the create route stores them, and a code checked for format and check digit only. Raises
+    `nptc.catalogue.term_hygiene.TermCleaningError` for a term that cannot be cleaned and
+    `nptc_shared.sctid.InvalidSCTIDError` for a malformed code. The terminology server is not
+    asked."""
+    cleaned = clean_term(preferred_term)
+    return find_duplicates(
+        session,
+        preferred_term=cleaned,
+        synonyms=distinct_synonyms(cleaned, synonyms),
+        snomed_code=None if snomed_code is None else SCTID(snomed_code).value,
+    )

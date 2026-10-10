@@ -1,4 +1,5 @@
-"""The submission create route (FR-23, FR-24, FR-26, FR-27, FR-80, NFR-08, NFR-45).
+"""The submission create route and its duplicate check (FR-23, FR-24, FR-25, FR-26, FR-27, FR-80,
+NFR-08, NFR-45).
 
 The HTTP adapter over `nptc.submissions.new_test`; it re-implements no domain rule. A domain
 exception carries `http_status` and `nptc.api.errors` maps it, so the route body has no try/except.
@@ -21,6 +22,15 @@ and status it saw. A link that fails the check is a 422 with a reason the submit
 deployment with no outbound internet access is a 503, because the link may be fine. The route is a
 plain `def`, so FastAPI runs it in a worker thread and the checker's wait never stalls the event
 loop.
+
+**The duplicate check is a separate read (FR-25).** `POST /submissions/duplicate-check` takes the
+terms and the code and returns the active catalogue entries and open submissions that match. It
+writes nothing, so it emits no audit event, and it checks the code's format only, so it works while
+the terminology server is down. `POST /submissions` runs the same check before it saves. A match
+without `confirm_not_duplicate` is a 409 that carries the matches and saves nothing. A confirmed
+submission stores the time and the matches the server found, never a list the caller sent. A
+`POST` is used because the terms are free text that may be long, and a `GET` would put them in a
+URL that proxies log (NFR-35).
 
 **No `submitter` in the response.** Who submitted a record is FR-42's rule, which the read routes
 own; this route returns the submitter's own copy of the organisation and nothing that names a user.
@@ -54,7 +64,12 @@ from nptc.api.dependencies import (
     get_terminology_client,
     permission_dep,
 )
-from nptc.api.errors import PropertyValidationResponse
+from nptc.api.errors import (
+    DuplicateMatchItem,
+    PropertyValidationResponse,
+    SubmissionDuplicatesResponse,
+    duplicate_match_item,
+)
 from nptc.api.labels import (
     AU_PREFERRED_TERM_PROVENANCE,
     SYNONYM_PROVENANCE,
@@ -67,6 +82,7 @@ from nptc.catalogue.property_values import PropertyValueInput
 from nptc.db.models.submission import Submission
 from nptc.registry.handlers import DatatypeRegistry
 from nptc.settings import ApiSettings
+from nptc.submissions.duplicates import check_duplicates
 from nptc.submissions.new_test import NewTestSubmissionInput, create_new_test_submission
 from nptc.submissions.reference_check import MAX_URL_LENGTH
 from nptc_shared.terminology import TerminologyClient
@@ -130,13 +146,40 @@ _RESPONSE_503: Final[dict[str, Any]] = {
     ),
 }
 
+_RESPONSE_409: Final[dict[str, Any]] = {
+    "model": SubmissionDuplicatesResponse,
+    "description": (
+        "The submission matches an active catalogue entry or an open submission, and the request "
+        "did not set `confirm_not_duplicate`. `matches[]` lists them. Nothing was saved. Send the "
+        "request again with `confirm_not_duplicate` set to true if it is a different test."
+    ),
+}
+
 _RESPONSES_CREATE: Final[dict[int | str, dict[str, Any]]] = {
     401: _RESPONSE_401,
     403: _RESPONSE_403,
+    409: _RESPONSE_409,
     422: _RESPONSE_422,
     500: _RESPONSE_500,
     502: _RESPONSE_502,
     503: _RESPONSE_503,
+}
+
+_RESPONSES_DUPLICATE_CHECK: Final[dict[int | str, dict[str, Any]]] = {
+    401: _RESPONSE_401,
+    403: _RESPONSE_403,
+    422: {
+        "description": (
+            "The request is not acceptable: a term that cannot be cleaned, a SNOMED CT code that "
+            "is malformed or fails its check digit, a missing `preferred_term`, an unrecognised "
+            "field, or a part of the request over its size bound."
+        ),
+        "content": {
+            "application/json": {
+                "schema": {"anyOf": [{"$ref": "#/components/schemas/HTTPValidationError"}]}
+            }
+        },
+    },
 }
 
 SessionDep = Annotated[Session, Depends(get_session)]
@@ -206,6 +249,13 @@ class CreateSubmissionRequest(BaseModel):
     ] = Field(default_factory=dict, max_length=_MAX_PROPERTIES)
     notes: str | None = Field(default=None, max_length=_MAX_NOTES_LENGTH)
     organisation: str | None = Field(default=None, max_length=_MAX_ORGANISATION_LENGTH)
+    confirm_not_duplicate: bool = Field(
+        default=False,
+        description=(
+            "Set to true to confirm this is a different test from the matches a 409 listed. It "
+            "has no effect when nothing matches."
+        ),
+    )
 
     @model_validator(mode="after")
     def _values_in_total_are_bounded(self) -> CreateSubmissionRequest:
@@ -213,6 +263,27 @@ class CreateSubmissionRequest(BaseModel):
         if total > _MAX_VALUES_IN_TOTAL:
             raise ValueError(f"a submission holds at most {_MAX_VALUES_IN_TOTAL} property values")
         return self
+
+
+class DuplicateCheckRequest(BaseModel):
+    """The body of `POST /submissions/duplicate-check`: the terms and code a submission would
+    carry, with the same size bounds as the create body. The code is checked for format and check
+    digit only."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    preferred_term: _Term
+    synonyms: list[_Term] = Field(default_factory=list, max_length=_MAX_SYNONYMS)
+    snomed_code: str | None = Field(default=None, max_length=_MAX_SCTID_LENGTH)
+
+
+class DuplicateCheckResponse(BaseModel):
+    """Active catalogue entries first, then open submissions, each best first and capped. An empty
+    list means nothing matched."""
+
+    model_config = ConfigDict(frozen=True)
+
+    matches: list[DuplicateMatchItem]
 
 
 class SubmittedPropertyValue(BaseModel):
@@ -231,7 +302,8 @@ class SubmissionResponse(BaseModel):
     the caller sent (FR-82). `label_provenance` states which designation each label field is
     (FR-98): the suggested term is offered as the catalogue's preferred term, and the synonyms as
     synonyms. The three `reference_*` fields describe one check and are all present or all absent;
-    a new test always has them.
+    a new test always has them. `duplicate_confirmed_at` is when the submitter confirmed the
+    matches a 409 listed (FR-25), and is null when nothing matched.
     """
 
     model_config = ConfigDict(frozen=True)
@@ -248,6 +320,7 @@ class SubmissionResponse(BaseModel):
     reference_url: str | None
     reference_checked_at: datetime | None
     reference_status: int | None
+    duplicate_confirmed_at: datetime | None
     organisation: str | None
     created_at: datetime
     row_version: int
@@ -288,6 +361,7 @@ def create_submission(
             },
             notes=body.notes,
             organisation=body.organisation,
+            confirm_not_duplicate=body.confirm_not_duplicate,
         ),
         profile_organisation=principal.user_ref.organisation if principal.user_ref else None,
         registry=registry,
@@ -295,6 +369,25 @@ def create_submission(
         reference_checker=reference_checker,
     )
     return _to_response(submission, settings)
+
+
+@router.post(
+    "/duplicate-check",
+    summary="Check a submission for duplicates before sending it",
+    responses=_RESPONSES_DUPLICATE_CHECK,
+    dependencies=[_CREATE],
+)
+def check_submission_duplicates(
+    session: SessionDep,
+    body: Annotated[DuplicateCheckRequest, Body()],
+) -> DuplicateCheckResponse:
+    matches = check_duplicates(
+        session,
+        preferred_term=body.preferred_term,
+        synonyms=body.synonyms,
+        snomed_code=body.snomed_code,
+    )
+    return DuplicateCheckResponse(matches=[duplicate_match_item(match) for match in matches])
 
 
 def _to_response(submission: Submission, settings: ApiSettings) -> SubmissionResponse:
@@ -317,6 +410,7 @@ def _to_response(submission: Submission, settings: ApiSettings) -> SubmissionRes
         reference_url=submission.reference_url,
         reference_checked_at=submission.reference_checked_at,
         reference_status=submission.reference_status,
+        duplicate_confirmed_at=submission.duplicate_confirmed_at,
         organisation=submission.organisation,
         created_at=submission.created_at,
         row_version=submission.row_version,

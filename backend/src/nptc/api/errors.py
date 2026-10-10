@@ -41,7 +41,7 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict
 
 from nptc.api.dependencies import CredentialRequiredError, MalformedAuthorizationError
-from nptc.api.labels import AU_PREFERRED_TERM_PROVENANCE, LabelProvenance
+from nptc.api.labels import AU_PREFERRED_TERM_PROVENANCE, SYNONYM_PROVENANCE, LabelProvenance
 from nptc.audit.queries import (
     AuditFilterError,
     EntityIdRequiresEntityTypeError,
@@ -113,11 +113,13 @@ from nptc.registry.definitions import (
 )
 from nptc.registry.handlers import UnknownDatatypeError
 from nptc.settings import AuthSettings
+from nptc.submissions.duplicates import DuplicateMatch, MatchedOn, MatchSource
 from nptc.submissions.errors import (
     CodeRefusal,
     FreeTextField,
     FreeTextRefusedError,
     SubmissionCodeRefusedError,
+    SubmissionDuplicatesFoundError,
 )
 from nptc.submissions.reference_check import (
     ReferenceCheckFailedError,
@@ -246,6 +248,54 @@ class DesignationCollisionResponse(BaseModel):
 
     detail: str
     collisions: list[CollisionItem]
+
+
+class DuplicateMatchItem(BaseModel):
+    """One catalogue entry or open submission that a new submission may duplicate (FR-25).
+
+    `key` is the entry's business key or the submission's id, and it never names a submitter
+    (FR-42). `preferred_term` is that record's own preferred term. `term` is the text that matched,
+    and is the synonym when `matched_on` is `synonym`. `similarity` is null for a code match.
+    `label_provenance` states which designation `preferred_term` and `term` are (FR-98).
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    source: MatchSource
+    matched_on: MatchedOn
+    key: str
+    preferred_term: str
+    term: str
+    similarity: float | None
+    label_provenance: dict[str, LabelProvenance]
+
+
+def duplicate_match_item(match: DuplicateMatch) -> DuplicateMatchItem:
+    return DuplicateMatchItem(
+        source=match.source,
+        matched_on=match.matched_on,
+        key=match.key,
+        preferred_term=match.preferred_term,
+        term=match.term,
+        similarity=match.similarity,
+        label_provenance={
+            "preferred_term": AU_PREFERRED_TERM_PROVENANCE,
+            "term": (
+                SYNONYM_PROVENANCE
+                if match.matched_on is MatchedOn.SYNONYM
+                else AU_PREFERRED_TERM_PROVENANCE
+            ),
+        },
+    )
+
+
+class SubmissionDuplicatesResponse(BaseModel):
+    """FR-25's 409 body: the matches the submitter must confirm before the submission is saved."""
+
+    model_config = ConfigDict(frozen=True)
+
+    detail: str
+    matches: list[DuplicateMatchItem]
 
 
 class PropertyIssueItem(BaseModel):
@@ -431,6 +481,11 @@ _DETAIL_DESIGNATION_COLLISION = (
     "This term matches another entry's preferred term or synonym, once case, spacing "
     "and punctuation are ignored. Choose a different term, or resolve the conflict on "
     "the other entry first."
+)
+_DETAIL_SUBMISSION_DUPLICATES = (
+    "This submission may duplicate an entry in the catalogue or a submission already made. "
+    "Review the listed matches. If this is a different test, send the request again with "
+    "confirm_not_duplicate set to true."
 )
 _DETAIL_PROPERTY_VALIDATION = (
     "One or more of the values you entered could not be saved. Review the listed "
@@ -975,6 +1030,22 @@ def register_exception_handlers(app: FastAPI, auth_settings: AuthSettings) -> No
                 )
                 for c in exc.collisions
             ],
+        )
+        return JSONResponse(status_code=exc.http_status, content=body.model_dump(mode="json"))
+
+    @app.exception_handler(SubmissionDuplicatesFoundError)
+    async def _handle_submission_duplicates_found(
+        _request: Request, exc: SubmissionDuplicatesFoundError
+    ) -> JSONResponse:
+        # INFO: FR-25 expects this refusal on a normal submission. Only keys are logged, never the
+        # submitted text (NFR-26, NFR-35).
+        _logger.info(
+            "submission refused until duplicates are confirmed: %s",
+            [(match.source.value, match.key) for match in exc.matches],
+        )
+        body = SubmissionDuplicatesResponse(
+            detail=_DETAIL_SUBMISSION_DUPLICATES,
+            matches=[duplicate_match_item(match) for match in exc.matches],
         )
         return JSONResponse(status_code=exc.http_status, content=body.model_dump(mode="json"))
 

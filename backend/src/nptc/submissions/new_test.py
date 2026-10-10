@@ -1,4 +1,4 @@
-"""Creating a submission that proposes a new test (FR-23, FR-24, FR-26, FR-27, NFR-08).
+"""Creating a submission that proposes a new test (FR-23, FR-24, FR-25, FR-26, FR-27, NFR-08).
 
 **Everything that can refuse runs before the first write.** The terms and free text are cleaned,
 the property values are checked against the registry, and the code is resolved through the
@@ -8,10 +8,15 @@ The lock is one global advisory lock, so holding it across a slow server would s
 write. `test_lock_ordering.py` therefore names this function as exempt from its lock-first rule, and
 `test_submissions_new_test.py` pins the ordering instead.
 
+**A duplicate must be confirmed (FR-25).** After the code is resolved, the submission is compared
+with the active catalogue and the open submissions. A match without `confirm_not_duplicate` raises
+and saves nothing. A confirmed match is stored with the time and the matches found at this moment,
+never a list the caller supplied. The comparison is a read, so it also runs before the lock.
+
 **The reference link is fetched before the lock too (FR-27).** A new test must carry one, and the
-check can take up to its own deadline, so it runs after every cheaper refusal and before the lock.
-A failed check raises and saves nothing. The stored status and time are the checker's, never the
-caller's.
+check can take up to its own deadline, so it runs after every cheaper refusal, the duplicate check
+included, and before the lock. A failed check raises and saves nothing. The stored status and time
+are the checker's, never the caller's.
 
 **Synonyms are a set.** A synonym that folds to the same comparison key as an earlier one, or as the
 preferred term, is dropped, as `nptc.catalogue.designations.add_synonyms` drops it. The first
@@ -33,6 +38,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
+from datetime import UTC, datetime
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -52,11 +58,13 @@ from nptc.db.models.property_definition import PropertyDefinition, PropertyScope
 from nptc.db.models.submission import Submission, SubmissionKind, SubmissionState
 from nptc.registry.definitions import DeprecatedPropertyWriteError
 from nptc.registry.handlers import DatatypeRegistry
+from nptc.submissions.duplicates import find_duplicates
 from nptc.submissions.errors import (
     CodeRefusal,
     FreeTextField,
     FreeTextRefusedError,
     SubmissionCodeRefusedError,
+    SubmissionDuplicatesFoundError,
 )
 from nptc.submissions.reference_check import ReferenceChecker
 from nptc.submissions.terms import distinct_synonyms
@@ -89,6 +97,7 @@ class NewTestSubmissionInput:
     property_values: Mapping[str, Sequence[PropertyValueInput]] = field(default_factory=dict)
     notes: str | None = None
     organisation: str | None = None
+    confirm_not_duplicate: bool = False
 
 
 def create_new_test_submission(
@@ -108,8 +117,9 @@ def create_new_test_submission(
     invisible character, `FreeTextRefusedError` for the same in `notes` or `organisation`,
     `PropertyValidationError` carrying every property problem at once,
     `nptc.terminology.errors` and `nptc_shared.sctid.InvalidSCTIDError` for a code that is
-    malformed or cannot be looked up, and `SubmissionCodeRefusedError` for a code the server
-    knows but rules out, and `nptc.submissions.reference_check.ReferenceCheckFailedError` or
+    malformed or cannot be looked up, `SubmissionCodeRefusedError` for a code the server
+    knows but rules out, `SubmissionDuplicatesFoundError` for a match the request did not confirm,
+    and `nptc.submissions.reference_check.ReferenceCheckFailedError` or
     `ReferenceCheckUnavailableError` for a reference link that did not pass. Each is raised before
     any row is added. Blocks for up to the checker's deadline.
     """
@@ -135,6 +145,12 @@ def create_new_test_submission(
     if content.snomed_code is not None:
         snomed_code, snomed_fsn = _resolve_code(terminology_client, content.snomed_code)
 
+    matches = find_duplicates(
+        session, preferred_term=preferred_term, synonyms=synonyms, snomed_code=snomed_code
+    )
+    if matches and not content.confirm_not_duplicate:
+        raise SubmissionDuplicatesFoundError(matches)
+
     reference = reference_checker.check(content.reference_url)
 
     acquire_append_lock(session)
@@ -153,6 +169,8 @@ def create_new_test_submission(
         reference_url=content.reference_url,
         reference_checked_at=reference.checked_at,
         reference_status=reference.status,
+        duplicate_confirmed_at=datetime.now(UTC) if matches else None,
+        duplicate_matches=[match.as_record() for match in matches],
         submitter_id=ctx.actor_user_id,
         organisation=organisation,
     )

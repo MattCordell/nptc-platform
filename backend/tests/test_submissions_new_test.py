@@ -9,6 +9,8 @@ events as a delta, because `backend/tests` shares one Postgres container (see `C
 from __future__ import annotations
 
 import importlib.util
+import random
+import string
 import sys
 import uuid
 from collections.abc import Callable
@@ -27,12 +29,18 @@ from nptc.catalogue.term_hygiene import TermCleaningError
 from nptc.db.bootstrap import seed_system_properties
 from nptc.db.definitions import deprecate_definition
 from nptc.db.models.audit import AuditEvent
+from nptc.db.models.catalogue_entry import CatalogueEntry, CatalogueEntryStatus
 from nptc.db.models.property_definition import PropertyDefinition, PropertyOrigin, PropertyScope
 from nptc.db.models.submission import Submission, SubmissionKind, SubmissionState
 from nptc.db.models.user import User
 from nptc.registry.datatypes import build_builtin_handlers
 from nptc.registry.handlers import DatatypeRegistry, HandlerDeps
-from nptc.submissions.errors import CodeRefusal, FreeTextRefusedError, SubmissionCodeRefusedError
+from nptc.submissions.errors import (
+    CodeRefusal,
+    FreeTextRefusedError,
+    SubmissionCodeRefusedError,
+    SubmissionDuplicatesFoundError,
+)
 from nptc.submissions.new_test import NewTestSubmissionInput, create_new_test_submission
 from nptc.submissions.reference_check import (
     ReferenceCheckFailedError,
@@ -1192,3 +1200,116 @@ def test_the_reference_is_fetched_before_the_append_lock_is_taken(
 
     assert calls == [False]
     assert locks
+
+
+# --- duplicates (FR-25) ------------------------------------------------------------------------
+
+
+def _word() -> str:
+    return "".join(random.choices(string.ascii_lowercase, k=14))
+
+
+def _active_entry(session: Session, term: str) -> CatalogueEntry:
+    entry = CatalogueEntry(
+        business_key=f"NPTC-{random.randrange(100_000_000, 999_999_999)}",
+        preferred_term=term,
+        status=CatalogueEntryStatus.ACTIVE.value,
+    )
+    session.add(entry)
+    session.flush()
+    return entry
+
+
+@pytest.mark.req("FR-25")
+@pytest.mark.integration
+def test_a_match_without_confirmation_is_refused_and_saves_and_fetches_nothing(
+    app_session: Session,
+) -> None:
+    term = _word()
+    entry = _active_entry(app_session, term)
+    user, ctx = _submitter(app_session)
+    checker = StubReferenceChecker()
+    before = _audit_event_count(app_session)
+
+    with pytest.raises(SubmissionDuplicatesFoundError) as refused:
+        _create(
+            app_session,
+            ctx,
+            NewTestSubmissionInput(reference_url=_REFERENCE_URL, preferred_term=term),
+            reference_checker=checker,
+        )
+
+    assert [match.key for match in refused.value.matches] == [entry.business_key]
+    assert _submission_count(app_session, user.id) == 0
+    assert _audit_event_count(app_session) == before
+    assert checker.urls == []
+
+
+@pytest.mark.req("FR-25")
+@pytest.mark.integration
+def test_a_confirmed_match_is_stored_with_the_time_and_what_the_server_found(
+    app_session: Session,
+) -> None:
+    term = _word()
+    entry = _active_entry(app_session, term)
+    _, ctx = _submitter(app_session)
+
+    submission = _create(
+        app_session,
+        ctx,
+        NewTestSubmissionInput(
+            reference_url=_REFERENCE_URL, preferred_term=term, confirm_not_duplicate=True
+        ),
+    )
+
+    assert submission.duplicate_confirmed_at is not None
+    assert [(m["source"], m["key"], m["matched_on"]) for m in submission.duplicate_matches] == [
+        ("catalogue_entry", entry.business_key, "preferred_term")
+    ]
+
+
+@pytest.mark.req("FR-25")
+@pytest.mark.integration
+def test_a_confirmation_with_nothing_to_confirm_records_nothing(app_session: Session) -> None:
+    _, ctx = _submitter(app_session)
+
+    submission = _create(
+        app_session,
+        ctx,
+        NewTestSubmissionInput(
+            reference_url=_REFERENCE_URL, preferred_term=_word(), confirm_not_duplicate=True
+        ),
+    )
+
+    assert submission.duplicate_confirmed_at is None
+    assert submission.duplicate_matches == []
+
+
+@pytest.mark.req("FR-25")
+@pytest.mark.req("NFR-08")
+@pytest.mark.integration
+def test_the_duplicate_comparison_runs_before_the_append_lock_is_taken(
+    app_session: Session, capture_statements: Any
+) -> None:
+    """The comparison is a read, and the lock is one global advisory lock, so a refusal must not
+    take it. The lock-ordering guard exempts this writer, so this test pins the order."""
+    term = _word()
+    _active_entry(app_session, term)
+    _, ctx = _submitter(app_session)
+
+    def is_comparison_or_lock(statement: str, _parameters: object) -> bool:
+        return "pg_advisory_xact_lock" in statement or "jsonb_array_elements_text" in statement
+
+    with capture_statements(app_session.get_bind(), keep=is_comparison_or_lock) as seen:
+        _create(
+            app_session,
+            ctx,
+            NewTestSubmissionInput(
+                reference_url=_REFERENCE_URL, preferred_term=term, confirm_not_duplicate=True
+            ),
+        )
+
+    kinds = ["lock" if "pg_advisory_xact_lock" in statement else "comparison" for statement in seen]
+    assert kinds[0] == "comparison"
+    assert "lock" in kinds
+    assert "comparison" not in kinds[kinds.index("lock") :]
