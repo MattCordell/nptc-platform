@@ -14,6 +14,7 @@ import {
   validatePropertyListSearch,
   validateReleaseCompareSearch,
   validateSignInSearch,
+  validateSubmissionNewSearch,
   type AdminCatalogueSearch,
 } from "./search-params.ts";
 
@@ -473,6 +474,25 @@ describe("every validator is idempotent", () => {
       const once = validate({});
       const twice = validate(once as Record<string, unknown>);
       expect(twice).toEqual(once);
+    },
+  );
+});
+
+describe("validateSubmissionNewSearch (FR-35)", () => {
+  it("omits entry when absent, so the page is the new-test form", () => {
+    expect(validateSubmissionNewSearch({})).toEqual({});
+  });
+
+  it("keeps a business key as typed", () => {
+    expect(validateSubmissionNewSearch({ entry: "NPTC-000006" })).toEqual({
+      entry: "NPTC-000006",
+    });
+  });
+
+  it.each([[""], ["   "], [42], [["NPTC-000006"]], [null]])(
+    "drops %j rather than opening amendment mode on it",
+    (entry) => {
+      expect(validateSubmissionNewSearch({ entry })).toEqual({});
     },
   );
 });

@@ -95,6 +95,24 @@ export function validateSignInSearch(search: Record<string, unknown>): SignInSea
   return redirect ? { redirect } : {};
 }
 
+/**
+ * `/submissions/new?entry={businessKey}` opens the form in amendment mode for
+ * that entry (FR-35). Without `entry` it is the new-test form. The key is kept
+ * as typed: the server decides whether it names an entry.
+ */
+export interface SubmissionNewSearch {
+  entry?: string;
+}
+
+export type SubmissionNewSearchInput = Partial<SubmissionNewSearch> & SearchSchemaInput;
+
+export function validateSubmissionNewSearch(
+  search: Record<string, unknown>,
+): SubmissionNewSearch {
+  const entry = asString(search.entry).trim();
+  return entry === "" ? {} : { entry };
+}
+
 // --- catalogue lists: public and admin -----------------------------------
 
 /**

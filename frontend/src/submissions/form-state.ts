@@ -108,6 +108,80 @@ function overLimit(count: number, limit: number): boolean {
   return count > limit;
 }
 
+function nameErrors(values: SubmissionValues): FormError[] {
+  const { termLength, synonyms } = SUBMISSION_LIMITS;
+  const names = filledNames(values.names);
+  if (overLimit(names.length, synonyms)) {
+    return [
+      {
+        fieldId: FIELD_IDS.synonyms,
+        message: `You can give at most ${synonyms} other names. Remove ${names.length - synonyms}.`,
+      },
+    ];
+  }
+  if (names.some((name) => overLimit(name.length, termLength))) {
+    return [
+      {
+        fieldId: FIELD_IDS.synonyms,
+        message: `An other name is over ${termLength} characters. Shorten it.`,
+      },
+    ];
+  }
+  return [];
+}
+
+function codeErrors(selection: CodeSelection): FormError[] {
+  if (selection.status === "checking") {
+    return [
+      {
+        fieldId: FIELD_IDS.snomed_code,
+        message: "Wait for the code to finish checking, or clear it.",
+      },
+    ];
+  }
+  if (selection.status === "unresolved") {
+    return [
+      { fieldId: FIELD_IDS.snomed_code, message: unresolvedCodeMessage(selection) },
+    ];
+  }
+  return [];
+}
+
+function referenceLengthErrors(values: SubmissionValues): FormError[] {
+  return overLimit(
+    values.referenceUrl.trim().length,
+    SUBMISSION_LIMITS.referenceUrlLength,
+  )
+    ? [
+        {
+          fieldId: FIELD_IDS.reference_url,
+          message: `The link is over ${SUBMISSION_LIMITS.referenceUrlLength} characters. Use a shorter address.`,
+        },
+      ]
+    : [];
+}
+
+function notesAndOrganisationErrors(values: SubmissionValues): FormError[] {
+  const { notesLength, organisationLength } = SUBMISSION_LIMITS;
+  const found: FormError[] = [];
+  if (overLimit(values.notes.length, notesLength)) {
+    found.push({
+      fieldId: FIELD_IDS.notes,
+      message: `The notes are over ${notesLength} characters. Shorten them.`,
+    });
+  }
+  if (
+    values.organisation !== null &&
+    overLimit(values.organisation.length, organisationLength)
+  ) {
+    found.push({
+      fieldId: FIELD_IDS.organisation,
+      message: `The organisation is over ${organisationLength} characters. Shorten it.`,
+    });
+  }
+  return found;
+}
+
 /**
  * The form's own mistakes, found before anything is sent. A code that is still
  * being checked, or that the server could not name, holds the form back: the
@@ -119,7 +193,7 @@ export function validate(
   selection: CodeSelection,
 ): FormError[] {
   const found: FormError[] = [];
-  const { termLength, synonyms, notesLength, organisationLength } = SUBMISSION_LIMITS;
+  const { termLength } = SUBMISSION_LIMITS;
 
   if (values.preferredTerm.trim() === "") {
     found.push({ fieldId: FIELD_IDS.preferred_term, message: "Enter the test name." });
@@ -130,30 +204,7 @@ export function validate(
     });
   }
 
-  const names = filledNames(values.names);
-  if (overLimit(names.length, synonyms)) {
-    found.push({
-      fieldId: FIELD_IDS.synonyms,
-      message: `You can give at most ${synonyms} other names. Remove ${names.length - synonyms}.`,
-    });
-  } else if (names.some((name) => overLimit(name.length, termLength))) {
-    found.push({
-      fieldId: FIELD_IDS.synonyms,
-      message: `An other name is over ${termLength} characters. Shorten it.`,
-    });
-  }
-
-  if (selection.status === "checking") {
-    found.push({
-      fieldId: FIELD_IDS.snomed_code,
-      message: "Wait for the code to finish checking, or clear it.",
-    });
-  } else if (selection.status === "unresolved") {
-    found.push({
-      fieldId: FIELD_IDS.snomed_code,
-      message: unresolvedCodeMessage(selection),
-    });
-  }
+  found.push(...nameErrors(values), ...codeErrors(selection));
 
   for (const definition of definitions) {
     const list = values.slots[definition.key] ?? [];
@@ -176,30 +227,11 @@ export function validate(
       fieldId: FIELD_IDS.reference_url,
       message: "Enter a link to a web page that supports this test.",
     });
-  } else if (
-    overLimit(values.referenceUrl.trim().length, SUBMISSION_LIMITS.referenceUrlLength)
-  ) {
-    found.push({
-      fieldId: FIELD_IDS.reference_url,
-      message: `The link is over ${SUBMISSION_LIMITS.referenceUrlLength} characters. Use a shorter address.`,
-    });
+  } else {
+    found.push(...referenceLengthErrors(values));
   }
 
-  if (overLimit(values.notes.length, notesLength)) {
-    found.push({
-      fieldId: FIELD_IDS.notes,
-      message: `The notes are over ${notesLength} characters. Shorten them.`,
-    });
-  }
-  if (
-    values.organisation !== null &&
-    overLimit(values.organisation.length, organisationLength)
-  ) {
-    found.push({
-      fieldId: FIELD_IDS.organisation,
-      message: `The organisation is over ${organisationLength} characters. Shorten it.`,
-    });
-  }
+  found.push(...notesAndOrganisationErrors(values));
   return found;
 }
 
@@ -247,5 +279,54 @@ export function createBody(
     ...(values.notes.trim() === "" ? {} : { notes: values.notes }),
     ...(values.organisation === null ? {} : { organisation: values.organisation }),
     confirm_not_duplicate: confirmNotDuplicate,
+  };
+}
+
+type CreateAmendmentBody = components["schemas"]["CreateAmendmentRequest"];
+
+/**
+ * The amendment form's own mistakes (FR-35). It has no test name, properties or
+ * required reference link: an amendment needs at least one new name or a code
+ * the terminology server has named, and nothing else. The server still refuses
+ * a name or code the entry already holds.
+ */
+export function validateAmendment(
+  values: SubmissionValues,
+  selection: CodeSelection,
+): FormError[] {
+  const found = [...nameErrors(values), ...codeErrors(selection)];
+  if (
+    filledNames(values.names).length === 0 &&
+    selection.status !== "ready" &&
+    found.length === 0
+  ) {
+    found.push({
+      fieldId: FIELD_IDS.synonyms,
+      message: "Add a new other name or a SNOMED CT code to propose a change.",
+    });
+  }
+  if (values.referenceUrl.trim() !== "") {
+    found.push(...referenceLengthErrors(values));
+  }
+  found.push(...notesAndOrganisationErrors(values));
+  return found;
+}
+
+export function amendmentBody(
+  entryBusinessKey: string,
+  values: SubmissionValues,
+  selection: CodeSelection,
+): CreateAmendmentBody {
+  const code = codeToSend(selection);
+  const names = filledNames(values.names);
+  return {
+    entry_business_key: entryBusinessKey,
+    ...(names.length === 0 ? {} : { synonyms: names }),
+    ...(code === undefined ? {} : { snomed_code: code }),
+    ...(values.referenceUrl.trim() === ""
+      ? {}
+      : { reference_url: values.referenceUrl.trim() }),
+    ...(values.notes.trim() === "" ? {} : { notes: values.notes }),
+    ...(values.organisation === null ? {} : { organisation: values.organisation }),
   };
 }

@@ -1326,6 +1326,7 @@ export function useExportAuditEvents() {
 }
 
 type CreateSubmissionBody = components["schemas"]["CreateSubmissionRequest"];
+type CreateAmendmentBody = components["schemas"]["CreateAmendmentRequest"];
 type DuplicateCheckBody = components["schemas"]["DuplicateCheckRequest"];
 
 /**
@@ -1374,5 +1375,17 @@ export function useCreateSubmission() {
   return useMutation({
     mutationFn: async (body: CreateSubmissionBody) =>
       unwrap(await client.POST("/api/v1/submissions", { body })),
+  });
+}
+
+/**
+ * Propose new names or a code for an active entry (FR-35). A refusal is thrown
+ * as an `ApiError`, as for `useCreateSubmission`.
+ */
+export function useCreateAmendment() {
+  const client = useApiClient();
+  return useMutation({
+    mutationFn: async (body: CreateAmendmentBody) =>
+      unwrap(await client.POST("/api/v1/submissions/amendments", { body })),
   });
 }
