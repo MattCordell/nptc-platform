@@ -22,10 +22,14 @@ export function OtherNamesField({
   rows,
   error,
   onChange,
+  legend = "Other names",
+  description = "Other names this test is known by. Paste a list separated by semicolons to add several at once.",
 }: {
   rows: NameRow[];
   error?: string;
   onChange: (rows: NameRow[]) => void;
+  legend?: string;
+  description?: string;
 }) {
   const errorId = error ? `${FIELD_IDS.synonyms}-error` : undefined;
 
@@ -68,12 +72,9 @@ export function OtherNamesField({
       className="m-0 flex flex-col gap-3 border-0 p-0"
     >
       <legend className="mb-1 text-sm font-medium text-[var(--color-text)]">
-        Other names
+        {legend}
       </legend>
-      <p className="m-0 text-sm text-[var(--color-text-muted)]">
-        Other names this test is known by. Paste a list separated by semicolons to add
-        several at once.
-      </p>
+      <p className="m-0 text-sm text-[var(--color-text-muted)]">{description}</p>
       {rows.map((row, index) => (
         <div key={row.id} className="flex items-end gap-2">
           <div className="flex-1">

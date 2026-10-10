@@ -1,4 +1,4 @@
-import { Link } from "@tanstack/react-router";
+import { Link, useSearch } from "@tanstack/react-router";
 import { useEffect, useRef, useState } from "react";
 
 import type { DuplicateMatch } from "../api/conflicts.ts";
@@ -25,6 +25,7 @@ import { LiveRegion } from "../components/live-region.tsx";
 import { PageContainer } from "../components/page-container.tsx";
 import { PageHeader } from "../components/page-header.tsx";
 import { useAnnounce } from "../components/use-announce.ts";
+import { AmendmentForm } from "../submissions/amendment-form.tsx";
 import { SubmissionCodeField } from "../submissions/code-field.tsx";
 import { DuplicatePanel } from "../submissions/duplicate-panel.tsx";
 import {
@@ -39,6 +40,7 @@ import {
 import type { NameRow, SubmissionValues } from "../submissions/form-state.ts";
 import { OtherNamesField } from "../submissions/other-names-field.tsx";
 import { readRefusal } from "../submissions/refusals.ts";
+import { SupportFields } from "../submissions/support-fields.tsx";
 
 /**
  * Proposing a new test (FR-23 to FR-27, FR-43, FR-54).
@@ -65,7 +67,21 @@ function isPropertyField(fieldId: string, key: string): boolean {
   return fieldId.startsWith(`${key}-`);
 }
 
+/**
+ * `?entry=<business key>` opens the form to amend that entry instead (FR-35).
+ * The amendment form is its own component, so a new test's form holds nothing
+ * for it.
+ */
 export function SubmissionNewPage() {
+  const { entry } = useSearch({ from: "/authenticated/submissions/new" });
+  return entry === undefined ? (
+    <NewTestForm />
+  ) : (
+    <AmendmentForm key={entry} entryKey={entry} />
+  );
+}
+
+function NewTestForm() {
   const session = useSession();
   const definitions = useSubmissionPropertyDefinitions();
   const duplicateCheck = useDuplicateCheck();
@@ -306,70 +322,14 @@ export function SubmissionNewPage() {
                 );
               })}
 
-              <Field
-                id={FIELD_IDS.reference_url}
-                label="Reference link (required)"
-                hint="A web page that supports this test, such as a guideline or a published method. The platform checks that the page answers."
-                error={errorFor(FIELD_IDS.reference_url)}
-              >
-                {(controlProps) => (
-                  <input
-                    {...controlProps}
-                    className={INPUT_CLASSES}
-                    type="text"
-                    inputMode="url"
-                    autoComplete="off"
-                    value={values.referenceUrl}
-                    onChange={(event) =>
-                      edit(
-                        { referenceUrl: event.target.value },
-                        (id) => id === FIELD_IDS.reference_url,
-                      )
-                    }
-                  />
-                )}
-              </Field>
-
-              <Field
-                id={FIELD_IDS.notes}
-                label="Notes"
-                hint="Anything a reviewer should know."
-                error={errorFor(FIELD_IDS.notes)}
-              >
-                {(controlProps) => (
-                  <textarea
-                    {...controlProps}
-                    className={INPUT_CLASSES}
-                    rows={4}
-                    value={values.notes}
-                    onChange={(event) =>
-                      edit({ notes: event.target.value }, (id) => id === FIELD_IDS.notes)
-                    }
-                  />
-                )}
-              </Field>
-
-              <Field
-                id={FIELD_IDS.organisation}
-                label="Organisation"
-                hint="Filled in from your profile. Change it if this test comes from a different organisation."
-                error={errorFor(FIELD_IDS.organisation)}
-              >
-                {(controlProps) => (
-                  <input
-                    {...controlProps}
-                    className={INPUT_CLASSES}
-                    type="text"
-                    value={values.organisation ?? user?.organisation ?? ""}
-                    onChange={(event) =>
-                      edit(
-                        { organisation: event.target.value },
-                        (id) => id === FIELD_IDS.organisation,
-                      )
-                    }
-                  />
-                )}
-              </Field>
+              <SupportFields
+                values={values}
+                errorFor={errorFor}
+                onEdit={(patch, fieldId) => edit(patch, (id) => id === fieldId)}
+                defaultOrganisation={user?.organisation ?? ""}
+                referenceRequired
+                noun="test"
+              />
 
               <dl className="m-0 grid grid-cols-[max-content_1fr] gap-x-6">
                 <dt className="text-[var(--color-text-muted)]">Submitted by</dt>

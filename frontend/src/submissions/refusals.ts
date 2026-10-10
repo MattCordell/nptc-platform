@@ -30,9 +30,11 @@ export const TERMS_MESSAGE =
 const FALLBACK_MESSAGE =
   "The test could not be submitted. Check your connection and try again, or contact an administrator if the problem persists.";
 
+/** `fallback` is the sentence for a refusal that carries none, worded for what was sent. */
 export function readRefusal(
   error: unknown,
   submittedIndexes: Record<string, number[]>,
+  fallback: string = FALLBACK_MESSAGE,
 ): Outcome {
   const duplicates = asDuplicateMatches(error);
   if (duplicates !== null) {
@@ -84,6 +86,6 @@ export function readRefusal(
   return {
     kind: "refused",
     fieldErrors: [],
-    message: refusalDetail(error) ?? FALLBACK_MESSAGE,
+    message: refusalDetail(error) ?? fallback,
   };
 }
