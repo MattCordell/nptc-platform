@@ -113,6 +113,7 @@ from nptc.registry.definitions import (
 )
 from nptc.registry.handlers import UnknownDatatypeError
 from nptc.settings import AuthSettings
+from nptc.submissions.errors import CodeRefusal, SubmissionCodeRefusedError
 from nptc.terminology.errors import (
     ConceptNotFoundError,
     TerminologyUnavailableError,
@@ -473,6 +474,24 @@ _DETAIL_TERMINOLOGY_UNAVAILABLE = (
 _DETAIL_TERMINOLOGY_UPSTREAM = (
     "The terminology server's response could not be used. The problem has been logged."
 )
+#: One fixed sentence per reason, so the response names why a code was refused (FR-26) without
+#: echoing anything the caller typed.
+_DETAIL_SUBMISSION_CODE_REFUSED: Final[dict[CodeRefusal, str]] = {
+    CodeRefusal.NOT_FOUND: (
+        "This SNOMED CT code was not found in the AU edition, so it cannot be submitted."
+    ),
+    CodeRefusal.INACTIVE: (
+        "This SNOMED CT code is inactive in the AU edition. Choose an active code."
+    ),
+    CodeRefusal.STATUS_NOT_REPORTED: (
+        "The terminology server did not say whether this SNOMED CT code is active, so it "
+        "cannot be submitted. Try again later, or choose another code."
+    ),
+    CodeRefusal.NO_FSN: (
+        "The terminology server returned no fully specified name for this SNOMED CT code, "
+        "so it cannot be submitted."
+    ),
+}
 _DETAIL_LOCAL_CODE_SYSTEM_ALREADY_DEPRECATED = "This local code system is already deprecated."
 _DETAIL_LOCAL_CODE_ALREADY_DEPRECATED = "This local code is already deprecated."
 _DETAIL_INVALID_LOCAL_CODE_SYSTEM_KEY = (
@@ -915,6 +934,18 @@ def register_exception_handlers(app: FastAPI, auth_settings: AuthSettings) -> No
         return JSONResponse(
             status_code=exc.http_status,
             content={"detail": _DETAIL_DEPRECATED_PROPERTY_WRITE},
+        )
+
+    @app.exception_handler(SubmissionCodeRefusedError)
+    async def _handle_submission_code_refused(
+        _request: Request, exc: SubmissionCodeRefusedError
+    ) -> JSONResponse:
+        # INFO: the server answered and the answer rules the code out, an ordinary refusal. The
+        # reason is a fixed enum, so it is safe to log; the code itself stays out of the log.
+        _logger.info("submission code refused: %s", exc.reason.value)
+        return JSONResponse(
+            status_code=exc.http_status,
+            content={"detail": _DETAIL_SUBMISSION_CODE_REFUSED[exc.reason]},
         )
 
     @app.exception_handler(TerminologyUnavailableError)

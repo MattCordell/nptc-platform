@@ -28,6 +28,7 @@ from nptc.catalogue.property_values import (
     PropertyDefinitionNotFoundError,
     PropertyValidationError,
     PropertyValueInput,
+    check_property_values,
     save_property_values,
     save_property_values_for_entries,
 )
@@ -1337,3 +1338,40 @@ def test_bulk_against_a_deprecated_property_aborts_before_touching_any_entry(
     assert _property_value_count(app_session, entry_id=entry_a.id, property_key=prop.key) == 0
     assert _property_value_count(app_session, entry_id=entry_b.id, property_key=prop.key) == 0
     assert _audit_event_count(app_session) == before
+
+
+# --- check_property_values: the entry-free check -----------------------------------------------
+
+
+@pytest.mark.req("FR-09")
+@pytest.mark.integration
+def test_check_property_values_without_scopes_accepts_any_scope(app_session: Session) -> None:
+    prop = _new_string_property(app_session, key="a_unscoped_check", cardinality="0..1")
+
+    check = check_property_values(app_session, prop.key, _inputs("fine"), _registry(app_session))
+
+    assert check.definition is prop
+    assert check.issues == ()
+
+
+@pytest.mark.req("FR-09")
+@pytest.mark.integration
+def test_check_property_values_reports_a_bad_value_as_an_issue_not_an_exception(
+    app_session: Session,
+) -> None:
+    prop = _new_string_property(app_session, key="a_short_check", cardinality="0..1", max_length=3)
+
+    check = check_property_values(
+        app_session, prop.key, _inputs("too long"), _registry(app_session)
+    )
+
+    assert [issue.property_key for issue in check.issues] == ["a_short_check"]
+
+
+@pytest.mark.req("FR-11")
+@pytest.mark.integration
+def test_check_property_values_raises_for_an_unknown_property(app_session: Session) -> None:
+    with pytest.raises(PropertyDefinitionNotFoundError):
+        check_property_values(
+            app_session, "no_such_check_property", _inputs("x"), _registry(app_session)
+        )
