@@ -134,13 +134,14 @@ def _property(
     scope: PropertyScope = PropertyScope.SUBMISSION,
     required: bool = False,
     max_length: int | None = None,
+    cardinality: str = "0..1",
 ) -> None:
     api.session.add(
         PropertyDefinition(
             key=key,
             label=key.replace("_", " ").title(),
             datatype="string",
-            cardinality="0..1",
+            cardinality=cardinality,
             scope=scope,
             required_for_submission=required,
             required_for_publication=False,
@@ -698,4 +699,136 @@ def test_a_maintenance_only_system_property_is_422(api: ApiTestApp) -> None:
 
     assert response.status_code == 422, response.text
     assert _issues(response) == [("usage_guidance", "out-of-scope")]
+    assert _submission_count(api, user) == 0
+
+
+# --- the size of a request is bounded ----------------------------------------------------------
+
+_ZERO_WIDTH_SPACE = chr(0x200B)
+
+#: One case per bound, each one over by one. A property key costs a registry query and a coded
+#: value can cost a terminology call, so none of these may reach the registry or the server.
+_OVER_THE_BOUND: dict[str, dict[str, object]] = {
+    "preferred_term": {"preferred_term": "x" * 501},
+    "synonym_count": {"synonyms": [f"Synonym {n}" for n in range(101)]},
+    "synonym_length": {"synonyms": ["x" * 501]},
+    "notes": {"notes": "x" * 10_001},
+    "organisation": {"organisation": "x" * 501},
+    "snomed_code": {"snomed_code": "1" * 19},
+    "property_count": {"property_values": {f"k{n}": [{"value": "x"}] for n in range(26)}},
+    "property_key_length": {"property_values": {"k" * 101: [{"value": "x"}]}},
+    "values_per_property": {"property_values": {"api_bound": [{"value": "x"}] * 26}},
+    "values_in_total": {
+        "property_values": {f"k{n}": [{"value": "x"}] * 20 for n in range(3)},
+    },
+    "justification": {
+        "property_values": {"api_bound": [{"value": "x", "justification": "x" * 2_001}]}
+    },
+    "value_size": {"property_values": {"api_bound": [{"value": "x" * 10_001}]}},
+}
+
+
+@pytest.mark.integration
+@pytest.mark.parametrize("body", _OVER_THE_BOUND.values(), ids=_OVER_THE_BOUND.keys())
+def test_a_request_over_a_size_bound_is_422_and_does_no_work(
+    api: ApiTestApp, body: dict[str, object]
+) -> None:
+    _property(api, "api_bound", cardinality="0..*")
+    token, user = _token(api, Role.PROVISIONAL)
+    before = _audit_event_count(api)
+
+    response = _post(api, token, **body)
+
+    assert response.status_code == 422, response.text
+    assert api.terminology.requests == ()
+    assert _submission_count(api, user) == 0
+    assert _audit_event_count(api) == before
+
+
+@pytest.mark.integration
+def test_a_request_with_too_many_properties_runs_no_registry_query(
+    api: ApiTestApp, app_db: Connection, capture_statements: Any
+) -> None:
+    token, _ = _token(api, Role.PROVISIONAL)
+
+    def reads_the_registry(statement: str, _parameters: object) -> bool:
+        return "property_definition" in statement
+
+    with capture_statements(app_db, keep=reads_the_registry) as statements:
+        response = _post(api, token, property_values={f"k{n}": [{"value": "x"}] for n in range(26)})
+
+    assert response.status_code == 422, response.text
+    assert statements == []
+
+
+@pytest.mark.integration
+def test_a_request_at_every_bound_is_accepted(api: ApiTestApp) -> None:
+    """The bounds are far above a real submission, and each one is inclusive."""
+    for n in range(25):
+        _property(api, f"api_key_{n}")
+    _property(api, "api_many_a", cardinality="0..*")
+    _property(api, "api_many_b", cardinality="0..*")
+    token, user = _token(api, Role.PROVISIONAL)
+
+    at_the_string_bounds = _post(
+        api,
+        token,
+        preferred_term="x" * 500,
+        synonyms=[f"Synonym {n}" for n in range(100)],
+        notes="x" * 10_000,
+        organisation="x" * 500,
+        property_values={
+            "api_key_0": [{"value": "x" * 9_990, "justification": "x" * 2_000}],
+        },
+    )
+    at_the_property_bound = _post(
+        api, token, property_values={f"api_key_{n}": [{"value": "x"}] for n in range(25)}
+    )
+    at_the_value_bounds = _post(
+        api,
+        token,
+        property_values={
+            "api_many_a": [{"value": f"a{n}"} for n in range(25)],
+            "api_many_b": [{"value": f"b{n}"} for n in range(25)],
+        },
+    )
+
+    assert at_the_string_bounds.status_code == 201, at_the_string_bounds.text
+    assert at_the_property_bound.status_code == 201, at_the_property_bound.text
+    assert at_the_value_bounds.status_code == 201, at_the_value_bounds.text
+    assert _submission_count(api, user) == 3
+
+
+# --- synonyms and free text --------------------------------------------------------------------
+
+
+@pytest.mark.req("FR-05")
+@pytest.mark.integration
+def test_a_repeated_synonym_is_stored_once_and_the_response_shows_what_was_kept(
+    api: ApiTestApp,
+) -> None:
+    token, _ = _token(api, Role.PROVISIONAL)
+
+    response = _post(
+        api, token, synonyms=["Sodium, serum", "sodium, serum", "serum sodium", "Na (serum)"]
+    )
+
+    assert response.status_code == 201, response.text
+    assert response.json()["synonyms"] == ["Sodium, serum", "Na (serum)"]
+
+
+@pytest.mark.req("FR-63")
+@pytest.mark.integration
+@pytest.mark.parametrize("field", ["notes", "organisation"])
+def test_free_text_with_an_invisible_character_is_422_with_a_fixed_reason(
+    api: ApiTestApp, field: str
+) -> None:
+    token, user = _token(api, Role.PROVISIONAL)
+
+    response = _post(api, token, **{field: "text" + _ZERO_WIDTH_SPACE + "more"})
+
+    assert response.status_code == 422, response.text
+    assert "invisible character" in response.json()["detail"]
+    assert _ZERO_WIDTH_SPACE not in response.text
+    assert "200B" not in response.text.upper()
     assert _submission_count(api, user) == 0

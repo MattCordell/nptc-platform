@@ -21,12 +21,20 @@ own; this route returns the submitter's own copy of the organisation and nothing
 
 from __future__ import annotations
 
+import json
 import uuid
 from datetime import datetime
 from typing import Annotated, Any, Final
 
 from fastapi import APIRouter, Body, Depends
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    StringConstraints,
+    field_validator,
+    model_validator,
+)
 from sqlalchemy.orm import Session
 
 from nptc.api.dependencies import (
@@ -46,7 +54,6 @@ from nptc.api.labels import (
     fsn_provenance,
 )
 from nptc.api.routers.auth import ErrorResponse
-from nptc.api.routers.catalogue_properties import PropertyValueItemRequest
 from nptc.auth.permissions import Permission
 from nptc.catalogue.property_values import PropertyValueInput
 from nptc.db.models.submission import Submission
@@ -77,10 +84,12 @@ _RESPONSE_422: Final[dict[str, Any]] = {
     "description": (
         "The request is not acceptable. `detail` says why for a term that cannot be cleaned and "
         "for a SNOMED CT code that is malformed, unknown to the AU edition, inactive, has no "
-        "reported status or has no fully specified name. `issues[]` names each property problem: "
-        "an unknown, deprecated or out-of-scope property, a value its datatype refuses, or a "
-        "property required for submission with no value. A missing `preferred_term` or an "
-        "unrecognised field fails validation before the route runs."
+        "reported status or has no fully specified name, and for `notes` or `organisation` that "
+        "carry an invisible character. `issues[]` names each property problem: an unknown, "
+        "deprecated or out-of-scope property, a value its datatype refuses, or a property "
+        "required for submission with no value. A missing `preferred_term`, an unrecognised "
+        "field, or a part of the request over its size bound fails validation before the route "
+        "runs."
     ),
     "content": {
         "application/json": {
@@ -123,22 +132,72 @@ TerminologyClientDep = Annotated[TerminologyClient, Depends(get_terminology_clie
 _CREATE = Depends(permission_dep(Permission.SUBMISSION_CREATE))
 
 
+#: Bounds on one request. A property key costs a registry query and a coded value can cost a
+#: terminology call, so a lowest-trust caller must not be able to make either unbounded. Each is far
+#: above a real submission: a specimen property holds a handful of values, and a note of ten
+#: thousand characters is several pages.
+_MAX_TERM_LENGTH: Final = 500
+_MAX_SYNONYMS: Final = 100
+_MAX_NOTES_LENGTH: Final = 10_000
+_MAX_ORGANISATION_LENGTH: Final = 500
+_MAX_JUSTIFICATION_LENGTH: Final = 2_000
+_MAX_VALUE_JSON_LENGTH: Final = 10_000
+_MAX_PROPERTY_KEY_LENGTH: Final = 100
+_MAX_PROPERTIES: Final = 25
+_MAX_VALUES_PER_PROPERTY: Final = 25
+_MAX_VALUES_IN_TOTAL: Final = 50
+#: The longest SNOMED CT identifier (FR-06). Anything longer fails the format check, so it is
+#: refused here, ahead of any lookup.
+_MAX_SCTID_LENGTH: Final = 18
+
+_Term = Annotated[str, StringConstraints(max_length=_MAX_TERM_LENGTH)]
+
+
+class SubmissionPropertyValueRequest(BaseModel):
+    """One value for a property, with the optional justification the registry's strength rule can
+    ask for. Shaped like the catalogue's own property write, with a size bound on each part."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    value: Any
+    justification: str | None = Field(default=None, max_length=_MAX_JUSTIFICATION_LENGTH)
+
+    @field_validator("value")
+    @classmethod
+    def _value_is_not_huge(cls, value: Any) -> Any:
+        if len(json.dumps(value, separators=(",", ":"))) > _MAX_VALUE_JSON_LENGTH:
+            raise ValueError(
+                f"a value must serialise to at most {_MAX_VALUE_JSON_LENGTH} characters"
+            )
+        return value
+
+
 class CreateSubmissionRequest(BaseModel):
     """The body of `POST /submissions`.
 
-    `property_values` maps a property key to the complete value list for that property, each item
-    shaped like the catalogue's own property write. A key with an empty list counts as absent.
-    `organisation` left out means the profile's value, and a blank string means none.
+    `property_values` maps a property key to the complete value list for that property. A key with
+    an empty list counts as absent. `organisation` left out means the profile's value, and a blank
+    string means none. The size bounds are in the schema as `maxLength` and `maxItems`.
     """
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
-    preferred_term: str
-    synonyms: list[str] = Field(default_factory=list)
-    snomed_code: str | None = None
-    property_values: dict[str, list[PropertyValueItemRequest]] = Field(default_factory=dict)
-    notes: str | None = None
-    organisation: str | None = None
+    preferred_term: _Term
+    synonyms: list[_Term] = Field(default_factory=list, max_length=_MAX_SYNONYMS)
+    snomed_code: str | None = Field(default=None, max_length=_MAX_SCTID_LENGTH)
+    property_values: dict[
+        Annotated[str, StringConstraints(max_length=_MAX_PROPERTY_KEY_LENGTH)],
+        Annotated[list[SubmissionPropertyValueRequest], Field(max_length=_MAX_VALUES_PER_PROPERTY)],
+    ] = Field(default_factory=dict, max_length=_MAX_PROPERTIES)
+    notes: str | None = Field(default=None, max_length=_MAX_NOTES_LENGTH)
+    organisation: str | None = Field(default=None, max_length=_MAX_ORGANISATION_LENGTH)
+
+    @model_validator(mode="after")
+    def _values_in_total_are_bounded(self) -> CreateSubmissionRequest:
+        total = sum(len(items) for items in self.property_values.values())
+        if total > _MAX_VALUES_IN_TOTAL:
+            raise ValueError(f"a submission holds at most {_MAX_VALUES_IN_TOTAL} property values")
+        return self
 
 
 class SubmittedPropertyValue(BaseModel):

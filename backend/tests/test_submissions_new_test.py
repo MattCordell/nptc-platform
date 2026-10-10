@@ -9,6 +9,8 @@ events as a delta, because `backend/tests` shares one Postgres container (see `C
 from __future__ import annotations
 
 import uuid
+from collections.abc import Callable
+from typing import Any
 
 import pytest
 from sqlalchemy import func, select
@@ -19,6 +21,7 @@ from nptc.audit.writer import AuditContext
 from nptc.catalogue.local_codes import DatabaseLocalCodeLookup
 from nptc.catalogue.property_values import PropertyValidationError, PropertyValueInput
 from nptc.catalogue.term_hygiene import TermCleaningError
+from nptc.db.bootstrap import seed_system_properties
 from nptc.db.definitions import deprecate_definition
 from nptc.db.models.audit import AuditEvent
 from nptc.db.models.property_definition import PropertyDefinition, PropertyOrigin, PropertyScope
@@ -26,7 +29,7 @@ from nptc.db.models.submission import Submission, SubmissionKind, SubmissionStat
 from nptc.db.models.user import User
 from nptc.registry.datatypes import build_builtin_handlers
 from nptc.registry.handlers import DatatypeRegistry, HandlerDeps
-from nptc.submissions.errors import CodeRefusal, SubmissionCodeRefusedError
+from nptc.submissions.errors import CodeRefusal, FreeTextRefusedError, SubmissionCodeRefusedError
 from nptc.submissions.new_test import NewTestSubmissionInput, create_new_test_submission
 from nptc.terminology.errors import TerminologyUnavailableError
 from nptc_shared.sctid import InvalidSCTIDError
@@ -42,6 +45,7 @@ from nptc_shared.terminology import (
     TerminologyStatusError,
     TerminologyTimeoutError,
 )
+from nptc_shared.terminology.models import Edition, ValidationResult
 
 _CODE = "391483001"
 _FSN = "Microscopy (acid fast bacilli) (procedure)"
@@ -747,3 +751,221 @@ def test_a_maintenance_only_property_marked_required_does_not_block_a_submission
     submission = _create(app_session, ctx, NewTestSubmissionInput(preferred_term="Serum sodium"))
 
     assert submission.property_values == {}
+
+
+# --- synonyms are a set ------------------------------------------------------------------------
+
+
+def _synonyms_of(app_session: Session, preferred_term: str, *synonyms: str) -> list[str]:
+    _, ctx = _submitter(app_session)
+    submission = _create(
+        app_session,
+        ctx,
+        NewTestSubmissionInput(preferred_term=preferred_term, synonyms=list(synonyms)),
+    )
+    return list(submission.synonyms)
+
+
+@pytest.mark.req("FR-23")
+@pytest.mark.integration
+def test_a_repeated_synonym_is_stored_once(app_session: Session) -> None:
+    stored = _synonyms_of(
+        app_session, "Serum sodium", "Sodium, serum", "Na (serum)", "Sodium, serum"
+    )
+
+    assert stored == ["Sodium, serum", "Na (serum)"]
+
+
+@pytest.mark.req("FR-05")
+@pytest.mark.integration
+def test_synonyms_that_fold_to_one_comparison_key_keep_the_first_spelling(
+    app_session: Session,
+) -> None:
+    """The comparison key is the one `add_synonyms` folds on, so the later step that turns a
+    submission into an entry meets no duplicate the submitter was told was accepted."""
+    stored = _synonyms_of(app_session, "Serum sodium", "ADA2", "ada2", "Ada2")
+
+    assert stored == ["ADA2"]
+
+
+@pytest.mark.req("FR-05")
+@pytest.mark.integration
+def test_a_synonym_that_folds_to_the_preferred_term_is_dropped(app_session: Session) -> None:
+    stored = _synonyms_of(app_session, "Serum sodium", "serum sodium", "Sodium, serum")
+
+    assert stored == ["Sodium, serum"]
+
+
+@pytest.mark.req("FR-23")
+@pytest.mark.integration
+def test_distinct_synonyms_keep_the_order_given(app_session: Session) -> None:
+    stored = _synonyms_of(app_session, "Serum sodium", "Zinc", "Alpha", "Mid")
+
+    assert stored == ["Zinc", "Alpha", "Mid"]
+
+
+@pytest.mark.req("FR-63")
+@pytest.mark.integration
+def test_a_bad_synonym_is_refused_even_when_it_would_be_a_duplicate(app_session: Session) -> None:
+    with pytest.raises(TermCleaningError):
+        _synonyms_of(app_session, "Serum sodium", "Sodium", "Sodium" + ZERO_WIDTH_SPACE)
+
+
+# --- free text (FR-63) -------------------------------------------------------------------------
+
+_RIGHT_TO_LEFT_OVERRIDE = chr(0x202E)
+_BELL = chr(0x07)
+
+
+@pytest.mark.req("FR-63")
+@pytest.mark.integration
+@pytest.mark.parametrize("field", ["notes", "organisation"])
+@pytest.mark.parametrize(
+    "character",
+    [ZERO_WIDTH_SPACE, _RIGHT_TO_LEFT_OVERRIDE, _BELL],
+    ids=["zero_width_space", "bidi_override", "control"],
+)
+def test_free_text_with_an_invisible_character_is_refused(
+    app_session: Session, field: str, character: str
+) -> None:
+    user, ctx = _submitter(app_session)
+    before = _audit_event_count(app_session)
+    text = "text" + character + "more"
+    content = NewTestSubmissionInput(
+        preferred_term="Serum sodium",
+        notes=text if field == "notes" else None,
+        organisation=text if field == "organisation" else None,
+    )
+
+    with pytest.raises(FreeTextRefusedError) as excinfo:
+        _create(app_session, ctx, content)
+
+    assert excinfo.value.field == field
+    assert f"U+{ord(character):04X}" in str(excinfo.value)
+    assert character not in str(excinfo.value)
+    assert _submission_count(app_session, user.id) == 0
+    assert _audit_event_count(app_session) == before
+
+
+@pytest.mark.req("FR-27")
+@pytest.mark.integration
+def test_a_note_may_span_lines_and_use_tabs(app_session: Session) -> None:
+    _, ctx = _submitter(app_session)
+    note = "First line\nSecond line\r\n\tIndented third"
+
+    submission = _create(
+        app_session, ctx, NewTestSubmissionInput(preferred_term="Serum sodium", notes=note)
+    )
+
+    assert submission.notes == note
+
+
+@pytest.mark.req("FR-63")
+@pytest.mark.integration
+def test_the_organisation_is_one_line(app_session: Session) -> None:
+    _, ctx = _submitter(app_session)
+
+    with pytest.raises(FreeTextRefusedError) as excinfo:
+        _create(
+            app_session,
+            ctx,
+            NewTestSubmissionInput(
+                preferred_term="Serum sodium", organisation="Example\nPathology"
+            ),
+        )
+
+    assert excinfo.value.field == "organisation"
+
+
+@pytest.mark.req("FR-63")
+@pytest.mark.integration
+def test_a_non_breaking_space_in_free_text_is_normalised_not_refused(app_session: Session) -> None:
+    _, ctx = _submitter(app_session)
+
+    submission = _create(
+        app_session,
+        ctx,
+        NewTestSubmissionInput(
+            preferred_term="Serum sodium",
+            notes="Seen" + NBSP + "here",
+            organisation="Example" + NBSP + "Pathology",
+        ),
+    )
+
+    assert submission.notes == "Seen here"
+    assert submission.organisation == "Example Pathology"
+
+
+# --- the append lock is never held across the terminology server -------------------------------
+
+_SPECIMEN_VALUE_SET_URI = "http://snomed.info/sct?fhir_vs=ecl/%3C%3C123038009"
+_SERUM = "119364003"
+
+
+class _CallRecordingClient(StubTerminologyClient):
+    """Records, for every terminology call, whether the append lock was already held."""
+
+    def __init__(self, lock_held: Callable[[], bool], calls: list[tuple[str, bool]]) -> None:
+        super().__init__()
+        self._lock_held = lock_held
+        self._calls = calls
+
+    def lookup(self, *args: Any, **kwargs: Any) -> Any:
+        self._calls.append(("lookup", self._lock_held()))
+        return super().lookup(*args, **kwargs)
+
+    def validate_code(self, *args: Any, **kwargs: Any) -> Any:
+        self._calls.append(("validate_code", self._lock_held()))
+        return super().validate_code(*args, **kwargs)
+
+
+@pytest.mark.req("NFR-08")
+@pytest.mark.integration
+def test_no_terminology_call_is_made_while_the_append_lock_is_held(
+    app_session: Session, capture_statements: Any
+) -> None:
+    """The lock is one global advisory lock, so a call to the terminology server made while
+    holding it would stall every audit write. The lock-ordering guard exempts this writer because
+    it must not take the lock first, so this test is what pins the order."""
+    seed_system_properties(app_session)
+    app_session.flush()
+    _, ctx = _submitter(app_session)
+    calls: list[tuple[str, bool]] = []
+
+    def is_lock(statement: str, _parameters: object) -> bool:
+        return "pg_advisory_xact_lock" in statement
+
+    with capture_statements(app_session.get_bind(), keep=is_lock) as locks:
+        client = _CallRecordingClient(lambda: bool(locks), calls)
+        client.add_concept(
+            StubConcept(
+                code=_CODE,
+                fsn=_FSN,
+                preferred_terms={AU_LANGUAGE_TAG: "Acid fast bacilli microscopy"},
+            )
+        )
+        client.seed_validate_code(
+            _SERUM,
+            ValidationResult(code=_SERUM, result=True),
+            value_set_url=_SPECIMEN_VALUE_SET_URI,
+            edition=Edition(module_id="au", label="au"),
+        )
+        _create(
+            app_session,
+            ctx,
+            NewTestSubmissionInput(
+                preferred_term="Acid fast bacilli microscopy",
+                snomed_code=_CODE,
+                property_values={
+                    "specimen": [
+                        PropertyValueInput(value={"system": SNOMED_SYSTEM, "code": _SERUM})
+                    ]
+                },
+            ),
+            client,
+        )
+
+    assert {name for name, _ in calls} == {"lookup", "validate_code"}
+    assert [held for _, held in calls] == [False, False]
+    # The probe does see the lock the write takes, so the assertions above cannot pass vacuously.
+    assert locks

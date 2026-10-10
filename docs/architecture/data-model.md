@@ -1468,13 +1468,13 @@ catalogue content. Only `POST /api/v1/submissions` writes it today, and only for
 | `kind` | `TEXT` | `NOT NULL`, `CHECK` in `new_test`, `amendment`. Amendments reuse the table, so they need no second one |
 | `state` | `TEXT` | `NOT NULL DEFAULT 'Submitted'`, `CHECK` in `Submitted`. The other FR-28 states arrive with the workflow |
 | `preferred_term` | `TEXT` | `NOT NULL`, `CHECK` not blank. Cleaned at entry like an entry's term (FR-63) |
-| `synonyms` | `JSONB` | `NOT NULL DEFAULT '[]'`, `CHECK` a JSON array. Each term is cleaned at entry |
+| `synonyms` | `JSONB` | `NOT NULL DEFAULT '[]'`, `CHECK` a JSON array. Each term is cleaned at entry. A term that folds to the same comparison key as an earlier one, or as `preferred_term`, is dropped, as `add_synonyms` drops it, so the list converts to designations without a duplicate |
 | `snomed_code` | `TEXT` | Nullable. `CHECK nptc_sctid_is_valid`, so the format and the check digit hold in the database (FR-06) |
 | `snomed_fsn` | `TEXT` | Nullable, `CHECK` not blank. Present exactly when `snomed_code` is: `CHECK ((snomed_code IS NULL) = (snomed_fsn IS NULL))`. The terminology server's label, stored as served (FR-82) |
 | `property_values` | `JSONB` | `NOT NULL DEFAULT '{}'`, `CHECK` a JSON object. See below |
-| `notes` | `TEXT` | Nullable, `CHECK` not blank. The submitter's free-text justification (FR-27) |
+| `notes` | `TEXT` | Nullable, `CHECK` not blank. The submitter's free-text justification (FR-27). May span lines. Normalised like a term, and refused if it holds an invisible character other than a line break or tab (FR-63) |
 | `submitter_id` | `UUID` | `NOT NULL`, FK to `app_user.id`. The internal id, which account closure keeps (NFR-17) |
-| `organisation` | `TEXT` | Nullable. The submitter's own copy of their organisation |
+| `organisation` | `TEXT` | Nullable. The submitter's own copy of their organisation. One line, normalised like a term, and refused if it holds an invisible character (FR-63) |
 | `created_at` | `TIMESTAMPTZ` | `NOT NULL`, `now()` |
 | `updated_at` | `TIMESTAMPTZ` | `NOT NULL`, `now()` |
 | `row_version` | `INTEGER` | `NOT NULL DEFAULT 1`, bumped by `version_id_col` on a mapped update, as on `catalogue_entry` |

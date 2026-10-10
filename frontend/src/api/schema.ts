@@ -1586,9 +1586,9 @@ export interface components {
          * CreateSubmissionRequest
          * @description The body of `POST /submissions`.
          *
-         *     `property_values` maps a property key to the complete value list for that property, each item
-         *     shaped like the catalogue's own property write. A key with an empty list counts as absent.
-         *     `organisation` left out means the profile's value, and a blank string means none.
+         *     `property_values` maps a property key to the complete value list for that property. A key with
+         *     an empty list counts as absent. `organisation` left out means the profile's value, and a blank
+         *     string means none. The size bounds are in the schema as `maxLength` and `maxItems`.
          */
         CreateSubmissionRequest: {
             /** Preferred Term */
@@ -1599,7 +1599,7 @@ export interface components {
             snomed_code?: string | null;
             /** Property Values */
             property_values?: {
-                [key: string]: components["schemas"]["PropertyValueItemRequest"][];
+                [key: string]: components["schemas"]["SubmissionPropertyValueRequest"][];
             };
             /** Notes */
             notes?: string | null;
@@ -2538,6 +2538,17 @@ export interface components {
             /** Terms */
             terms: string[];
             label_provenance: components["schemas"]["LabelProvenance"];
+        };
+        /**
+         * SubmissionPropertyValueRequest
+         * @description One value for a property, with the optional justification the registry's strength rule can
+         *     ask for. Shaped like the catalogue's own property write, with a size bound on each part.
+         */
+        SubmissionPropertyValueRequest: {
+            /** Value */
+            value: unknown;
+            /** Justification */
+            justification?: string | null;
         };
         /**
          * SubmissionResponse
@@ -5431,7 +5442,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"] | components["schemas"]["TermsAcceptanceRequiredResponse"];
                 };
             };
-            /** @description The request is not acceptable. `detail` says why for a term that cannot be cleaned and for a SNOMED CT code that is malformed, unknown to the AU edition, inactive, has no reported status or has no fully specified name. `issues[]` names each property problem: an unknown, deprecated or out-of-scope property, a value its datatype refuses, or a property required for submission with no value. A missing `preferred_term` or an unrecognised field fails validation before the route runs. */
+            /** @description The request is not acceptable. `detail` says why for a term that cannot be cleaned and for a SNOMED CT code that is malformed, unknown to the AU edition, inactive, has no reported status or has no fully specified name, and for `notes` or `organisation` that carry an invisible character. `issues[]` names each property problem: an unknown, deprecated or out-of-scope property, a value its datatype refuses, or a property required for submission with no value. A missing `preferred_term`, an unrecognised field, or a part of the request over its size bound fails validation before the route runs. */
             422: {
                 headers: {
                     [name: string]: unknown;

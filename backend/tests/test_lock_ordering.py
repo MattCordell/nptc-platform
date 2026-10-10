@@ -91,6 +91,7 @@ from sqlalchemy.orm import Session
 from sqlalchemy.orm.exc import StaleDataError
 
 import nptc.catalogue as catalogue_package
+import nptc.submissions as submissions_package
 from nptc.audit.writer import AUDIT_APPEND_LOCK_KEY, AuditContext
 from nptc.catalogue.bindings import create_binding, link_replacement, retire_binding
 from nptc.catalogue.changelog import ChangelogNoteError
@@ -129,7 +130,7 @@ _FuncDef = ast.FunctionDef | ast.AsyncFunctionDef
 _FuncKey = tuple[str, str]
 
 
-#: Every module in the catalogue package, subpackages included, so a new writer
+#: Every module under a package directory, subpackages included, so a new writer
 #: module is scanned without anyone remembering to list it. None is excluded: a
 #: module with no writer derives nothing. Keyed by dotted path under the package,
 #: so two `__init__` modules do not collide.
@@ -142,7 +143,15 @@ def _catalogue_sources(directory: Path) -> dict[str, str]:
     }
 
 
-_SCAN_SOURCES: dict[str, str] = _catalogue_sources(Path(catalogue_package.__file__).parent)
+#: The submissions package is scanned too, its keys prefixed so its `errors` and `__init__` do not
+#: collide with the catalogue's own modules of the same name.
+_SCAN_SOURCES: dict[str, str] = {
+    **_catalogue_sources(Path(catalogue_package.__file__).parent),
+    **{
+        f"submissions.{module}": source
+        for module, source in _catalogue_sources(Path(submissions_package.__file__).parent).items()
+    },
+}
 
 #: `bump_entry_row_version` itself directly does `entry.row_version += 1`,
 #: which is exactly what `_assigns_row_version` looks for - but it is a
@@ -159,6 +168,12 @@ _SCAN_SOURCES: dict[str, str] = _catalogue_sources(Path(catalogue_package.__file
 #: reached only from `seed_baseline`, which holds the lock for the whole run.
 #: The `local_codes` writers and `acknowledge_collision` write tables with no
 #: `catalogue_entry` row lock or collision lock to cycle against.
+#:
+#: `create_new_test_submission` takes no row lock and no collision lock, so there is no cycle to
+#: close, and it must not hold the append lock across the terminology server: that lock is global,
+#: and a slow lookup would stall every audit write. It runs its reads and lookups first and takes
+#: the lock just before its write. `test_submissions_new_test.py` pins that order, and any other
+#: writer in the package is held to the lock-first rule.
 #:
 #: `_save_for_one_entry` is the per-target body of `save_property_values_for_entries`
 #: and is called from nowhere else. That caller has already validated `reason` and
@@ -178,6 +193,7 @@ _EXEMPT_FUNCTIONS: frozenset[_FuncKey] = frozenset(
         ("local_codes", "deprecate_local_code"),
         ("local_codes", "create_snomed_map_row"),
         ("collisions", "acknowledge_collision"),
+        ("submissions.new_test", "create_new_test_submission"),
     }
 )
 
@@ -570,6 +586,21 @@ def test_guard_scans_a_module_inside_a_subpackage(tmp_path: Path) -> None:
 @pytest.mark.req("NFR-08")
 def test_guard_scans_the_modules_outside_the_original_three() -> None:
     assert {"bindings", "local_codes", "seed_import"} <= _SCAN_SOURCES.keys()
+
+
+@pytest.mark.req("NFR-08")
+def test_guard_scans_the_submissions_package() -> None:
+    assert "submissions.new_test" in _SCAN_SOURCES
+
+
+@pytest.mark.req("NFR-08")
+def test_the_only_exempt_submissions_writer_is_the_one_named_with_a_reason() -> None:
+    """The scan reaches the package, so a new writer there fails the lock-first rule unless it is
+    named, with a reason, in `_EXEMPT_FUNCTIONS`."""
+    exempt_here = {key for key in _EXEMPT_FUNCTIONS if key[0].startswith("submissions.")}
+    assert exempt_here == {("submissions.new_test", "create_new_test_submission")}
+    unexempted = {key for key in _derive_required_functions() if key[0].startswith("submissions.")}
+    assert unexempted == set()
 
 
 @pytest.mark.req("NFR-08")

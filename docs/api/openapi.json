@@ -4243,7 +4243,7 @@
             }
           },
           "422": {
-            "description": "The request is not acceptable. `detail` says why for a term that cannot be cleaned and for a SNOMED CT code that is malformed, unknown to the AU edition, inactive, has no reported status or has no fully specified name. `issues[]` names each property problem: an unknown, deprecated or out-of-scope property, a value its datatype refuses, or a property required for submission with no value. A missing `preferred_term` or an unrecognised field fails validation before the route runs.",
+            "description": "The request is not acceptable. `detail` says why for a term that cannot be cleaned and for a SNOMED CT code that is malformed, unknown to the AU edition, inactive, has no reported status or has no fully specified name, and for `notes` or `organisation` that carry an invisible character. `issues[]` names each property problem: an unknown, deprecated or out-of-scope property, a value its datatype refuses, or a property required for submission with no value. A missing `preferred_term`, an unrecognised field, or a part of the request over its size bound fails validation before the route runs.",
             "content": {
               "application/json": {
                 "schema": {
@@ -6267,19 +6267,23 @@
         "properties": {
           "preferred_term": {
             "type": "string",
+            "maxLength": 500,
             "title": "Preferred Term"
           },
           "synonyms": {
             "items": {
-              "type": "string"
+              "type": "string",
+              "maxLength": 500
             },
             "type": "array",
+            "maxItems": 100,
             "title": "Synonyms"
           },
           "snomed_code": {
             "anyOf": [
               {
-                "type": "string"
+                "type": "string",
+                "maxLength": 18
               },
               {
                 "type": "null"
@@ -6290,17 +6294,23 @@
           "property_values": {
             "additionalProperties": {
               "items": {
-                "$ref": "#/components/schemas/PropertyValueItemRequest"
+                "$ref": "#/components/schemas/SubmissionPropertyValueRequest"
               },
-              "type": "array"
+              "type": "array",
+              "maxItems": 25
+            },
+            "propertyNames": {
+              "maxLength": 100
             },
             "type": "object",
+            "maxProperties": 25,
             "title": "Property Values"
           },
           "notes": {
             "anyOf": [
               {
-                "type": "string"
+                "type": "string",
+                "maxLength": 10000
               },
               {
                 "type": "null"
@@ -6311,7 +6321,8 @@
           "organisation": {
             "anyOf": [
               {
-                "type": "string"
+                "type": "string",
+                "maxLength": 500
               },
               {
                 "type": "null"
@@ -6326,7 +6337,7 @@
           "preferred_term"
         ],
         "title": "CreateSubmissionRequest",
-        "description": "The body of `POST /submissions`.\n\n`property_values` maps a property key to the complete value list for that property, each item\nshaped like the catalogue's own property write. A key with an empty list counts as absent.\n`organisation` left out means the profile's value, and a blank string means none."
+        "description": "The body of `POST /submissions`.\n\n`property_values` maps a property key to the complete value list for that property. A key with\nan empty list counts as absent. `organisation` left out means the profile's value, and a blank\nstring means none. The size bounds are in the schema as `maxLength` and `maxItems`."
       },
       "CurrentTermsResponse": {
         "properties": {
@@ -8043,6 +8054,32 @@
         ],
         "title": "SnomedSynonyms",
         "description": "The active binding's SNOMED CT synonyms, as the terminology server serves them today.\n\nNever stored, so never part of `row_version` or the audit trail. `terms` excludes the FSN\nand the binding's AU preferred term, and is not limited to en-AU: no FHIR operation\nseparates the AU-acceptable synonyms, so US spellings can appear (see\n`nptc.terminology.synonyms`). `status` is `unavailable` when the server could not answer;\n`terms` is then empty, which is not the same as `available` with no terms. A code missing\nfrom the current AU edition is `available` with no terms."
+      },
+      "SubmissionPropertyValueRequest": {
+        "properties": {
+          "value": {
+            "title": "Value"
+          },
+          "justification": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 2000
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Justification"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "value"
+        ],
+        "title": "SubmissionPropertyValueRequest",
+        "description": "One value for a property, with the optional justification the registry's strength rule can\nask for. Shaped like the catalogue's own property write, with a size bound on each part."
       },
       "SubmissionResponse": {
         "properties": {
