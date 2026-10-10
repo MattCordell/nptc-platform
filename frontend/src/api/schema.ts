@@ -746,6 +746,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/submissions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Submit a new test for the catalogue */
+        post: operations["create_submission_api_v1_submissions_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/terminology/concepts/{code}": {
         parameters: {
             query?: never;
@@ -1564,6 +1581,30 @@ export interface components {
             };
             /** Reason */
             reason: string;
+        };
+        /**
+         * CreateSubmissionRequest
+         * @description The body of `POST /submissions`.
+         *
+         *     `property_values` maps a property key to the complete value list for that property, each item
+         *     shaped like the catalogue's own property write. A key with an empty list counts as absent.
+         *     `organisation` left out means the profile's value, and a blank string means none.
+         */
+        CreateSubmissionRequest: {
+            /** Preferred Term */
+            preferred_term: string;
+            /** Synonyms */
+            synonyms?: string[];
+            /** Snomed Code */
+            snomed_code?: string | null;
+            /** Property Values */
+            property_values?: {
+                [key: string]: components["schemas"]["PropertyValueItemRequest"][];
+            };
+            /** Notes */
+            notes?: string | null;
+            /** Organisation */
+            organisation?: string | null;
         };
         /**
          * CurrentTermsResponse
@@ -2497,6 +2538,63 @@ export interface components {
             /** Terms */
             terms: string[];
             label_provenance: components["schemas"]["LabelProvenance"];
+        };
+        /**
+         * SubmissionResponse
+         * @description The stored submission.
+         *
+         *     `snomed_fsn` is the label the terminology server returned for `snomed_code`, never anything
+         *     the caller sent (FR-82). `label_provenance` states which designation each label field is
+         *     (FR-98): the suggested term is offered as the catalogue's preferred term, and the synonyms as
+         *     synonyms.
+         */
+        SubmissionResponse: {
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Kind */
+            kind: string;
+            /** State */
+            state: string;
+            /** Preferred Term */
+            preferred_term: string;
+            /** Synonyms */
+            synonyms: string[];
+            /** Snomed Code */
+            snomed_code: string | null;
+            /** Snomed Fsn */
+            snomed_fsn: string | null;
+            /** Property Values */
+            property_values: {
+                [key: string]: components["schemas"]["SubmittedPropertyValue"][];
+            };
+            /** Notes */
+            notes: string | null;
+            /** Organisation */
+            organisation: string | null;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /** Row Version */
+            row_version: number;
+            /** Label Provenance */
+            label_provenance: {
+                [key: string]: components["schemas"]["LabelProvenance"];
+            };
+        };
+        /**
+         * SubmittedPropertyValue
+         * @description One stored value, as the registry's handler accepted it.
+         */
+        SubmittedPropertyValue: {
+            /** Value */
+            value: unknown;
+            /** Justification */
+            justification: string | null;
         };
         /**
          * TermsAcceptanceRequest
@@ -5283,6 +5381,95 @@ export interface operations {
                 };
             };
             /** @description The terminology server could not be reached, or a rate limit persisted through retries. Only reachable for a `value_set`-bound property; a `local_code_system` binding never calls the terminology server at all. May carry a `Retry-After` header. */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    create_submission_api_v1_submissions_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CreateSubmissionRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SubmissionResponse"];
+                };
+            };
+            /** @description No credential, or one that could not be verified. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The caller is authenticated but does not hold `submission.create`, or has not accepted the current terms of use (the body then carries a `code` that says so). The current terms of use have not been accepted. The body carries `code: terms_acceptance_required`. Accept them with `POST /auth/terms/acceptance` and try again. Never carries `WWW-Authenticate`. */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"] | components["schemas"]["TermsAcceptanceRequiredResponse"];
+                };
+            };
+            /** @description The request is not acceptable. `detail` says why for a term that cannot be cleaned and for a SNOMED CT code that is malformed, unknown to the AU edition, inactive, has no reported status or has no fully specified name. `issues[]` names each property problem: an unknown, deprecated or out-of-scope property, a value its datatype refuses, or a property required for submission with no value. A missing `preferred_term` or an unrecognised field fails validation before the route runs. */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"] | components["schemas"]["ErrorResponse"] | components["schemas"]["PropertyValidationResponse"];
+                };
+            };
+            /** @description An address exceeded its request budget (FR-22): an anonymous caller its anonymous budget, or a caller whose credentials the API kept rejecting its budget for rejected credentials. Wait for the number of seconds in `Retry-After`, then try again. A valid credential is never counted. The body's `bulk_artefacts` names where to fetch the whole catalogue instead. */
+            429: {
+                headers: {
+                    /** @description Whole seconds until the caller's request budget is available again. */
+                    "Retry-After"?: number;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RateLimitedResponse"];
+                };
+            };
+            /** @description The service is misconfigured, not a caller mistake - a malformed `NPTC_TX_*` value. Retrying will not clear it. */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The terminology server's response could not be used. */
+            502: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The terminology server could not be reached, or a rate limit persisted through retries. Nothing was saved, and the same request can be sent again. May carry a `Retry-After` header. */
             503: {
                 headers: {
                     [name: string]: unknown;

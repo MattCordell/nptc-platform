@@ -306,13 +306,10 @@ REVOKE_TERMS_ACCEPTANCE_WRITE_SQL = (
     "REVOKE UPDATE, DELETE, TRUNCATE ON TABLE terms_acceptance FROM nptc_app;"
 )
 
-#: FR-23, FR-28, FR-29.
+#: FR-23, FR-28, FR-29: only the workflow's own columns are updatable, and `row_version` MUST be
+#: included, as in `GRANT_CATALOGUE_ENTRY_UPDATE_SQL`.
 GRANT_SUBMISSION_SQL = "GRANT SELECT, INSERT ON TABLE submission TO nptc_app;"
-#: What a submitter sent is never edited, so only the workflow's own columns are updatable.
-#: `row_version` MUST be included, as in `GRANT_CATALOGUE_ENTRY_UPDATE_SQL`: `version_id_col`
-#: writes it on every mapped update. A later column that must change gets its own constant.
 GRANT_SUBMISSION_UPDATE_SQL = (
     "GRANT UPDATE (state, updated_at, row_version) ON TABLE submission TO nptc_app;"
 )
-#: A submission leaves the workflow through `state`, never by removal.
 REVOKE_SUBMISSION_DELETE_SQL = "REVOKE DELETE, TRUNCATE ON TABLE submission FROM nptc_app;"
