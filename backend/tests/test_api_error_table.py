@@ -44,6 +44,11 @@ from nptc.catalogue.maintenance import ListingCursorMismatchError, MalformedList
 from nptc.catalogue.search import EmptySearchQueryError
 from nptc.db.models.local_code_snomed_map import SnomedMapMatchStrength
 from nptc.settings import AuthSettings
+from nptc.submissions.reference_check import (
+    ReferenceCheckFailedError,
+    ReferenceCheckUnavailableError,
+    ReferenceFailure,
+)
 from nptc_shared.sctid import InvalidSCTIDError
 from nptc_shared.terminology import TerminologyConfigError
 
@@ -238,6 +243,45 @@ def test_a_subclass_is_served_by_its_base_row(caplog: pytest.LogCaptureFixture) 
     assert child.json() == base.json()
     [_, child_record] = [r for r in caplog.records if r.name == _ERRORS_LOGGER]
     assert child_record.getMessage() == "listing cursor refused: ListingCursorMismatchError"
+
+
+@pytest.mark.req("FR-27")
+@pytest.mark.parametrize("reason", list(ReferenceFailure))
+def test_every_reference_failure_is_a_422_with_its_own_sentence(reason: ReferenceFailure) -> None:
+    status = 404 if reason is ReferenceFailure.BAD_STATUS else None
+    response = _client_raising(ReferenceCheckFailedError(reason, status=status)).get("/boom")
+
+    assert response.status_code == 422
+    assert set(response.json()) == {"detail"}
+    assert "{" not in response.json()["detail"]
+
+
+@pytest.mark.req("FR-27")
+def test_a_bad_status_sentence_names_the_status_and_no_url(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    with caplog.at_level(logging.DEBUG, logger=_ERRORS_LOGGER):
+        response = _client_raising(
+            ReferenceCheckFailedError(ReferenceFailure.BAD_STATUS, status=410)
+        ).get("/boom")
+
+    assert "status 410" in response.json()["detail"]
+    [record] = [r for r in caplog.records if r.name == _ERRORS_LOGGER]
+    assert record.getMessage() == "reference link refused: bad_status: 410"
+
+
+@pytest.mark.req("FR-27")
+def test_no_outbound_access_is_a_503_distinct_from_a_bad_link(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    with caplog.at_level(logging.DEBUG, logger=_ERRORS_LOGGER):
+        unavailable = _client_raising(ReferenceCheckUnavailableError("no egress")).get("/boom")
+    bad_link = _client_raising(ReferenceCheckFailedError(ReferenceFailure.UNREACHABLE)).get("/boom")
+
+    assert unavailable.status_code == 503
+    assert bad_link.status_code == 422
+    assert unavailable.json() != bad_link.json()
+    assert not [r for r in caplog.records if r.name == _ERRORS_LOGGER]
 
 
 @pytest.mark.parametrize(

@@ -1473,6 +1473,9 @@ catalogue content. Only `POST /api/v1/submissions` writes it today, and only for
 | `snomed_fsn` | `TEXT` | Nullable, `CHECK` not blank. Present exactly when `snomed_code` is: `CHECK ((snomed_code IS NULL) = (snomed_fsn IS NULL))`. The terminology server's label, stored as served (FR-82) |
 | `property_values` | `JSONB` | `NOT NULL DEFAULT '{}'`, `CHECK` a JSON object. See below |
 | `notes` | `TEXT` | Nullable, `CHECK` not blank. The submitter's free-text justification (FR-27). May span lines. Normalised like a term, and refused if it holds an invisible character other than a line break or tab (FR-63) |
+| `reference_url` | `TEXT` | Nullable, `CHECK` not blank. The supporting link the submitter gave (FR-27), stored as sent. `CHECK (kind <> 'new_test' OR reference_url IS NOT NULL)`, so a new test always has one and an amendment may leave it out |
+| `reference_checked_at` | `TIMESTAMPTZ` | Nullable. When the server fetched the link. Present exactly when `reference_url` is |
+| `reference_status` | `INTEGER` | Nullable. The final HTTP status the link answered, after any redirects. Present exactly when `reference_url` is |
 | `submitter_id` | `UUID` | `NOT NULL`, FK to `app_user.id`. The internal id, which account closure keeps (NFR-17) |
 | `organisation` | `TEXT` | Nullable. The submitter's own copy of their organisation. One line, normalised like a term, and refused if it holds an invisible character (FR-63) |
 | `created_at` | `TIMESTAMPTZ` | `NOT NULL`, `now()` |
@@ -1489,6 +1492,14 @@ copies each item to a row at the ordinal of its list position. A submission is r
 never queried by one property's value, so a child table would add a join and an index for no
 reader. A key with no values is absent, never an empty list. The registry validates every value
 before it is stored, so the document holds nothing the entry write path would refuse.
+
+**The reference is checked before it is stored (FR-27).** The route fetches the link's status
+and refuses it before the row is written, so a stored link has always passed. A pass is a 2xx
+status, a redirect chain that ends in one, or a 401 or 403 (a page that exists but wants a login).
+The three columns are all present or all absent: `CHECK ((reference_url IS NULL) =
+(reference_checked_at IS NULL) AND (reference_url IS NULL) = (reference_status IS NULL))`. The
+new-test rule was added `NOT VALID` in migration 0028, so a submission saved before it is left
+alone. The columns are in the audit event, and the grants keep them fixed after insert.
 
 **The organisation is a copy.** It is pre-filled from the profile and editable on the request.
 Closing an account clears the profile's organisation (NFR-17) and leaves the copy on the

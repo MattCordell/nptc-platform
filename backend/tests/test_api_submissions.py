@@ -28,6 +28,11 @@ from nptc.db.models.property_definition import PropertyDefinition, PropertyOrigi
 from nptc.db.models.submission import Submission
 from nptc.db.models.user import User
 from nptc.db.models.user_identity import UserIdentity
+from nptc.submissions.reference_check import (
+    ReferenceCheckFailedError,
+    ReferenceCheckUnavailableError,
+    ReferenceFailure,
+)
 from nptc_shared.terminology import (
     AU_LANGUAGE_TAG,
     SNOMED_SYSTEM,
@@ -62,6 +67,7 @@ _FSN = "Microscopy (acid fast bacilli) (procedure)"
 _FSN_USE_CODE = "900000000000003001"
 _PROFILE_ORGANISATION = "Profile Pathology"
 _PATH = "/submissions"
+_REFERENCE_URL = "https://example.org/evidence"
 _SNOMED = "http://snomed.info/sct"
 _SPECIMEN_ROOT = "123038009"
 _SERUM = "119364003"
@@ -111,7 +117,10 @@ def _audit_event_count(api: ApiTestApp) -> int:
 
 
 def _post(api: ApiTestApp, token: str | None, **body: object) -> Any:
-    payload: dict[str, object] = {"preferred_term": "Serum sodium"}
+    payload: dict[str, object] = {
+        "preferred_term": "Serum sodium",
+        "reference_url": _REFERENCE_URL,
+    }
     payload.update(body)
     return api.post(_PATH, token=token, json=payload)
 
@@ -210,6 +219,7 @@ def test_an_observer_is_refused_with_403_and_nothing_is_stored(api: ApiTestApp) 
     assert "WWW-Authenticate" not in response.headers
     assert _submission_count(api, user) == 0
     assert _audit_event_count(api) == before
+    assert api.reference_checker.urls == []
     for role in Role:
         assert role.value not in response.text
     assert not _UUID.search(response.text)
@@ -222,6 +232,7 @@ def test_an_anonymous_caller_is_refused_with_401(api: ApiTestApp) -> None:
 
     assert response.status_code == 401, response.text
     assert response.headers["WWW-Authenticate"] == "Bearer"
+    assert api.reference_checker.urls == []
 
 
 @pytest.mark.req("NFR-45")
@@ -236,6 +247,7 @@ def test_a_user_who_has_not_accepted_the_current_terms_is_refused(api: ApiTestAp
     assert refused.json()["code"] == TERMS_ACCEPTANCE_REQUIRED_CODE
     assert _submission_count(api, user) == 0
     assert _audit_event_count(api) == before
+    assert api.reference_checker.urls == []
 
     api.accept_current_terms(user.id)
     accepted = _post(api, token)
@@ -555,6 +567,111 @@ def test_a_terminology_outage_is_503_and_nothing_is_stored(api: ApiTestApp) -> N
     assert _audit_event_count(api) == before
 
 
+# --- the supporting reference link (FR-27) -----------------------------------------------------
+
+
+@pytest.mark.req("FR-27")
+@pytest.mark.integration
+def test_a_new_test_without_a_reference_is_422_and_nothing_is_checked_or_stored(
+    api: ApiTestApp,
+) -> None:
+    token, user = _token(api, Role.PROVISIONAL)
+    before = _audit_event_count(api)
+
+    response = api.post(_PATH, token=token, json={"preferred_term": "Serum sodium"})
+
+    assert response.status_code == 422, response.text
+    assert api.reference_checker.urls == []
+    assert _submission_count(api, user) == 0
+    assert _audit_event_count(api) == before
+
+
+@pytest.mark.req("FR-27")
+@pytest.mark.integration
+def test_the_reference_is_checked_stored_and_returned(api: ApiTestApp) -> None:
+    api.reference_checker.status = 403
+    token, user = _token(api, Role.PROVISIONAL)
+
+    response = _post(api, token)
+
+    assert response.status_code == 201, response.text
+    body = response.json()
+    assert api.reference_checker.urls == [_REFERENCE_URL]
+    assert body["reference_url"] == _REFERENCE_URL
+    assert body["reference_status"] == 403
+    assert body["reference_checked_at"]
+    stored = api.session.execute(
+        select(Submission).where(Submission.submitter_id == user.id)
+    ).scalar_one()
+    assert stored.reference_url == _REFERENCE_URL
+    assert stored.reference_status == 403
+    assert stored.reference_checked_at is not None
+
+
+@pytest.mark.req("FR-27")
+@pytest.mark.req("NFR-08")
+@pytest.mark.integration
+def test_the_audit_event_records_the_reference_and_its_check(api: ApiTestApp) -> None:
+    token, _ = _token(api, Role.PROVISIONAL)
+
+    response = _post(api, token)
+
+    assert response.status_code == 201, response.text
+    event = latest_audit_event(
+        api.session, entity_type="submission", entity_id=response.json()["id"]
+    )
+    assert event.after is not None
+    assert event.after["reference_url"] == _REFERENCE_URL
+    assert event.after["reference_status"] == 200
+    assert event.after["reference_checked_at"]
+
+
+@pytest.mark.req("FR-27")
+@pytest.mark.integration
+@pytest.mark.parametrize(
+    ("failure", "status", "expected"),
+    [
+        (ReferenceFailure.BAD_STATUS, 404, "404"),
+        (ReferenceFailure.INTERNAL_ADDRESS, None, "does not contact"),
+        (ReferenceFailure.NAME_NOT_FOUND, None, "could not be found"),
+        (ReferenceFailure.TIMEOUT, None, "too long"),
+    ],
+    ids=["bad_status", "internal_address", "name_not_found", "timeout"],
+)
+def test_a_link_that_fails_its_check_is_422_with_a_reason_and_nothing_is_stored(
+    api: ApiTestApp, failure: ReferenceFailure, status: int | None, expected: str
+) -> None:
+    api.reference_checker.error = ReferenceCheckFailedError(failure, status=status)
+    token, user = _token(api, Role.PROVISIONAL)
+    before = _audit_event_count(api)
+
+    response = _post(api, token)
+
+    assert response.status_code == 422, response.text
+    assert expected in response.json()["detail"]
+    assert _REFERENCE_URL not in response.text
+    assert _submission_count(api, user) == 0
+    assert _audit_event_count(api) == before
+
+
+@pytest.mark.req("FR-27")
+@pytest.mark.integration
+def test_no_outbound_access_is_a_503_that_differs_from_a_broken_link(api: ApiTestApp) -> None:
+    token, user = _token(api, Role.PROVISIONAL)
+    api.reference_checker.error = ReferenceCheckFailedError(ReferenceFailure.NAME_NOT_FOUND)
+    broken = _post(api, token)
+    api.reference_checker.error = ReferenceCheckUnavailableError()
+    before = _audit_event_count(api)
+
+    unavailable = _post(api, token)
+
+    assert broken.status_code == 422, broken.text
+    assert unavailable.status_code == 503, unavailable.text
+    assert unavailable.json()["detail"] != broken.json()["detail"]
+    assert _submission_count(api, user) == 0
+    assert _audit_event_count(api) == before
+
+
 # --- the response and the audit event ----------------------------------------------------------
 
 
@@ -715,6 +832,7 @@ _OVER_THE_BOUND: dict[str, dict[str, object]] = {
     "notes": {"notes": "x" * 10_001},
     "organisation": {"organisation": "x" * 501},
     "snomed_code": {"snomed_code": "1" * 19},
+    "reference_url": {"reference_url": "https://example.org/" + "x" * 2_030},
     "property_count": {"property_values": {f"k{n}": [{"value": "x"}] for n in range(26)}},
     "property_key_length": {"property_values": {"k" * 101: [{"value": "x"}]}},
     "values_per_property": {"property_values": {"api_bound": [{"value": "x"}] * 26}},
@@ -741,6 +859,7 @@ def test_a_request_over_a_size_bound_is_422_and_does_no_work(
 
     assert response.status_code == 422, response.text
     assert api.terminology.requests == ()
+    assert api.reference_checker.urls == []
     assert _submission_count(api, user) == 0
     assert _audit_event_count(api) == before
 
@@ -774,6 +893,7 @@ def test_a_request_at_every_bound_is_accepted(api: ApiTestApp) -> None:
         api,
         token,
         preferred_term="x" * 500,
+        reference_url="https://example.org/" + "x" * 2_028,
         synonyms=[f"Synonym {n}" for n in range(100)],
         notes="x" * 10_000,
         organisation="x" * 500,

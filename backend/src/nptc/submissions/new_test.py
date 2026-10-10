@@ -8,6 +8,11 @@ The lock is one global advisory lock, so holding it across a slow server would s
 write. `test_lock_ordering.py` therefore names this function as exempt from its lock-first rule, and
 `test_submissions_new_test.py` pins the ordering instead.
 
+**The reference link is fetched before the lock too (FR-27).** A new test must carry one, and the
+check can take up to its own deadline, so it runs after every cheaper refusal and before the lock.
+A failed check raises and saves nothing. The stored status and time are the checker's, never the
+caller's.
+
 **Synonyms are a set.** A synonym that folds to the same comparison key as an earlier one, or as the
 preferred term, is dropped, as `nptc.catalogue.designations.add_synonyms` drops it. The first
 spelling is kept, in the order given.
@@ -53,6 +58,7 @@ from nptc.submissions.errors import (
     FreeTextRefusedError,
     SubmissionCodeRefusedError,
 )
+from nptc.submissions.reference_check import ReferenceChecker
 from nptc.terminology.concepts import resolve_concept
 from nptc.terminology.errors import ConceptNotFoundError
 from nptc_shared.similarity import collision_key
@@ -73,9 +79,11 @@ _NOTE_FORMATTING = frozenset({chr(10), chr(13), chr(9)})
 class NewTestSubmissionInput:
     """What a submitter supplies. There is no `length` or FSN field: both are computed or served,
     never accepted (FR-24, FR-82). `organisation` of `None` means "use the profile's"; a blank
-    string means "none"."""
+    string means "none". `reference_url` is required and is fetched as given, so surrounding
+    spaces make it invalid."""
 
     preferred_term: str
+    reference_url: str
     synonyms: Sequence[str] = ()
     snomed_code: str | None = None
     property_values: Mapping[str, Sequence[PropertyValueInput]] = field(default_factory=dict)
@@ -91,6 +99,7 @@ def create_new_test_submission(
     profile_organisation: str | None,
     registry: DatatypeRegistry,
     terminology_client: TerminologyClient,
+    reference_checker: ReferenceChecker,
 ) -> Submission:
     """Stores a new-test submission in state `Submitted`, attributed to `ctx.actor_user_id`, and
     appends its audit event.
@@ -100,7 +109,9 @@ def create_new_test_submission(
     `PropertyValidationError` carrying every property problem at once,
     `nptc.terminology.errors` and `nptc_shared.sctid.InvalidSCTIDError` for a code that is
     malformed or cannot be looked up, and `SubmissionCodeRefusedError` for a code the server
-    knows but rules out. Each is raised before any row is added.
+    knows but rules out, and `nptc.submissions.reference_check.ReferenceCheckFailedError` or
+    `ReferenceCheckUnavailableError` for a reference link that did not pass. Each is raised before
+    any row is added. Blocks for up to the checker's deadline.
     """
     if ctx.actor_user_id is None:
         raise ValueError("a submission needs a human submitter, but the audit context has none")
@@ -124,6 +135,8 @@ def create_new_test_submission(
     if content.snomed_code is not None:
         snomed_code, snomed_fsn = _resolve_code(terminology_client, content.snomed_code)
 
+    reference = reference_checker.check(content.reference_url)
+
     acquire_append_lock(session)
     submission = Submission(
         kind=SubmissionKind.NEW_TEST.value,
@@ -137,6 +150,9 @@ def create_new_test_submission(
             for key, items in property_values.items()
         },
         notes=notes,
+        reference_url=content.reference_url,
+        reference_checked_at=reference.checked_at,
+        reference_status=reference.status,
         submitter_id=ctx.actor_user_id,
         organisation=organisation,
     )

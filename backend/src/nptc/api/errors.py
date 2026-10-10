@@ -119,6 +119,11 @@ from nptc.submissions.errors import (
     FreeTextRefusedError,
     SubmissionCodeRefusedError,
 )
+from nptc.submissions.reference_check import (
+    ReferenceCheckFailedError,
+    ReferenceCheckUnavailableError,
+    ReferenceFailure,
+)
 from nptc.terminology.errors import (
     ConceptNotFoundError,
     TerminologyUnavailableError,
@@ -525,6 +530,39 @@ _DETAIL_TERMS_ACCEPTANCE_REQUIRED = (
 _DETAIL_TERMS_VERSION_STALE = (
     "The terms of use changed since you opened them. Review the current terms and accept again."
 )
+#: FR-27. Each names what the submitter can change and none echoes the URL, which may carry a
+#: token in its query string (NFR-26). `BAD_STATUS` takes the status code.
+_REFERENCE_FAILURE_DETAILS: Final[Mapping[ReferenceFailure, str]] = {
+    ReferenceFailure.INVALID_URL: (
+        "The reference link must be a web address starting with http:// or https://, with a "
+        "host name, no user name or password, and no port other than 80 or 443."
+    ),
+    ReferenceFailure.INTERNAL_ADDRESS: (
+        "The reference link points to an address this service does not contact. Use a link "
+        "to a public web page."
+    ),
+    ReferenceFailure.BAD_STATUS: (
+        "The reference link answered with status {status}, so it was not accepted. Check "
+        "that the page exists and is public, then try again."
+    ),
+    ReferenceFailure.TOO_MANY_REDIRECTS: (
+        "The reference link redirects too many times. Use the page's final address."
+    ),
+    ReferenceFailure.TIMEOUT: (
+        "The reference link took too long to answer. Check the link, or try again shortly."
+    ),
+    ReferenceFailure.NAME_NOT_FOUND: (
+        "The host name in the reference link could not be found. Check the spelling."
+    ),
+    ReferenceFailure.UNREACHABLE: (
+        "The reference link could not be reached. Check the link, or try again shortly."
+    ),
+}
+#: A deployment fault, not the submitter's link, so it names no host and asks for no change.
+_DETAIL_REFERENCE_CHECK_UNAVAILABLE = (
+    "The reference link could not be checked because this service cannot reach the internet. "
+    "Nothing was saved. The problem has been logged for an administrator."
+)
 
 
 #: WWW-Authenticate on a 401 and never on a 403 - the pair endpoints most
@@ -797,6 +835,8 @@ _REFUSALS: Final[dict[type[Exception], _Refusal]] = {
         "terminology lookup refused, unusable response: %s",
         log_level=logging.ERROR,
     ),
+    # Not logged here: `HttpReferenceChecker` already logged the one warning that says why.
+    ReferenceCheckUnavailableError: _Refusal(_DETAIL_REFERENCE_CHECK_UNAVAILABLE, None),
 }
 
 
@@ -975,6 +1015,15 @@ def register_exception_handlers(app: FastAPI, auth_settings: AuthSettings) -> No
             status_code=exc.http_status,
             content={"detail": _DETAIL_FREE_TEXT_REFUSED[exc.field]},
         )
+
+    @app.exception_handler(ReferenceCheckFailedError)
+    async def _handle_reference_check_failed(
+        _request: Request, exc: ReferenceCheckFailedError
+    ) -> JSONResponse:
+        # The reason alone: the exception carries no URL, and the log must not either.
+        _logger.info("reference link refused: %s", exc)
+        detail = _REFERENCE_FAILURE_DETAILS[exc.reason].format(status=exc.status)
+        return JSONResponse(status_code=exc.http_status, content={"detail": detail})
 
     @app.exception_handler(TerminologyUnavailableError)
     async def _handle_terminology_unavailable(

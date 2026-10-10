@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import re
 import uuid
+from datetime import UTC, datetime
 
 import pytest
 from sqlalchemy import text
@@ -43,14 +44,19 @@ def _insert_user(connection: Connection) -> object:
 
 _INSERT_SUBMISSION = text(
     "INSERT INTO submission (kind, state, preferred_term, synonyms, snomed_code, snomed_fsn, "
-    "property_values, notes, submitter_id, organisation) "
+    "property_values, notes, reference_url, reference_checked_at, reference_status, "
+    "submitter_id, organisation) "
     "VALUES (:kind, :state, :preferred_term, CAST(:synonyms AS jsonb), :snomed_code, :snomed_fsn, "
-    "CAST(:property_values AS jsonb), :notes, :submitter_id, :organisation) RETURNING id"
+    "CAST(:property_values AS jsonb), :notes, :reference_url, :reference_checked_at, "
+    ":reference_status, :submitter_id, :organisation) RETURNING id"
 )
-#: Only the columns with a server default are left out, so a test sees the defaults themselves.
+#: Only the columns with a server default are left out, so a test sees the defaults themselves. A
+#: new test must carry its reference, which has no default.
 _INSERT_MINIMAL_SUBMISSION = text(
-    "INSERT INTO submission (kind, preferred_term, submitter_id) "
-    "VALUES ('new_test', 'Serum sodium', :submitter_id) RETURNING id"
+    "INSERT INTO submission (kind, preferred_term, reference_url, reference_checked_at, "
+    "reference_status, submitter_id) "
+    "VALUES ('new_test', 'Serum sodium', 'https://example.org/evidence', now(), 200, "
+    ":submitter_id) RETURNING id"
 )
 
 
@@ -66,6 +72,9 @@ def _insert_submission(connection: Connection, submitter_id: object, **overrides
         "snomed_fsn": None,
         "property_values": "{}",
         "notes": None,
+        "reference_url": "https://example.org/evidence",
+        "reference_checked_at": datetime.now(UTC),
+        "reference_status": 200,
         "submitter_id": submitter_id,
         "organisation": None,
     }
@@ -145,6 +154,15 @@ _CHECK_VIOLATIONS: dict[str, dict[str, object]] = {
     "fsn_without_code": {"snomed_fsn": "Label"},
     "blank_fsn": {"snomed_code": _VALID_CODE, "snomed_fsn": "  "},
     "blank_notes": {"notes": "  "},
+    "new_test_without_reference": {
+        "reference_url": None,
+        "reference_checked_at": None,
+        "reference_status": None,
+    },
+    "blank_reference_url": {"reference_url": "  "},
+    "reference_without_check_time": {"reference_checked_at": None},
+    "reference_without_status": {"reference_status": None},
+    "check_without_reference": {"reference_url": None},
 }
 
 
@@ -160,6 +178,21 @@ def test_check_constraints_refuse_a_malformed_row(
         _insert_submission(db, submitter, **overrides)
 
     assert exc_info.value.orig.sqlstate == _CHECK_VIOLATION  # type: ignore[union-attr]
+
+
+@pytest.mark.req("FR-27")
+@pytest.mark.integration
+def test_an_amendment_may_have_no_reference(db: Connection) -> None:
+    submitter = _insert_user(db)
+
+    _insert_submission(
+        db,
+        submitter,
+        kind="amendment",
+        reference_url=None,
+        reference_checked_at=None,
+        reference_status=None,
+    )
 
 
 @pytest.mark.req("FR-06")
@@ -194,6 +227,9 @@ _REFUSED_STATEMENTS = {
     "update_snomed_code": "UPDATE submission SET snomed_code = NULL, snomed_fsn = NULL",
     "update_property_values": "UPDATE submission SET property_values = '{}'::jsonb",
     "update_notes": "UPDATE submission SET notes = 'changed'",
+    "update_reference_url": "UPDATE submission SET reference_url = 'https://example.org/other'",
+    "update_reference_status": "UPDATE submission SET reference_status = 200",
+    "update_reference_checked_at": "UPDATE submission SET reference_checked_at = now()",
     "update_organisation": "UPDATE submission SET organisation = 'changed'",
     "update_submitter": "UPDATE submission SET submitter_id = submitter_id",
     "update_created_at": "UPDATE submission SET created_at = now()",
@@ -231,6 +267,9 @@ def test_the_audit_policy_withholds_the_organisation_and_records_the_rest() -> N
             "snomed_fsn",
             "property_values",
             "notes",
+            "reference_url",
+            "reference_checked_at",
+            "reference_status",
             "submitter_id",
         }
     )

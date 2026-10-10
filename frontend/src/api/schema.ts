@@ -1586,13 +1586,16 @@ export interface components {
          * CreateSubmissionRequest
          * @description The body of `POST /submissions`.
          *
-         *     `property_values` maps a property key to the complete value list for that property. A key with
-         *     an empty list counts as absent. `organisation` left out means the profile's value, and a blank
+         *     `reference_url` is the supporting link, an `http` or `https` address on port 80 or 443. The
+         *     server fetches it before saving. `property_values` maps a property key to the complete value
+         *     list for that property. A key with an empty list counts as absent. `organisation` left out means the profile's value, and a blank
          *     string means none. The size bounds are in the schema as `maxLength` and `maxItems`.
          */
         CreateSubmissionRequest: {
             /** Preferred Term */
             preferred_term: string;
+            /** Reference Url */
+            reference_url: string;
             /** Synonyms */
             synonyms?: string[];
             /** Snomed Code */
@@ -2557,7 +2560,8 @@ export interface components {
          *     `snomed_fsn` is the label the terminology server returned for `snomed_code`, never anything
          *     the caller sent (FR-82). `label_provenance` states which designation each label field is
          *     (FR-98): the suggested term is offered as the catalogue's preferred term, and the synonyms as
-         *     synonyms.
+         *     synonyms. The three `reference_*` fields describe one check and are all present or all absent;
+         *     a new test always has them.
          */
         SubmissionResponse: {
             /**
@@ -2583,6 +2587,12 @@ export interface components {
             };
             /** Notes */
             notes: string | null;
+            /** Reference Url */
+            reference_url: string | null;
+            /** Reference Checked At */
+            reference_checked_at: string | null;
+            /** Reference Status */
+            reference_status: number | null;
             /** Organisation */
             organisation: string | null;
             /**
@@ -5442,7 +5452,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"] | components["schemas"]["TermsAcceptanceRequiredResponse"];
                 };
             };
-            /** @description The request is not acceptable. `detail` says why for a term that cannot be cleaned and for a SNOMED CT code that is malformed, unknown to the AU edition, inactive, has no reported status or has no fully specified name, and for `notes` or `organisation` that carry an invisible character. `issues[]` names each property problem: an unknown, deprecated or out-of-scope property, a value its datatype refuses, or a property required for submission with no value. A missing `preferred_term`, an unrecognised field, or a part of the request over its size bound fails validation before the route runs. */
+            /** @description The request is not acceptable. `detail` says why for a term that cannot be cleaned and for a SNOMED CT code that is malformed, unknown to the AU edition, inactive, has no reported status or has no fully specified name, and for `notes` or `organisation` that carry an invisible character, and for a `reference_url` that is not a usable web address, points at an internal address, answers with a failing status, redirects too often, times out or cannot be found. `issues[]` names each property problem: an unknown, deprecated or out-of-scope property, a value its datatype refuses, or a property required for submission with no value. A missing `preferred_term`, an unrecognised field, or a part of the request over its size bound fails validation before the route runs. */
             422: {
                 headers: {
                     [name: string]: unknown;
@@ -5480,7 +5490,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description The terminology server could not be reached, or a rate limit persisted through retries. Nothing was saved, and the same request can be sent again. May carry a `Retry-After` header. */
+            /** @description The terminology server could not be reached, or a rate limit persisted through retries, or the platform has no outbound internet access to check the `reference_url`. Nothing was saved, and the same request can be sent again. May carry a `Retry-After` header. */
             503: {
                 headers: {
                     [name: string]: unknown;

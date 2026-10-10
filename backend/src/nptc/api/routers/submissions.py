@@ -15,6 +15,13 @@ unreachable stays a 503, because the caller's code may be perfectly good.
 from the term (FR-24, FR-85) and the FSN is whatever the terminology server returns for the code
 (FR-82), so neither is the caller's to supply.
 
+**The reference link is required and is fetched before anything is saved (FR-27).** The server
+checks the link's status only, refuses every internal address, and stores the link with the time
+and status it saw. A link that fails the check is a 422 with a reason the submitter can act on. A
+deployment with no outbound internet access is a 503, because the link may be fine. The route is a
+plain `def`, so FastAPI runs it in a worker thread and the checker's wait never stalls the event
+loop.
+
 **No `submitter` in the response.** Who submitted a record is FR-42's rule, which the read routes
 own; this route returns the submitter's own copy of the organisation and nothing that names a user.
 """
@@ -41,6 +48,7 @@ from nptc.api.dependencies import (
     ApiSettingsDep,
     AuditContextDep,
     CurrentPrincipal,
+    ReferenceCheckerDep,
     get_datatype_registry,
     get_session,
     get_terminology_client,
@@ -60,6 +68,7 @@ from nptc.db.models.submission import Submission
 from nptc.registry.handlers import DatatypeRegistry
 from nptc.settings import ApiSettings
 from nptc.submissions.new_test import NewTestSubmissionInput, create_new_test_submission
+from nptc.submissions.reference_check import MAX_URL_LENGTH
 from nptc_shared.terminology import TerminologyClient
 
 router = APIRouter(prefix="/submissions", tags=["submissions"])
@@ -76,7 +85,8 @@ _RESPONSE_403: Final[dict[str, Any]] = {
     ),
 }
 #: Three 422 body shapes reach a caller: a typed domain error (`ErrorResponse`: an unusable term,
-#: or a code the terminology server rules out, each with its own sentence), the field-level body
+#: a code the terminology server rules out, or a reference link that fails its check, each with its
+#: own sentence), the field-level body
 #: (`PropertyValidationResponse`), or a pydantic failure that never reaches the route body
 #: (`HTTPValidationError`). The union lets the first two register in `components/schemas`.
 _RESPONSE_422: Final[dict[str, Any]] = {
@@ -85,7 +95,9 @@ _RESPONSE_422: Final[dict[str, Any]] = {
         "The request is not acceptable. `detail` says why for a term that cannot be cleaned and "
         "for a SNOMED CT code that is malformed, unknown to the AU edition, inactive, has no "
         "reported status or has no fully specified name, and for `notes` or `organisation` that "
-        "carry an invisible character. `issues[]` names each property problem: an unknown, "
+        "carry an invisible character, and for a `reference_url` that is not a usable web address, "
+        "points at an internal address, answers with a failing status, redirects too often, times "
+        "out or cannot be found. `issues[]` names each property problem: an unknown, "
         "deprecated or out-of-scope property, a value its datatype refuses, or a property "
         "required for submission with no value. A missing `preferred_term`, an unrecognised "
         "field, or a part of the request over its size bound fails validation before the route "
@@ -112,8 +124,9 @@ _RESPONSE_503: Final[dict[str, Any]] = {
     "model": ErrorResponse,
     "description": (
         "The terminology server could not be reached, or a rate limit persisted through "
-        "retries. Nothing was saved, and the same request can be sent again. May carry a "
-        "`Retry-After` header."
+        "retries, or the platform has no outbound internet access to check the `reference_url`. "
+        "Nothing was saved, and the same request can be sent again. May carry a `Retry-After` "
+        "header."
     ),
 }
 
@@ -175,14 +188,16 @@ class SubmissionPropertyValueRequest(BaseModel):
 class CreateSubmissionRequest(BaseModel):
     """The body of `POST /submissions`.
 
-    `property_values` maps a property key to the complete value list for that property. A key with
-    an empty list counts as absent. `organisation` left out means the profile's value, and a blank
+    `reference_url` is the supporting link, an `http` or `https` address on port 80 or 443. The
+    server fetches it before saving. `property_values` maps a property key to the complete value
+    list for that property. A key with an empty list counts as absent. `organisation` left out means the profile's value, and a blank
     string means none. The size bounds are in the schema as `maxLength` and `maxItems`.
     """
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
     preferred_term: _Term
+    reference_url: str = Field(max_length=MAX_URL_LENGTH)
     synonyms: list[_Term] = Field(default_factory=list, max_length=_MAX_SYNONYMS)
     snomed_code: str | None = Field(default=None, max_length=_MAX_SCTID_LENGTH)
     property_values: dict[
@@ -215,7 +230,8 @@ class SubmissionResponse(BaseModel):
     `snomed_fsn` is the label the terminology server returned for `snomed_code`, never anything
     the caller sent (FR-82). `label_provenance` states which designation each label field is
     (FR-98): the suggested term is offered as the catalogue's preferred term, and the synonyms as
-    synonyms.
+    synonyms. The three `reference_*` fields describe one check and are all present or all absent;
+    a new test always has them.
     """
 
     model_config = ConfigDict(frozen=True)
@@ -229,6 +245,9 @@ class SubmissionResponse(BaseModel):
     snomed_fsn: str | None
     property_values: dict[str, list[SubmittedPropertyValue]]
     notes: str | None
+    reference_url: str | None
+    reference_checked_at: datetime | None
+    reference_status: int | None
     organisation: str | None
     created_at: datetime
     row_version: int
@@ -248,6 +267,7 @@ def create_submission(
     principal: CurrentPrincipal,
     registry: RegistryDep,
     terminology_client: TerminologyClientDep,
+    reference_checker: ReferenceCheckerDep,
     settings: ApiSettingsDep,
     body: Annotated[CreateSubmissionRequest, Body()],
 ) -> SubmissionResponse:
@@ -256,6 +276,7 @@ def create_submission(
         ctx,
         content=NewTestSubmissionInput(
             preferred_term=body.preferred_term,
+            reference_url=body.reference_url,
             synonyms=body.synonyms,
             snomed_code=body.snomed_code,
             property_values={
@@ -271,6 +292,7 @@ def create_submission(
         profile_organisation=principal.user_ref.organisation if principal.user_ref else None,
         registry=registry,
         terminology_client=terminology_client,
+        reference_checker=reference_checker,
     )
     return _to_response(submission, settings)
 
@@ -292,6 +314,9 @@ def _to_response(submission: Submission, settings: ApiSettings) -> SubmissionRes
             for key, items in submission.property_values.items()
         },
         notes=submission.notes,
+        reference_url=submission.reference_url,
+        reference_checked_at=submission.reference_checked_at,
+        reference_status=submission.reference_status,
         organisation=submission.organisation,
         created_at=submission.created_at,
         row_version=submission.row_version,

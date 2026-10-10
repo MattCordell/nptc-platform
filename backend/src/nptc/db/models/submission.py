@@ -19,6 +19,11 @@ in-place mutation is invisible to the unit of work and does not persist, so a wr
 whole attribute. `property_values` is keyed by property key. The `CHECK` constraints pin each
 column's JSON type so a malformed document never reaches a reader.
 
+**The reference link is stored with its check (FR-27).** `reference_url` is what the submitter
+sent, `reference_checked_at` is when the server fetched it and `reference_status` is the final
+HTTP status. A new test must carry all three. The check runs before the row is written, so a
+stored link has always passed.
+
 **`organisation` is the submitter's own copy** of the profile value, pre-filled and editable.
 Closing an account clears the profile (NFR-17); the copy stays, and the audit policy withholds it
 as it does on `app_user`.
@@ -63,6 +68,14 @@ _SNOMED_CODE_CHECK_SQL = "nptc_sctid_is_valid(snomed_code)"
 _SNOMED_FSN_NOT_BLANK_SQL = "snomed_fsn IS NULL OR length(btrim(snomed_fsn)) > 0"
 _SNOMED_CODE_WITH_FSN_SQL = "(snomed_code IS NULL) = (snomed_fsn IS NULL)"
 _NOTES_NOT_BLANK_SQL = "notes IS NULL OR length(btrim(notes)) > 0"
+_REFERENCE_URL_NOT_BLANK_SQL = "reference_url IS NULL OR length(btrim(reference_url)) > 0"
+#: The three columns describe one check, so they are all present or all absent. A new test must
+#: carry one (FR-27); an amendment may leave it out.
+_REFERENCE_CHECK_COMPLETE_SQL = (
+    "(reference_url IS NULL) = (reference_checked_at IS NULL) "
+    "AND (reference_url IS NULL) = (reference_status IS NULL)"
+)
+_NEW_TEST_HAS_REFERENCE_SQL = "kind <> 'new_test' OR reference_url IS NOT NULL"
 
 
 class Submission(Base):
@@ -80,6 +93,9 @@ class Submission(Base):
             "snomed_fsn",
             "property_values",
             "notes",
+            "reference_url",
+            "reference_checked_at",
+            "reference_status",
             "submitter_id",
         }
     )
@@ -99,6 +115,9 @@ class Submission(Base):
         CheckConstraint(_SNOMED_FSN_NOT_BLANK_SQL, name="snomed_fsn_not_blank"),
         CheckConstraint(_SNOMED_CODE_WITH_FSN_SQL, name="snomed_code_with_fsn"),
         CheckConstraint(_NOTES_NOT_BLANK_SQL, name="notes_not_blank"),
+        CheckConstraint(_REFERENCE_URL_NOT_BLANK_SQL, name="reference_url_not_blank"),
+        CheckConstraint(_REFERENCE_CHECK_COMPLETE_SQL, name="reference_check_complete"),
+        CheckConstraint(_NEW_TEST_HAS_REFERENCE_SQL, name="new_test_has_reference"),
         # "A user's own submissions" (FR-42) and "newest first" are the two reads on this table.
         Index("ix_submission_submitter_id", "submitter_id"),
         Index("ix_submission_created_at", "created_at"),
@@ -126,6 +145,13 @@ class Submission(Base):
         JSONB, nullable=False, server_default=text("'{}'::jsonb"), active_history=True
     )
     notes: Mapped[str | None] = mapped_column(Text, nullable=True, active_history=True)
+    reference_url: Mapped[str | None] = mapped_column(Text, nullable=True, active_history=True)
+    reference_checked_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True, active_history=True
+    )
+    reference_status: Mapped[int | None] = mapped_column(
+        Integer, nullable=True, active_history=True
+    )
     submitter_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), ForeignKey("app_user.id"), nullable=False, active_history=True
     )

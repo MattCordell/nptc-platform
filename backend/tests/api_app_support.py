@@ -39,6 +39,7 @@ import importlib.util
 import sys
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -68,6 +69,7 @@ from nptc.db.models.user import User
 from nptc.db.models.user_identity import UserIdentity
 from nptc.db.session import discard_after_commit_actions, run_after_commit_actions
 from nptc.settings import ApiSettings, AuthSettings
+from nptc.submissions.reference_check import ReferenceCheckResult
 from nptc.terminology.synonyms import SnomedSynonymSource
 from nptc.terms.acceptance import has_accepted
 from nptc_shared.terminology import StubTerminologyClient
@@ -103,6 +105,22 @@ AUDIENCE = "nptc-api"
 FRONTEND_ORIGIN = "http://localhost:5173"
 
 
+class StubReferenceChecker:
+    """Passes every link by default. A test sets `error` to make the next checks fail the way
+    `HttpReferenceChecker` would, and reads `urls` to see what was checked (FR-27, NFR-37)."""
+
+    def __init__(self) -> None:
+        self.error: Exception | None = None
+        self.status = 200
+        self.urls: list[str] = []
+
+    def check(self, url: str) -> ReferenceCheckResult:
+        self.urls.append(url)
+        if self.error is not None:
+            raise self.error
+        return ReferenceCheckResult(checked_at=datetime.now(UTC), status=self.status)
+
+
 @dataclass
 class ApiTestApp:
     app: FastAPI
@@ -115,6 +133,8 @@ class ApiTestApp:
     #: responses on this directly, and can inspect `.requests` for the
     #: "exactly one upstream request" assertions FR-26/FR-52 both need.
     terminology: StubTerminologyClient
+    #: Overridden onto `get_reference_checker`, so no app test can reach the network.
+    reference_checker: StubReferenceChecker
 
     def set_api_settings(self, **fields: Any) -> ApiSettings:
         """Replaces the `ApiSettings` this app serves for the rest of the
@@ -289,9 +309,11 @@ def build_api_test_app(
         # `@lru_cache`d, so a test overriding `mfa_acr_values` here would
         # otherwise build a step-up challenge from whichever `AuthSettings`
         # happened to be cached first, not from this test's own settings.
+        reference_checker = StubReferenceChecker()
         app = create_app(
             settings=api_settings or hermetic_api_settings(),
             auth_settings=settings,
+            reference_checker=reference_checker,
             rate_limit_clock=rate_limit_clock,
         )
         app.dependency_overrides[get_session] = _scoped_session
@@ -312,4 +334,5 @@ def build_api_test_app(
                 key=key,
                 session=session,
                 terminology=terminology_client,
+                reference_checker=reference_checker,
             )

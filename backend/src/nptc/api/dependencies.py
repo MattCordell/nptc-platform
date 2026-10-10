@@ -24,6 +24,7 @@ import uuid
 from collections.abc import Callable, Iterator
 from functools import lru_cache
 from typing import Annotated
+from urllib.parse import urlsplit
 
 from fastapi import Depends, Request
 from sqlalchemy.orm import Session
@@ -40,6 +41,7 @@ from nptc.db.session import session_scope
 from nptc.registry.datatypes import build_builtin_handlers
 from nptc.registry.handlers import DatatypeRegistry, HandlerDeps
 from nptc.settings import ApiSettings, AuthSettings
+from nptc.submissions.reference_check import HttpReferenceChecker, ReferenceChecker, tcp_probe
 from nptc.terminology.synonyms import SnomedSynonymSource, interactive_config
 from nptc_shared.terminology import OntoserverClient, TerminologyClient, TerminologyConfig
 
@@ -91,6 +93,33 @@ def get_snomed_synonym_source() -> SnomedSynonymSource:
 
 
 SnomedSynonymSourceDep = Annotated[SnomedSynonymSource, Depends(get_snomed_synonym_source)]
+
+
+def _outbound_probe() -> Callable[[], bool]:
+    """The no-egress probe: can this deployment open a connection to the terminology server's host?
+
+    The platform already needs that host, so this adds no setting. `NPTC_TX_*` is read here,
+    once, so the probe itself cannot raise a configuration error in the middle of a check. It
+    proves internet access only while the host is on the internet: a self-hosted server
+    answers whatever the deployment's egress, and `deployment.md` says so."""
+    base = urlsplit(TerminologyConfig.from_env().base_url)
+    host = base.hostname
+    port = base.port or (80 if base.scheme == "http" else 443)
+
+    def probe() -> bool:
+        return host is not None and tcp_probe(host, port)
+
+    return probe
+
+
+@lru_cache(maxsize=1)
+def get_reference_checker() -> ReferenceChecker:
+    """The FR-27 link checker, built once per process, and at start-up by `create_app`.
+    Construction opens no socket."""
+    return HttpReferenceChecker(probe=_outbound_probe())
+
+
+ReferenceCheckerDep = Annotated[ReferenceChecker, Depends(get_reference_checker)]
 
 
 def get_session() -> Iterator[Session]:

@@ -71,6 +71,7 @@ and/or `data-model.md`, so it gets no section of its own below.
 | [`0025_property_index_owner_role.py`](../../backend/migrations/versions/0025_property_index_owner_role.py) | The `nptc_property_index_owner` role, which takes over ownership of `property_value` (see [`data-model.md`](../architecture/data-model.md#automatic-index-generation-issue-54-fr-13)) | See [below](#0025_property_index_owner_rolepy) - a non-superuser migration role needs membership of the new role |
 | [`0026_drop_designation_language.py`](../../backend/migrations/versions/0026_drop_designation_language.py) | Drops `designation.use`, `designation.language` and `designation_collision_acknowledgement.language` (see [`data-model.md`](../architecture/data-model.md#designation-issue-47-fr-04-fr-24-fr-37-fr-85)) | See [below](#0026_drop_designation_languagepy) - refuses to run if any row is not an en-AU synonym; re-emit any dataset made before this release |
 | [`0027_submission.py`](../../backend/migrations/versions/0027_submission.py) | `submission` (see [`data-model.md`](../architecture/data-model.md#submission-fr-23-fr-27-fr-28-fr-29-nfr-08)) | See [below](#0027_submissionpy) - an empty table on upgrade, and the downgrade discards every submission |
+| [`0028_submission_reference.py`](../../backend/migrations/versions/0028_submission_reference.py) | `submission.reference_url`, `reference_checked_at` and `reference_status` (see [`data-model.md`](../architecture/data-model.md#submission-fr-23-fr-27-fr-28-fr-29-nfr-08)) | See [below](#0028_submission_referencepy) - three nullable columns, and the downgrade discards every stored reference |
 
 ## Provisioning the app role's login
 
@@ -609,6 +610,21 @@ The grants are in the migration. The app role may insert and read a submission a
 
 The downgrade drops the table, which discards every submission and its content. Take a backup
 first if any have been made.
+
+## `0028_submission_reference.py`
+
+Adds three nullable columns to `submission` for the supporting reference link (FR-27): the link,
+when the server checked it, and the HTTP status it answered. They are all present or all absent,
+and a new test must have them. The upgrade is instant and needs no data step.
+
+The rule that a new test must carry a reference is added `NOT VALID`. A submission saved at
+revision 0027 has no reference, so the database enforces the rule for every row written from now
+on and leaves those rows alone. The API at this revision requires `reference_url` on
+`POST /api/v1/submissions`, and it needs outbound internet access on ports 80 and 443 (see
+[`deployment.md`](deployment.md#outbound-internet-access)).
+
+The downgrade drops the three columns, which discards every stored reference. Take a backup
+first if any submissions have been made.
 
 ## Testcontainers and Docker
 
