@@ -154,7 +154,7 @@ class OntoserverClient:
         )
         if display_language is not None:
             query = query.set("displayLanguage", display_language)
-        for prop in properties:
+        for prop in _with_designations(properties):
             query = query.add("property", prop)
         body = self._request(Operation.LOOKUP, method="GET", params=query)
         return fhir.parse_lookup(body, code=code, system=edition.system)
@@ -283,6 +283,15 @@ class OntoserverClient:
             self._config.backoff_base_seconds * (2.0**attempt),
             self._config.max_backoff_seconds,
         )
+
+
+def _with_designations(properties: tuple[str, ...]) -> tuple[str, ...]:
+    """Ontoserver treats `property` as a filter over designations too, so a named
+    list without `designation` returns no FSN. An empty list is left alone: an
+    unfiltered `$lookup` already returns everything."""
+    if not properties or "designation" in properties or "*" in properties:
+        return properties
+    return (*properties, "designation")
 
 
 def _parameters_body(params: Mapping[str, str]) -> dict[str, object]:

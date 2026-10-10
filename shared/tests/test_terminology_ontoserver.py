@@ -162,6 +162,66 @@ def test_lookup_sends_the_full_version_uri_not_a_bare_effective_time() -> None:
     assert captured["version"].startswith("http://snomed.info/sct/")
 
 
+def _designation_aware_lookup(request: httpx.Request) -> httpx.Response:
+    """Answers like Ontoserver: designations come back only when no `property`
+    is named, or when `designation` (or `*`) is among them."""
+    named = request.url.params.get_list("property")
+    body = _lookup_body(display="11-deoxycortisol measurement")
+    if not named or "designation" in named or "*" in named:
+        parameters = body["parameter"]
+        assert isinstance(parameters, list)
+        parameters.append(
+            {
+                "name": "designation",
+                "part": [
+                    {"name": "language", "valueCode": "en"},
+                    {
+                        "name": "use",
+                        "valueCoding": {
+                            "system": "http://snomed.info/sct",
+                            "code": "900000000000003001",
+                            "display": "Fully specified name",
+                        },
+                    },
+                    {"name": "value", "valueString": "11-deoxycortisol measurement (procedure)"},
+                ],
+            }
+        )
+    return httpx.Response(200, json=body)
+
+
+@pytest.mark.req("FR-26")
+@pytest.mark.req("FR-82")
+def test_lookup_with_a_property_filter_still_returns_the_fsn() -> None:
+    client = _client(_designation_aware_lookup)
+    result = client.lookup("73638008", edition=SNOMED_CT_AU, properties=("inactive",))
+    assert result.fully_specified_name == "11-deoxycortisol measurement (procedure)"
+
+
+def test_lookup_does_not_repeat_designation_when_the_caller_asked_for_it() -> None:
+    captured: list[list[str]] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured.append(request.url.params.get_list("property"))
+        return httpx.Response(200, json=_lookup_body())
+
+    client = _client(handler)
+    client.lookup("73638008", edition=SNOMED_CT_AU, properties=("designation", "inactive"))
+    client.lookup("73638008", edition=SNOMED_CT_AU, properties=("*",))
+    assert captured == [["designation", "inactive"], ["*"]]
+
+
+def test_lookup_with_no_properties_sends_no_property_parameter() -> None:
+    captured: list[list[str]] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured.append(request.url.params.get_list("property"))
+        return httpx.Response(200, json=_lookup_body())
+
+    _client(handler).lookup("73638008", edition=SNOMED_CT_AU)
+    assert captured == [[]]
+
+
 def test_no_authorization_header_when_anonymous() -> None:
     captured: dict[str, httpx.Headers] = {}
 

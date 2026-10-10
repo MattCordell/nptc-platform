@@ -12,6 +12,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
+import httpx
 import pytest
 
 from nptc.terminology.concepts import resolve_concept
@@ -28,9 +29,11 @@ from nptc_shared.terminology import (
     Designation,
     Edition,
     LookupResult,
+    OntoserverClient,
     Operation,
     StubConcept,
     StubTerminologyClient,
+    TerminologyConfig,
     TerminologyConfigError,
     TerminologyOutcomeError,
     TerminologyRateLimitError,
@@ -106,6 +109,48 @@ def test_resolves_fsn_with_tag_intact_and_au_preferred_term() -> None:
     assert resolved.fsn == _FSN
     assert resolved.au_preferred_term == _AU_PREFERRED_TERM
     assert resolved.edition == "au"
+
+
+@pytest.mark.req("FR-26")
+@pytest.mark.req("FR-82")
+def test_resolves_the_fsn_from_a_server_that_filters_designations_by_property() -> None:
+    """Ontoserver returns designations for a `$lookup` only when no `property` is named
+    or `designation` is among them. The stub never filters, so only the real client
+    against a server that does can show the FSN survives `resolve_concept`'s property list."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        parameters: list[dict[str, object]] = [
+            {"name": "display", "valueString": _AU_PREFERRED_TERM}
+        ]
+        named = request.url.params.get_list("property")
+        if not named or "designation" in named:
+            parameters.append(
+                {
+                    "name": "designation",
+                    "part": [
+                        {"name": "language", "valueCode": "en"},
+                        {
+                            "name": "use",
+                            "valueCoding": {
+                                "system": "http://snomed.info/sct",
+                                "code": "900000000000003001",
+                            },
+                        },
+                        {"name": "value", "valueString": _FSN},
+                    ],
+                }
+            )
+        return httpx.Response(200, json={"resourceType": "Parameters", "parameter": parameters})
+
+    client = OntoserverClient(
+        TerminologyConfig(base_url="https://tx.example.test/fhir"),
+        transport=httpx.MockTransport(handler),
+    )
+
+    resolved = resolve_concept(client, _CODE, edition=SNOMED_CT_AU)
+
+    assert resolved.fsn == _FSN
+    assert resolved.au_preferred_term == _AU_PREFERRED_TERM
 
 
 @pytest.mark.req("FR-82")
