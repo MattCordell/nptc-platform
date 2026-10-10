@@ -29,6 +29,10 @@ routes serve `AdminEntryPage` and `AdminSearchPage`: the public shape plus `row_
 per row (see `AdminEntrySummary`). Neither has a 404, matching `catalogue.py`'s
 `PUBLIC_COLLECTION_ERROR_RESPONSES`: an unmatched query is an empty page.
 
+**The history route serves the public `HistoryPage`** for an entry of any status, so an
+editor can read the history of a draft they just saved. `catalogue.py`'s `read_history`
+keeps its 404 for a draft.
+
 **The length report counts entries of every status, on purpose.** The
 `nptc.catalogue.length_report` module docstring gives the reason.
 """
@@ -57,17 +61,20 @@ from nptc.api.routers.catalogue_shared import (
     Facet,
     FacetBucket,
     FilterRequest,
+    HistoryCursorQuery,
+    HistoryPage,
     LimitQuery,
     binding_from_row,
     designation_from_row,
     entry_core_fields,
     entry_summary_fields,
     filter_parameter,
+    history_page_from,
     property_value_from_row,
     snomed_synonyms_for,
 )
 from nptc.auth.permissions import Permission
-from nptc.catalogue import maintenance, queries, search
+from nptc.catalogue import history, maintenance, queries, search
 from nptc.catalogue.entries import load_entry_for_update
 from nptc.catalogue.facets import load_facet_context, parse_filters
 from nptc.catalogue.length_report import compute_length_distribution
@@ -140,6 +147,22 @@ _RESPONSE_422_SEARCH: Final[dict[str, Any]] = {
         "facet this endpoint does not offer, an operator the facet does not support, "
         "or a value the property cannot hold. A filter is never silently ignored."
     ),
+}
+
+#: `GET /catalogue/admin/entries/{business_key}/history`' own 422: a bad key or a bad
+#: paging parameter.
+_RESPONSE_422_HISTORY: Final[dict[str, Any]] = {
+    "model": ErrorResponse,
+    "description": (
+        "The business key is not `NPTC-nnnnnn`, `limit` is outside its range, or `before` "
+        "is not a cursor this API issued."
+    ),
+}
+_RESPONSES_ADMIN_HISTORY: Final[dict[int | str, dict[str, Any]]] = {
+    401: _RESPONSE_401,
+    403: _RESPONSE_403,
+    404: _RESPONSE_404,
+    422: _RESPONSE_422_HISTORY,
 }
 
 #: The two all-status collection routes. No 404; see the module docstring.
@@ -485,6 +508,35 @@ def read_entry_any_status(
     }
     end_read_transaction(session)
     return EntryDetail(**stored, snomed_synonyms=snomed_synonyms_for(bindings, synonyms))
+
+
+@router.get(
+    "/admin/entries/{business_key}/history",
+    summary="One catalogue entry's change history, any status, most recent first (FR-19)",
+    responses=_RESPONSES_ADMIN_HISTORY,
+    dependencies=[_EDIT],
+)
+def read_entry_history_any_status(
+    session: SessionDep,
+    business_key: BusinessKeyPath,
+    limit: LimitQuery = 50,
+    before: HistoryCursorQuery = None,
+) -> HistoryPage:
+    """The `catalogue.edit_published`-gated counterpart to `catalogue.py`'s public
+    `read_history`, so an editor can read the history of a `draft` entry the public route
+    404s. The page has the same shape and paging.
+
+    Every caller is authenticated, so NFR-26's anonymous withholding never applies.
+    `changed_by` is still `null` for a system change or a pseudonymised account."""
+    entry = load_entry_for_update(session, business_key)
+    page = history.load_history(
+        session,
+        entry,
+        limit=limit,
+        before=int(before) if before is not None else None,
+        include_changed_by=True,
+    )
+    return history_page_from(page)
 
 
 class LengthDistributionBucket(BaseModel):

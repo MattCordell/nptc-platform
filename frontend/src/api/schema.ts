@@ -594,6 +594,31 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/catalogue/admin/entries/{business_key}/history": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * One catalogue entry's change history, any status, most recent first (FR-19)
+         * @description The `catalogue.edit_published`-gated counterpart to `catalogue.py`'s public
+         *     `read_history`, so an editor can read the history of a `draft` entry the public route
+         *     404s. The page has the same shape and paging.
+         *
+         *     Every caller is authenticated, so NFR-26's anonymous withholding never applies.
+         *     `changed_by` is still `null` for a system change or a pseudonymised account.
+         */
+        get: operations["read_entry_history_any_status_api_v1_catalogue_admin_entries__business_key__history_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/catalogue/admin/preferred-term-length-distribution": {
         parameters: {
             query?: never;
@@ -4861,6 +4886,81 @@ export interface operations {
                 };
             };
             /** @description The business key is not `NPTC-nnnnnn`. */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description An address exceeded its request budget (FR-22): an anonymous caller its anonymous budget, or a caller whose credentials the API kept rejecting its budget for rejected credentials. Wait for the number of seconds in `Retry-After`, then try again. A valid credential is never counted. The body's `bulk_artefacts` names where to fetch the whole catalogue instead. */
+            429: {
+                headers: {
+                    /** @description Whole seconds until the caller's request budget is available again. */
+                    "Retry-After"?: number;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RateLimitedResponse"];
+                };
+            };
+        };
+    };
+    read_entry_history_any_status_api_v1_catalogue_admin_entries__business_key__history_get: {
+        parameters: {
+            query?: {
+                /** @description Maximum entries in this page. */
+                limit?: number;
+                /** @description The `next_cursor` from the previous page. Pass it back unmodified, and do not construct one. */
+                before?: string | null;
+            };
+            header?: never;
+            path: {
+                /** @description The entry's public identifier, e.g. `NPTC-000247` (FR-03). */
+                business_key: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HistoryPage"];
+                };
+            };
+            /** @description No credential, or one that could not be verified. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The caller is authenticated but does not hold `catalogue.edit_published`, or holds it but has not completed the MFA step-up this permission requires (the response then also carries a `WWW-Authenticate` step-up challenge). */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description No catalogue entry, of any status, has this business key. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The business key is not `NPTC-nnnnnn`, `limit` is outside its range, or `before` is not a cursor this API issued. */
             422: {
                 headers: {
                     [name: string]: unknown;
