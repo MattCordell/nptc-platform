@@ -5,8 +5,8 @@ Revises: 0028
 Create Date: 2026-10-10
 
 FR-25: a submission that matched something already in the catalogue or already proposed is stored
-only after the submitter confirmed it, with the time of the confirmation and the matches the server
-showed. See `nptc.db.models.submission` for the reasoning.
+only when the request confirmed it, with the time of the confirmation and the matches the server
+found when it saved the row. See `nptc.db.models.submission` for the reasoning.
 
 `duplicate_matches` defaults to an empty array, so a submission saved at revision 0028 reads as one
 that matched nothing. `duplicate_confirmed_at` is present exactly when the array is not empty.

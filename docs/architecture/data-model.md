@@ -1476,7 +1476,7 @@ catalogue content. Only `POST /api/v1/submissions` writes it today, and only for
 | `reference_url` | `TEXT` | Nullable, `CHECK` not blank. The supporting link the submitter gave (FR-27), stored as sent. `CHECK (kind <> 'new_test' OR reference_url IS NOT NULL)`, so a new test always has one and an amendment may leave it out |
 | `reference_checked_at` | `TIMESTAMPTZ` | Nullable. When the server fetched the link. Present exactly when `reference_url` is |
 | `reference_status` | `INTEGER` | Nullable. The final HTTP status the link answered, after any redirects. Present exactly when `reference_url` is |
-| `duplicate_confirmed_at` | `TIMESTAMPTZ` | Nullable. When the submitter confirmed the duplicate matches (FR-25). Present exactly when `duplicate_matches` is not empty |
+| `duplicate_confirmed_at` | `TIMESTAMPTZ` | Nullable. The database time of the save, equal to `created_at`, for a request that carried `confirm_not_duplicate` and matched something (FR-25). Present exactly when `duplicate_matches` is not empty |
 | `duplicate_matches` | `JSONB` | `NOT NULL DEFAULT '[]'`, `CHECK` a JSON array. The matches the server found when it saved the row, never a list the caller sent. See below |
 | `submitter_id` | `UUID` | `NOT NULL`, FK to `app_user.id`. The internal id, which account closure keeps (NFR-17) |
 | `organisation` | `TEXT` | Nullable. The submitter's own copy of their organisation. One line, normalised like a term, and refused if it holds an invisible character (FR-63) |
@@ -1507,7 +1507,9 @@ alone. The columns are in the audit event, and the grants keep them fixed after 
 catalogue entries and open submissions that match the submission's terms or code. If there are
 matches and the request does not confirm them, the route answers 409 and saves nothing. With
 confirmation, the row keeps the matches the server found at that moment in `duplicate_matches`
-and the time in `duplicate_confirmed_at`: `CHECK ((duplicate_confirmed_at IS NULL) =
+and the time in `duplicate_confirmed_at`. A request may confirm without a prior 409, and a new
+match can appear between a 409 and the resend, so the row can hold a match the submitter was
+never shown: `CHECK ((duplicate_confirmed_at IS NULL) =
 (duplicate_matches = '[]'::jsonb))`. The comparison with `'[]'` cannot fail on a malformed value,
 which `jsonb_array_length` would. "Open" is every state except `Published in release`, `Rejected`
 and `Withdrawn`. Migration 0029 adds both columns, and the grants keep them fixed after insert.

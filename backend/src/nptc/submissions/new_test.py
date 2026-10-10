@@ -10,8 +10,8 @@ write. `test_lock_ordering.py` therefore names this function as exempt from its 
 
 **A duplicate must be confirmed (FR-25).** After the code is resolved, the submission is compared
 with the active catalogue and the open submissions. A match without `confirm_not_duplicate` raises
-and saves nothing. A confirmed match is stored with the time and the matches found at this moment,
-never a list the caller supplied. The comparison is a read, so it also runs before the lock.
+and saves nothing. A confirmed match is stored with the database time and the matches found at
+this moment, never a list the caller supplied. They can include a match the submitter never saw. The comparison is a read, so it also runs before the lock.
 
 **The reference link is fetched before the lock too (FR-27).** A new test must carry one, and the
 check can take up to its own deadline, so it runs after every cheaper refusal, the duplicate check
@@ -38,9 +38,9 @@ from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
+from datetime import datetime
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from nptc.audit.diffing import ChangeKind
@@ -169,7 +169,7 @@ def create_new_test_submission(
         reference_url=content.reference_url,
         reference_checked_at=reference.checked_at,
         reference_status=reference.status,
-        duplicate_confirmed_at=datetime.now(UTC) if matches else None,
+        duplicate_confirmed_at=_database_now(session) if matches else None,
         duplicate_matches=[match.as_record() for match in matches],
         submitter_id=ctx.actor_user_id,
         organisation=organisation,
@@ -183,6 +183,12 @@ def create_new_test_submission(
         kind=ChangeKind.CREATED,
     )
     return submission
+
+
+def _database_now(session: Session) -> datetime:
+    """The transaction's start time, which is what `created_at` takes, so the two columns of
+    one row never disagree because the application server's clock differs from the database's."""
+    return session.execute(select(func.now())).scalar_one()
 
 
 def _clean_free_text(text: str | None, *, field: FreeTextField, multiline: bool) -> str | None:

@@ -24,10 +24,12 @@ sent, `reference_checked_at` is when the server fetched it and `reference_status
 HTTP status. A new test must carry all three. The check runs before the row is written, so a
 stored link has always passed.
 
-**A confirmed duplicate is stored with what the server showed (FR-25).** `duplicate_matches` holds
-the matches the server found when it saved the row, never a list the caller sent, and
-`duplicate_confirmed_at` is when the submitter confirmed them. A submission that matched nothing has
-an empty array and no time.
+**A confirmed duplicate is stored with what the server found (FR-25).** `duplicate_matches` holds
+the matches the server found when it saved the row, never a list the caller sent. It can include a
+match the submitter was never shown, because a request may confirm without a prior 409 and a new
+match can appear between the 409 and the resend. `duplicate_confirmed_at` is the database time of
+the save, the same value as `created_at`, and says the request carried a confirmation. A submission
+that matched nothing has an empty array and no time.
 
 **`organisation` is the submitter's own copy** of the profile value, pre-filled and editable.
 Closing an account clears the profile (NFR-17); the copy stays, and the audit policy withholds it

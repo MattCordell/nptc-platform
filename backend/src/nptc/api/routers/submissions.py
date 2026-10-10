@@ -252,8 +252,9 @@ class CreateSubmissionRequest(BaseModel):
     confirm_not_duplicate: bool = Field(
         default=False,
         description=(
-            "Set to true to confirm this is a different test from the matches a 409 listed. It "
-            "has no effect when nothing matches."
+            "Set to true to say this is a different test from any match. The server stores the "
+            "matches it finds when it saves, which can include one a 409 did not list. It has "
+            "no effect when nothing matches."
         ),
     )
 
@@ -302,8 +303,9 @@ class SubmissionResponse(BaseModel):
     the caller sent (FR-82). `label_provenance` states which designation each label field is
     (FR-98): the suggested term is offered as the catalogue's preferred term, and the synonyms as
     synonyms. The three `reference_*` fields describe one check and are all present or all absent;
-    a new test always has them. `duplicate_confirmed_at` is when the submitter confirmed the
-    matches a 409 listed (FR-25), and is null when nothing matched.
+    a new test always has them. `duplicate_confirmed_at` is when the server saved a submission whose
+    request carried `confirm_not_duplicate` and that matched something (FR-25), and is null
+    otherwise.
     """
 
     model_config = ConfigDict(frozen=True)

@@ -1270,6 +1270,28 @@ def test_a_confirmed_match_is_stored_with_the_time_and_what_the_server_found(
 
 @pytest.mark.req("FR-25")
 @pytest.mark.integration
+def test_the_confirmation_time_is_the_databases_and_equals_created_at(
+    app_session: Session,
+) -> None:
+    term = _word()
+    _active_entry(app_session, term)
+    _, ctx = _submitter(app_session)
+
+    submission = _create(
+        app_session,
+        ctx,
+        NewTestSubmissionInput(
+            reference_url=_REFERENCE_URL, preferred_term=term, confirm_not_duplicate=True
+        ),
+    )
+    app_session.flush()
+    app_session.refresh(submission)
+
+    assert submission.duplicate_confirmed_at == submission.created_at
+
+
+@pytest.mark.req("FR-25")
+@pytest.mark.integration
 def test_a_confirmation_with_nothing_to_confirm_records_nothing(app_session: Session) -> None:
     _, ctx = _submitter(app_session)
 
