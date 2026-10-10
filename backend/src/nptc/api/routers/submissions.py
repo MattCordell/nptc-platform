@@ -41,6 +41,15 @@ submission stores the time and the matches the server found, never a list the ca
 `POST` is used because the terms are free text that may be long, and a `GET` would put them in a
 URL that proxies log (NFR-35).
 
+**A quota refusal is a 429 (FR-43).** Both create routes first count the caller's earlier
+submissions, new tests and amendments together, against the quota their roles allow
+(`nptc.submissions.quota`). A refusal is returned and sent as a normal response, never raised,
+because the request session rolls back on an exception and would take the audit event with it. An
+hourly refusal carries `Retry-After`, and a lifetime one does not, because waiting does not lift it.
+The check runs after the permission gate and the body validation, and before any terminology or
+reference call, so an over-limit caller costs the server no network request. The duplicate check
+writes nothing and is not counted.
+
 **No `submitter` in the response.** Who submitted a record is FR-42's rule, which the read routes
 own; this route returns the submitter's own copy of the organisation and nothing that names a user.
 """
@@ -48,11 +57,13 @@ own; this route returns the submitter's own copy of the organisation and nothing
 from __future__ import annotations
 
 import json
+import math
 import uuid
 from datetime import datetime
 from typing import Annotated, Any, Final
 
 from fastapi import APIRouter, Body, Depends
+from fastapi.responses import JSONResponse
 from pydantic import (
     BaseModel,
     ConfigDict,
@@ -87,16 +98,18 @@ from nptc.api.labels import (
     fsn_provenance,
 )
 from nptc.api.routers.auth import ErrorResponse
+from nptc.auth.authorisation import resolve_quota
 from nptc.auth.permissions import Permission
 from nptc.catalogue.entries import BUSINESS_KEY_PATTERN
 from nptc.catalogue.property_values import PropertyValueInput
 from nptc.db.models.catalogue_entry import CatalogueEntry
-from nptc.db.models.submission import Submission
+from nptc.db.models.submission import Submission, SubmissionKind
 from nptc.registry.handlers import DatatypeRegistry
 from nptc.settings import ApiSettings
 from nptc.submissions.amendment import AmendmentInput, create_amendment_submission
 from nptc.submissions.duplicates import check_duplicates
 from nptc.submissions.new_test import NewTestSubmissionInput, create_new_test_submission
+from nptc.submissions.quota import QuotaLimit, QuotaRefusal, enforce_submission_quota
 from nptc.submissions.reference_check import MAX_URL_LENGTH
 from nptc_shared.terminology import TerminologyClient
 
@@ -159,6 +172,37 @@ _RESPONSE_503: Final[dict[str, Any]] = {
     ),
 }
 
+
+class SubmissionQuotaResponse(BaseModel):
+    """The 429 body when a caller has used up their submission quota (FR-43). `detail` is one
+    sentence saying what happened and what to do next. `limit` says which limit was reached and
+    `maximum` is its size, so a form can say more than the sentence does."""
+
+    model_config = ConfigDict(frozen=True)
+
+    detail: str
+    limit: QuotaLimit
+    maximum: int
+
+
+_RESPONSE_429: Final[dict[str, Any]] = {
+    "model": SubmissionQuotaResponse,
+    "description": (
+        "The caller has used up their submission quota (FR-43). New tests and amendments share one "
+        "counter. `limit` is `hourly` when the quota is a number of submissions in a rolling hour, "
+        "and the response then carries `Retry-After`, the whole seconds until a submission can "
+        "be made. `limit` is `lifetime` when the quota is a total, and the response carries no "
+        "`Retry-After`, because waiting does not lift it. Nothing was saved, and the refusal "
+        "is recorded in the audit trail."
+    ),
+    "headers": {
+        "Retry-After": {
+            "description": "Whole seconds until the caller can submit again. Only on `hourly`.",
+            "schema": {"type": "integer", "minimum": 1},
+        }
+    },
+}
+
 _RESPONSE_409: Final[dict[str, Any]] = {
     "model": SubmissionDuplicatesResponse,
     "description": (
@@ -206,6 +250,7 @@ _RESPONSES_CREATE: Final[dict[int | str, dict[str, Any]]] = {
     403: _RESPONSE_403,
     409: _RESPONSE_409,
     422: _RESPONSE_422,
+    429: _RESPONSE_429,
     500: _RESPONSE_500,
     502: _RESPONSE_502,
     503: _RESPONSE_503,
@@ -217,6 +262,7 @@ _RESPONSES_AMENDMENT: Final[dict[int | str, dict[str, Any]]] = {
     404: _RESPONSE_404_AMENDMENT,
     409: _RESPONSE_409_AMENDMENT,
     422: _RESPONSE_422_AMENDMENT,
+    429: _RESPONSE_429,
     500: _RESPONSE_500,
     502: _RESPONSE_502,
     503: _RESPONSE_503,
@@ -413,6 +459,7 @@ class SubmissionResponse(BaseModel):
     "",
     summary="Submit a new test for the catalogue",
     status_code=201,
+    response_model=SubmissionResponse,
     responses=_RESPONSES_CREATE,
     dependencies=[_CREATE],
 )
@@ -425,7 +472,12 @@ def create_submission(
     reference_checker: ReferenceCheckerDep,
     settings: ApiSettingsDep,
     body: Annotated[CreateSubmissionRequest, Body()],
-) -> SubmissionResponse:
+) -> SubmissionResponse | JSONResponse:
+    refusal = enforce_submission_quota(
+        session, ctx, quota=resolve_quota(principal), kind=SubmissionKind.NEW_TEST
+    )
+    if refusal is not None:
+        return _quota_refusal_response(refusal)
     submission = create_new_test_submission(
         session,
         ctx,
@@ -457,6 +509,7 @@ def create_submission(
     "/amendments",
     summary="Propose a change to a published entry",
     status_code=201,
+    response_model=SubmissionResponse,
     responses=_RESPONSES_AMENDMENT,
     dependencies=[_PROPOSE_AMENDMENT],
 )
@@ -468,7 +521,12 @@ def create_amendment(
     reference_checker: ReferenceCheckerDep,
     settings: ApiSettingsDep,
     body: Annotated[CreateAmendmentRequest, Body()],
-) -> SubmissionResponse:
+) -> SubmissionResponse | JSONResponse:
+    refusal = enforce_submission_quota(
+        session, ctx, quota=resolve_quota(principal), kind=SubmissionKind.AMENDMENT
+    )
+    if refusal is not None:
+        return _quota_refusal_response(refusal)
     submission = create_amendment_submission(
         session,
         ctx,
@@ -504,6 +562,38 @@ def check_submission_duplicates(
         snomed_code=body.snomed_code,
     )
     return DuplicateCheckResponse(matches=[duplicate_match_item(match) for match in matches])
+
+
+def _plural(count: int, noun: str) -> str:
+    return f"{count} {noun}" if count == 1 else f"{count} {noun}s"
+
+
+def _quota_detail(refusal: QuotaRefusal) -> str:
+    if refusal.limit is QuotaLimit.LIFETIME:
+        return (
+            f"Your account has reached its limit of {_plural(refusal.maximum, 'submission')} in "
+            "total. Contact the catalogue team if you need to submit more."
+        )
+    if refusal.retry_after_seconds is None:
+        return "Your account cannot make submissions at the moment. Contact the catalogue team."
+    minutes = math.ceil(refusal.retry_after_seconds / 60)
+    return (
+        f"You have reached your limit of {_plural(refusal.maximum, 'submission')} in one hour. "
+        f"Try again in {_plural(minutes, 'minute')}."
+    )
+
+
+def _quota_refusal_response(refusal: QuotaRefusal) -> JSONResponse:
+    """A 429 returned rather than raised, so the request session commits the audit event."""
+    headers = (
+        {}
+        if refusal.retry_after_seconds is None
+        else {"Retry-After": str(refusal.retry_after_seconds)}
+    )
+    body = SubmissionQuotaResponse(
+        detail=_quota_detail(refusal), limit=refusal.limit, maximum=refusal.maximum
+    )
+    return JSONResponse(status_code=429, content=body.model_dump(mode="json"), headers=headers)
 
 
 def _entry_business_key(session: Session, submission: Submission) -> str | None:

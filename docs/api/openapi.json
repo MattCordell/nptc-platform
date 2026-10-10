@@ -4273,6 +4273,25 @@
               }
             }
           },
+          "429": {
+            "description": "The caller has used up their submission quota (FR-43). New tests and amendments share one counter. `limit` is `hourly` when the quota is a number of submissions in a rolling hour, and the response then carries `Retry-After`, the whole seconds until a submission can be made. `limit` is `lifetime` when the quota is a total, and the response carries no `Retry-After`, because waiting does not lift it. Nothing was saved, and the refusal is recorded in the audit trail.",
+            "headers": {
+              "Retry-After": {
+                "description": "Whole seconds until the caller can submit again. Only on `hourly`.",
+                "schema": {
+                  "type": "integer",
+                  "minimum": 1.0
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SubmissionQuotaResponse"
+                }
+              }
+            }
+          },
           "500": {
             "description": "The service is misconfigured, not a caller mistake - a malformed `NPTC_TX_*` value. Retrying will not clear it.",
             "content": {
@@ -4299,25 +4318,6 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          },
-          "429": {
-            "description": "An address exceeded its request budget (FR-22): an anonymous caller its anonymous budget, or a caller whose credentials the API kept rejecting its budget for rejected credentials. Wait for the number of seconds in `Retry-After`, then try again. A valid credential is never counted. The body's `bulk_artefacts` names where to fetch the whole catalogue instead.",
-            "headers": {
-              "Retry-After": {
-                "description": "Whole seconds until the caller's request budget is available again.",
-                "schema": {
-                  "type": "integer",
-                  "minimum": 1
-                }
-              }
-            },
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/RateLimitedResponse"
                 }
               }
             }
@@ -4410,6 +4410,25 @@
               }
             }
           },
+          "429": {
+            "description": "The caller has used up their submission quota (FR-43). New tests and amendments share one counter. `limit` is `hourly` when the quota is a number of submissions in a rolling hour, and the response then carries `Retry-After`, the whole seconds until a submission can be made. `limit` is `lifetime` when the quota is a total, and the response carries no `Retry-After`, because waiting does not lift it. Nothing was saved, and the refusal is recorded in the audit trail.",
+            "headers": {
+              "Retry-After": {
+                "description": "Whole seconds until the caller can submit again. Only on `hourly`.",
+                "schema": {
+                  "type": "integer",
+                  "minimum": 1.0
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SubmissionQuotaResponse"
+                }
+              }
+            }
+          },
           "500": {
             "description": "The service is misconfigured, not a caller mistake - a malformed `NPTC_TX_*` value. Retrying will not clear it.",
             "content": {
@@ -4436,25 +4455,6 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          },
-          "429": {
-            "description": "An address exceeded its request budget (FR-22): an anonymous caller its anonymous budget, or a caller whose credentials the API kept rejecting its budget for rejected credentials. Wait for the number of seconds in `Retry-After`, then try again. A valid credential is never counted. The body's `bulk_artefacts` names where to fetch the whole catalogue instead.",
-            "headers": {
-              "Retry-After": {
-                "description": "Whole seconds until the caller's request budget is available again.",
-                "schema": {
-                  "type": "integer",
-                  "minimum": 1
-                }
-              }
-            },
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/RateLimitedResponse"
                 }
               }
             }
@@ -8068,6 +8068,15 @@
         "title": "PropertyValuesWriteResult",
         "description": "The property's values after the write, plus the entry's new\n`row_version` - mirroring `catalogue_designations.\nAmendDesignationResult`, so an editing client never has to re-fetch the\nentry just to learn its next lock token."
       },
+      "QuotaLimit": {
+        "type": "string",
+        "enum": [
+          "lifetime",
+          "hourly"
+        ],
+        "title": "QuotaLimit",
+        "description": "Which limit was reached. A fixed set, so the API can name it without echoing anything."
+      },
       "ReinstateDesignationRequest": {
         "properties": {
           "term": {
@@ -8549,6 +8558,29 @@
         ],
         "title": "SubmissionPropertyValueRequest",
         "description": "One value for a property, with the optional justification the registry's strength rule can\nask for. Shaped like the catalogue's own property write, with a size bound on each part."
+      },
+      "SubmissionQuotaResponse": {
+        "properties": {
+          "detail": {
+            "type": "string",
+            "title": "Detail"
+          },
+          "limit": {
+            "$ref": "#/components/schemas/QuotaLimit"
+          },
+          "maximum": {
+            "type": "integer",
+            "title": "Maximum"
+          }
+        },
+        "type": "object",
+        "required": [
+          "detail",
+          "limit",
+          "maximum"
+        ],
+        "title": "SubmissionQuotaResponse",
+        "description": "The 429 body when a caller has used up their submission quota (FR-43). `detail` is one\nsentence saying what happened and what to do next. `limit` says which limit was reached and\n`maximum` is its size, so a form can say more than the sentence does."
       },
       "SubmissionResponse": {
         "properties": {
