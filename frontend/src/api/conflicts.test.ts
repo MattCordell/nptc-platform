@@ -1,6 +1,14 @@
 import { describe, expect, it } from "vitest";
 
-import { asCollisionError, asVersionConflict, refusalDetail } from "./conflicts.ts";
+import {
+  asCollisionError,
+  asDuplicateMatches,
+  asFieldRefusal,
+  asQuotaRefusal,
+  asVersionConflict,
+  refusalDetail,
+  retryAfterSeconds,
+} from "./conflicts.ts";
 import { ApiError } from "./unwrap.ts";
 
 /**
@@ -113,5 +121,104 @@ describe("refusalDetail", () => {
   it("returns null for an empty body and for a non-ApiError", () => {
     expect(refusalDetail(new ApiError(500, null))).toBeNull();
     expect(refusalDetail(new Error("network down"))).toBeNull();
+  });
+});
+
+describe("asFieldRefusal", () => {
+  it.each([422, 503])("narrows a %s that names a submission field", (status) => {
+    const body = {
+      detail: "The reference link could not be reached.",
+      field: "reference_url",
+    };
+
+    expect(asFieldRefusal(new ApiError(status, body))).toEqual(body);
+  });
+
+  // The principal failure mode: a 422 or 503 from any other route has no
+  // `field`, and must fall back to the sentence rather than mark a field.
+  it("is null for a 422 or 503 with no field", () => {
+    expect(asFieldRefusal(new ApiError(422, { detail: "Not valid." }))).toBeNull();
+    expect(asFieldRefusal(new ApiError(503, { detail: "Try again." }))).toBeNull();
+  });
+
+  it("is null for a field the form does not have, and for FastAPI's array detail", () => {
+    expect(asFieldRefusal(new ApiError(422, { detail: "x", field: "kind" }))).toBeNull();
+    expect(asFieldRefusal(new ApiError(422, { detail: [{ msg: "x" }] }))).toBeNull();
+  });
+
+  it("is null for another status, and for an error that is not an ApiError", () => {
+    expect(
+      asFieldRefusal(new ApiError(409, { detail: "x", field: "snomed_code" })),
+    ).toBeNull();
+    expect(asFieldRefusal(new Error("offline"))).toBeNull();
+  });
+
+  it("does not take a prototype property for a field", () => {
+    expect(
+      asFieldRefusal(new ApiError(422, { detail: "x", field: "toString" })),
+    ).toBeNull();
+  });
+});
+
+describe("asDuplicateMatches", () => {
+  const MATCHES = {
+    detail: "This submission may duplicate an entry.",
+    matches: [{ source: "catalogue_entry", key: "NPTC-000247" }],
+  };
+
+  it("narrows a 409 carrying matches", () => {
+    expect(asDuplicateMatches(new ApiError(409, MATCHES))?.matches).toHaveLength(1);
+  });
+
+  it("is null for a plain 409, and for matches on another status", () => {
+    expect(asDuplicateMatches(new ApiError(409, { detail: "Conflict." }))).toBeNull();
+    expect(asDuplicateMatches(new ApiError(422, MATCHES))).toBeNull();
+  });
+});
+
+describe("asQuotaRefusal", () => {
+  it.each(["hourly", "lifetime", "concurrent"])("narrows a %s quota refusal", (limit) => {
+    const body = { detail: "Quota used.", limit, maximum: 5 };
+
+    expect(asQuotaRefusal(new ApiError(429, body))).toEqual(body);
+  });
+
+  // The request-budget 429 shares the status and carries no `limit`.
+  it("is null for the request-budget 429, and for a limit it does not know", () => {
+    expect(asQuotaRefusal(new ApiError(429, { detail: "Slow down." }))).toBeNull();
+    expect(
+      asQuotaRefusal(new ApiError(429, { detail: "x", limit: "daily", maximum: 5 })),
+    ).toBeNull();
+    expect(
+      asQuotaRefusal(new ApiError(429, { detail: "x", limit: "hourly", maximum: "5" })),
+    ).toBeNull();
+  });
+});
+
+describe("retryAfterSeconds", () => {
+  function refused(retryAfter?: string) {
+    const headers = new Headers();
+    if (retryAfter !== undefined) {
+      headers.set("Retry-After", retryAfter);
+    }
+    return new ApiError(429, {}, headers);
+  }
+
+  it("reads whole seconds", () => {
+    expect(retryAfterSeconds(refused("1800"))).toBe(1800);
+  });
+
+  it("is null when there is no header, as for a lifetime quota", () => {
+    expect(retryAfterSeconds(refused())).toBeNull();
+  });
+
+  it("is null for a value that is not a positive whole number", () => {
+    for (const value of ["0", "-5", "soon", "1.5", "Wed, 21 Oct 2026 07:28:00 GMT", ""]) {
+      expect(retryAfterSeconds(refused(value))).toBeNull();
+    }
+  });
+
+  it("is null for an error that is not an ApiError", () => {
+    expect(retryAfterSeconds(new Error("offline"))).toBeNull();
   });
 });

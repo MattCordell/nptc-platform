@@ -24,3 +24,21 @@
  * about.
  */
 export const MAX_TERMS_PER_BATCH = 100;
+
+/**
+ * The size bounds of `POST /submissions`, copied for the same reason and
+ * checked the same way (`limits.test.ts`). The form stops typing at the bound
+ * where the input can, and names the bound where it cannot, instead of showing
+ * the bare 422 that FastAPI gives for a request over its limits.
+ */
+export const SUBMISSION_LIMITS = {
+  /** `preferred_term` and each synonym. */
+  termLength: 500,
+  synonyms: 100,
+  referenceUrlLength: 2048,
+  notesLength: 10000,
+  organisationLength: 500,
+  /** Values one property may carry. */
+  valuesPerProperty: 25,
+  justificationLength: 2000,
+} as const;
