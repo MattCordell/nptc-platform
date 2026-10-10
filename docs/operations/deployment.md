@@ -194,10 +194,34 @@ The Postgres 18 image keeps its data under `/var/lib/postgresql`. If Postgres re
 loop and its log mentions an "unused mount/volume", the volume came from an older layout.
 Run `down -v` and start again.
 
+## Outbound internet access
+
+The `backend` service makes outbound requests to the internet in two places:
+
+- It queries the terminology server named by `NPTC_TX_BASE_URL`.
+- It checks the supporting reference link on a new-test submission (FR-27). The check fetches
+  the link's status over HTTP or HTTPS, never the page content.
+
+If your network filters outbound traffic, allow `backend` to reach TCP ports 80 and 443 on the
+internet. The link check refuses every other port, so no other rule is needed.
+
+The link check never contacts an address inside your network. It resolves the host name once,
+refuses loopback, private, link-local (including the `169.254.169.254` cloud metadata address),
+reserved and multicast addresses, and connects to the address it checked. It repeats these
+checks on every redirect. It ignores the `HTTP_PROXY` and `HTTPS_PROXY` variables, because a
+proxy would resolve the name itself and bypass those checks. A deployment that can only reach
+the internet through a proxy cannot run the link check.
+
+When a link does not resolve or connect, the backend tries to open a connection to the host in
+`NPTC_TX_BASE_URL`. If that fails too, it logs one warning, "reference check cannot run: this
+deployment has no outbound internet access", and the submitter sees a 503 instead of a message
+about their link. Nothing is saved.
+
 ## Troubleshooting
 
 | Symptom | Likely cause and fix |
 |---|---|
+| Submitting a new test fails with "this service cannot reach the internet", and the `backend` log has "no outbound internet access" | `backend` cannot open a connection to the terminology server's host, so it cannot tell a mistyped link from a blocked network. Allow outbound ports 80 and 443, or fix `NPTC_TX_BASE_URL`. See [Outbound internet access](#outbound-internet-access). |
 | `required variable NPTC_APP_DB_PASSWORD is missing a value` (or `NPTC_INDEXER_DB_PASSWORD`) | Your `deploy/.env` predates this variable. Add it from `deploy/.env.example`. |
 | `migrate` exits with an error | Run `docker compose -f deploy/compose.yml logs migrate`. The last line names the failure type. A wrong database password is the usual cause after you edit `POSTGRES_PASSWORD` on an existing volume. |
 | `backend` never becomes healthy | Run `docker compose -f deploy/compose.yml logs backend`. A settings error names the variable. |

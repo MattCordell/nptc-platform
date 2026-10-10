@@ -196,7 +196,7 @@
   phase: p2
   title: "Submitters can attach free-text clinical justification and supporting references"
   status: in-progress
-  notes: "Free-text supporting notes are stored on the submission (the notes column) and appear in its audit event (backend/tests/test_api_submissions.py, test_submissions_new_test.py). Stays in-progress: the supporting references half has no field yet."
+  notes: "Free-text supporting notes are stored on the submission (the notes column) and appear in its audit event (backend/tests/test_api_submissions.py, test_submissions_new_test.py). The reference URL checker with its SSRF guards is built (nptc.submissions.reference_check) but is not yet wired into a submission endpoint."
 - id: "FR-28"
   priority: MUST
   phase: p2
