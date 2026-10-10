@@ -48,9 +48,9 @@ because the request session rolls back on an exception and would take the audit 
 hourly refusal carries `Retry-After`, and a lifetime one does not, because waiting does not lift it.
 A caller whose earlier submission is still being processed is refused too, with `limit` of
 `concurrent` and a short `Retry-After`, rather than made to wait for the per-user lock while holding
-a database connection. The check runs after the permission gate and the body validation, and before any terminology or
-reference call, so an over-limit caller costs the server no network request. The duplicate check
-writes nothing and is not counted.
+a database connection. The check runs after the permission gate and the body validation, and before
+any terminology or reference call, so an over-limit caller costs the server no network request. The
+duplicate check writes nothing and is not counted.
 
 **No `submitter` in the response.** Who submitted a record is FR-42's rule, which the read routes
 own; this route returns the submitter's own copy of the organisation and nothing that names a user.
@@ -192,9 +192,10 @@ _RESPONSE_429: Final[dict[str, Any]] = {
     "model": SubmissionQuotaResponse | RateLimitedResponse,
     "description": (
         "Either the caller has used up their submission quota (FR-43), or an anonymous or "
-        "repeatedly rejected address has used up its request budget (FR-22, a `RateLimitedResponse`). "
-        "For a quota refusal, new tests and amendments share one counter. `limit` is `hourly` when "
-        "the quota is a number of submissions in a rolling hour, and the response then carries "
+        "repeatedly rejected address has used up its request budget (FR-22, a "
+        "`RateLimitedResponse`). For a quota refusal, new tests and amendments share one counter. "
+        "`limit` is `hourly` when the quota is a number of submissions in a rolling hour, and the "
+        "response then carries "
         "`Retry-After`, the whole seconds until a submission can be made. `limit` is `lifetime` "
         "when the quota is a total, and the response carries no `Retry-After`, because waiting "
         "does not lift it. Nothing was saved, and a used-up quota is recorded in the audit trail. "

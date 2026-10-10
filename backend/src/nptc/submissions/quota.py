@@ -16,7 +16,8 @@ after the caller's insert, so two requests for the last slot cannot both count t
 and the reference fetch. A request that waited for it would hold a pooled database connection for as
 long, and one user sending many parallel requests could drain the pool for everyone. So the lock is
 tried, and a request that finds it taken is refused with `QuotaLimit.CONCURRENT` and a short
-`Retry-After`. That refusal is not audited: no limit was reached, and the audit append lock is global.
+`Retry-After`. That refusal is not audited: no limit was reached, and the audit append lock is
+global.
 
 **Lock order.** The per-user lock comes before the audit append lock, on the refusal path and on
 the success path, and nothing takes them in the reverse order. The audit append lock stays global,

@@ -1,10 +1,10 @@
 """Concurrency and lock order of the submission quota (FR-43, NFR-08).
 
 The race test uses two real connections (`app_engine`), because a single session running the same
-code twice cannot reproduce two transactions that both read a count before either commits. Counts are
-taken for the user the fixture created, because `backend/tests` shares one Postgres container (see
-`CLAUDE.md`). `pristine_audit_event` is requested to clean up the audit rows the committed writes
-leave behind, not because an assertion depends on an empty table.
+code twice cannot reproduce two transactions that both read a count before either commits. Counts
+are taken for the user the fixture created, because `backend/tests` shares one Postgres container
+(see `CLAUDE.md`). `pristine_audit_event` is requested to clean up the audit rows the committed
+writes leave behind, not because an assertion depends on an empty table.
 """
 
 from __future__ import annotations

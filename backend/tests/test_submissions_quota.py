@@ -133,7 +133,9 @@ def test_a_new_test_and_an_amendment_share_one_counter(app_session: Session) -> 
 
     assert new_test is not None
     assert amendment is not None
-    kinds = [event.after["submission_kind"] for event in _refusal_events(app_session, user)]  # type: ignore[index]
+    kinds = [
+        (event.after or {}).get("submission_kind") for event in _refusal_events(app_session, user)
+    ]
     assert kinds == ["new_test", "amendment"]
 
 
