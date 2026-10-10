@@ -455,10 +455,11 @@ to.
 ### Anonymous per-IP limit (FR-22, NFR-24)
 
 NFR-24 asks for rate limiting at three layers. This is the first: a request budget for each
-anonymous client address. The other two are not built. They are a per-user limit on
-authenticated actions, and the domain-level submission quotas of FR-43 (`QUOTAS` in
-`nptc.auth.permissions` holds the numbers, and ADR-0019 says that exceeding one is a 429 with
-its own audit story). The three layers are independent. This one never reads a user record, and
+anonymous client address. The second, a per-user limit on authenticated actions, is not built.
+The third is the domain-level submission quota of FR-43, which is built: `POST /submissions`
+and `POST /submissions/amendments` count a user's earlier submissions against `QUOTAS` in
+`nptc.auth.permissions` and answer an over-limit request with a 429 whose body says which limit
+was reached (see [`permissions.md`](permissions.md#submission-quota-fr-43-nfr-24)). The three layers are independent. This one never reads a user record, and
 neither of the others should read this one's counters.
 
 **Behaviour.**

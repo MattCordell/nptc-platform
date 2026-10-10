@@ -100,6 +100,6 @@ def resolve_quota(
     4.3/4.4's `max 5` / `20/hr`). **Not enforced here.** Exceeding the
     returned quota is a 429, a distinct refusal from everything else in this
     module, with its own audit story ("rate limited" rather than "not
-    permitted"). Submissions own the count and the 429; this is only the
-    resolution rule."""
+    permitted"). `nptc.submissions.quota` owns the count and the refusal;
+    this is only the resolution rule."""
     return effective_quota(principal.roles, override=override)

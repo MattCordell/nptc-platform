@@ -43,7 +43,7 @@ directions. This is the strongest test in the issue: a PRD edit that adds a row,
 | PRD notation | Mechanism | Where |
 |---|---|---|
 | `Y (own)` / `Y (any)` | Two permissions (`SUBMISSION_WITHDRAW_OWN`/`_ANY`), resolved against the resource's `owner_user_id` | `nptc.auth.authorisation.may_act_on` |
-| `Y (max 5)` / `Y (20/hr)` | Not a permission — a numeric budget on the same `SUBMISSION_CREATE` permission | `nptc.auth.permissions.SubmissionQuota`/`QUOTAS`/`effective_quota` (defined and unit-tested; **not yet enforced** — `POST /api/v1/submissions` does not yet count a user's submissions against it) |
+| `Y (max 5)` / `Y (20/hr)` | Not a permission — a numeric budget on the same `SUBMISSION_CREATE` permission | `nptc.auth.permissions.SubmissionQuota`/`QUOTAS`/`effective_quota` (enforced by `nptc.submissions.quota.enforce_submission_quota`: both submission create routes count the caller's earlier submissions, new tests and amendments together, and refuse an over-limit request with a 429, which is audited) |
 | "Promote Provisional to Member and no more" | `Permission.ROLE_GRANT_MEMBER` vs `ROLE_GRANT_ANY` | `nptc.auth.grants.grant_role` |
 
 A single permission plus an ownership `if` at the call site, or a predicate attached to a
@@ -102,8 +102,8 @@ derives one from issue #43's `Resolution`:
 
 - `may_act_on(principal, *, own, any_, owner_user_id) -> bool` and
   `require_ownership_or_permission(...)` — the own/any resolution.
-- `resolve_quota(principal, *, override=None)` — `effective_quota`, defined but not
-  enforced (see above).
+- `resolve_quota(principal, *, override=None)` — `effective_quota`, the resolution rule only.
+  `nptc.submissions.quota` counts and refuses; see "Submission quota" below.
 
 Errors live in `nptc.auth.errors_authorisation`, deliberately apart from
 `nptc.auth.errors.TokenError` (whose docstring states every member is 401-shaped — a
@@ -226,6 +226,38 @@ automated (scripting a TOTP enrolment round-trip end to end was judged dispropor
 effort for this issue); the automated coverage proves the flow binds and its executor
 resolves correctly on import.
 
+## Submission quota (FR-43, NFR-24)
+
+`POST /api/v1/submissions` and `POST /api/v1/submissions/amendments` call
+`nptc.submissions.quota.enforce_submission_quota` before they do anything else that costs
+something. It reads the caller's quota from `resolve_quota(principal)`, counts, and either lets
+the request through or returns a refusal.
+
+- **One counter.** Every row the user has in `submission` counts, whatever its kind or state, so a
+  new test and an amendment share the limit, and a withdrawn submission still used its slot.
+- **Two limits.** Provisional has a lifetime limit of 5. Member has a rolling hour of 20, measured
+  on the database clock against `submission.created_at`. A user holding several roles gets the most
+  permissive value in each dimension. Reviewer and Administrator have no limit, and a request from
+  them takes no lock and runs no query.
+- **A refusal is a 429.** The body is `SubmissionQuotaResponse`: `detail` (one sentence), `limit`
+  (`lifetime` or `hourly`) and `maximum`. An hourly refusal carries `Retry-After`, the whole seconds
+  until the limit-th newest submission in the window is an hour old, rounded up and never below 1. A
+  lifetime refusal carries none, because waiting does not lift it.
+- **A refusal is audited and the event survives it.** The check returns the refusal and the route
+  sends the 429 as a normal response. The request session therefore commits the
+  `submission.quota_refused` event. Raising an exception would roll the session back and lose it.
+- **Concurrency.** The check takes `pg_advisory_xact_lock(hashtext('submission-quota:<user id>'))`,
+  which the transaction holds until it commits, after the caller's insert. Two requests for the last
+  slot therefore run one after the other, and the second is refused. The lock is per user, so one
+  user's requests never wait on another's.
+- **Lock order.** The per-user lock is taken before the global audit append lock on both the refusal
+  path and the success path, and nothing takes them the other way round. The check runs before the
+  terminology lookup and the reference fetch, so an over-limit user costs the server no network
+  call. `POST /api/v1/submissions/duplicate-check` writes nothing and is not counted.
+- **Not built.** The per-user override (FR-41) has no column yet, and `resolve_quota` takes it as an
+  unused `override` argument. NFR-24's second layer, a per-user limit on authenticated actions,
+  is separate.
+
 ## FR-80 and FR-81: provable without a single endpoint
 
 Both are worded per-endpoint. Since issue #41 `backend/src/nptc/api/` serves one real
@@ -313,6 +345,8 @@ earlier one also asks for acceptance again. See
 
 ## Requirement status
 
+- **FR-43**: `implemented` - the quota is enforced on both create routes, refused with an audited 429,
+  and serialised per user. NFR-24 stays `in-progress` until its second layer exists.
 - **FR-44**: `implemented` — the matrix test and the AST guard
   (`test_authorisation_guard.py`) are both mechanical, durable proofs.
 - **NFR-20, FR-01, FR-80, FR-81**: `in-progress` — all four are worded

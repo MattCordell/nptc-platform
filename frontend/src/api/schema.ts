@@ -2427,6 +2427,12 @@ export interface components {
             row_version: number;
         };
         /**
+         * QuotaLimit
+         * @description Which limit was reached. A fixed set, so the API can name it without echoing anything.
+         * @enum {string}
+         */
+        QuotaLimit: "lifetime" | "hourly";
+        /**
          * ReinstateDesignationRequest
          * @description The body of `POST .../designations/reinstatement`.
          *     `term` addresses the designation to reinstate - resolved against the
@@ -2683,6 +2689,19 @@ export interface components {
             value: unknown;
             /** Justification */
             justification?: string | null;
+        };
+        /**
+         * SubmissionQuotaResponse
+         * @description The 429 body when a caller has used up their submission quota (FR-43). `detail` is one
+         *     sentence saying what happened and what to do next. `limit` says which limit was reached and
+         *     `maximum` is its size, so a form can say more than the sentence does.
+         */
+        SubmissionQuotaResponse: {
+            /** Detail */
+            detail: string;
+            limit: components["schemas"]["QuotaLimit"];
+            /** Maximum */
+            maximum: number;
         };
         /**
          * SubmissionResponse
@@ -5609,15 +5628,15 @@ export interface operations {
                     "application/json": components["schemas"]["HTTPValidationError"] | components["schemas"]["ErrorResponse"] | components["schemas"]["PropertyValidationResponse"];
                 };
             };
-            /** @description An address exceeded its request budget (FR-22): an anonymous caller its anonymous budget, or a caller whose credentials the API kept rejecting its budget for rejected credentials. Wait for the number of seconds in `Retry-After`, then try again. A valid credential is never counted. The body's `bulk_artefacts` names where to fetch the whole catalogue instead. */
+            /** @description The caller has used up their submission quota (FR-43). New tests and amendments share one counter. `limit` is `hourly` when the quota is a number of submissions in a rolling hour, and the response then carries `Retry-After`, the whole seconds until a submission can be made. `limit` is `lifetime` when the quota is a total, and the response carries no `Retry-After`, because waiting does not lift it. Nothing was saved, and the refusal is recorded in the audit trail. */
             429: {
                 headers: {
-                    /** @description Whole seconds until the caller's request budget is available again. */
+                    /** @description Whole seconds until the caller can submit again. Only on `hourly`. */
                     "Retry-After"?: number;
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["RateLimitedResponse"];
+                    "application/json": components["schemas"]["SubmissionQuotaResponse"];
                 };
             };
             /** @description The service is misconfigured, not a caller mistake - a malformed `NPTC_TX_*` value. Retrying will not clear it. */
@@ -5716,15 +5735,15 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description An address exceeded its request budget (FR-22): an anonymous caller its anonymous budget, or a caller whose credentials the API kept rejecting its budget for rejected credentials. Wait for the number of seconds in `Retry-After`, then try again. A valid credential is never counted. The body's `bulk_artefacts` names where to fetch the whole catalogue instead. */
+            /** @description The caller has used up their submission quota (FR-43). New tests and amendments share one counter. `limit` is `hourly` when the quota is a number of submissions in a rolling hour, and the response then carries `Retry-After`, the whole seconds until a submission can be made. `limit` is `lifetime` when the quota is a total, and the response carries no `Retry-After`, because waiting does not lift it. Nothing was saved, and the refusal is recorded in the audit trail. */
             429: {
                 headers: {
-                    /** @description Whole seconds until the caller's request budget is available again. */
+                    /** @description Whole seconds until the caller can submit again. Only on `hourly`. */
                     "Retry-After"?: number;
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["RateLimitedResponse"];
+                    "application/json": components["schemas"]["SubmissionQuotaResponse"];
                 };
             };
             /** @description The service is misconfigured, not a caller mistake - a malformed `NPTC_TX_*` value. Retrying will not clear it. */

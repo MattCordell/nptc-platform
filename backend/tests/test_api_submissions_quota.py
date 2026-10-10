@@ -136,6 +136,7 @@ def _seed_concept(api: ApiTestApp) -> None:
 
 
 @pytest.mark.req("FR-43")
+@pytest.mark.req("NFR-24")
 @pytest.mark.req("NFR-08")
 @pytest.mark.integration
 def test_a_provisional_users_sixth_new_test_is_429_with_no_retry_time_and_is_audited(
@@ -165,6 +166,7 @@ def test_a_provisional_users_sixth_new_test_is_429_with_no_retry_time_and_is_aud
 
 
 @pytest.mark.req("FR-43")
+@pytest.mark.req("NFR-24")
 @pytest.mark.req("NFR-08")
 @pytest.mark.integration
 def test_a_members_21st_amendment_in_an_hour_is_429_with_retry_after_and_is_audited(

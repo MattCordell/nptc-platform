@@ -1539,6 +1539,12 @@ change gets its own grant constant, as `nptc.db.roles` explains.
 Each create emits a `submission.created` audit event carrying the content, `kind` and `entry_id`,
 and naming `organisation` in `_redacted` (NFR-08). Every column is classified in the model's audit policy.
 
+A request refused by the submitter's quota (FR-43) saves no row and emits a `submission.quota_refused`
+event instead. Its entity is the `app_user` the limit applied to, its `before` is empty, and its `after`
+holds `limit` (`lifetime` or `hourly`), `maximum`, `count` and `submission_kind`, never anything the user
+typed. The quota counts every `submission` row of the user, using `ix_submission_submitter_id`; the
+hourly window reads `created_at`.
+
 ## Extensions
 
 `pg_trgm` and `unaccent` are created in `0001_extensions_and_app_role.py` - the public
