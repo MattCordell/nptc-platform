@@ -763,6 +763,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/submissions/amendments": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Propose a change to a published entry */
+        post: operations["create_amendment_api_v1_submissions_amendments_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/submissions/duplicate-check": {
         parameters: {
             query?: never;
@@ -1538,6 +1555,29 @@ export interface components {
          * @enum {string}
          */
         ControlKind: "text" | "textarea" | "number" | "uri" | "concept_picker";
+        /**
+         * CreateAmendmentRequest
+         * @description The body of `POST /submissions/amendments`.
+         *
+         *     `entry_business_key` names the active entry to amend. At least one new synonym or a
+         *     `snomed_code` is needed. `reference_url` is optional, and when it is given the server fetches it
+         *     before saving, as for a new test. `organisation` left out means the profile's value, and a
+         *     blank string means none. The size bounds are in the schema as `maxLength` and `maxItems`.
+         */
+        CreateAmendmentRequest: {
+            /** Entry Business Key */
+            entry_business_key: string;
+            /** Synonyms */
+            synonyms?: string[];
+            /** Snomed Code */
+            snomed_code?: string | null;
+            /** Reference Url */
+            reference_url?: string | null;
+            /** Notes */
+            notes?: string | null;
+            /** Organisation */
+            organisation?: string | null;
+        };
         /**
          * CreatePropertyDefinitionRequest
          * @description The body of `POST /registry/properties`. Every property created
@@ -2651,8 +2691,10 @@ export interface components {
          *     `snomed_fsn` is the label the terminology server returned for `snomed_code`, never anything
          *     the caller sent (FR-82). `label_provenance` states which designation each label field is
          *     (FR-98): the suggested term is offered as the catalogue's preferred term, and the synonyms as
-         *     synonyms. The three `reference_*` fields describe one check and are all present or all absent;
-         *     a new test always has them. `duplicate_confirmed_at` is when the server saved a submission whose
+         *     synonyms. `entry_business_key` is the entry an amendment proposes to change, and null for a new
+         *     test; an amendment's `preferred_term` is a copy of that entry's term when it was proposed. The
+         *     three `reference_*` fields describe one check and are all present or all absent; a new test
+         *     always has them. `duplicate_confirmed_at` is when the server saved a submission whose
          *     request carried `confirm_not_duplicate` and that matched something (FR-25), and is null
          *     otherwise.
          */
@@ -2666,6 +2708,8 @@ export interface components {
             kind: string;
             /** State */
             state: string;
+            /** Entry Business Key */
+            entry_business_key: string | null;
             /** Preferred Term */
             preferred_term: string;
             /** Synonyms */
@@ -5563,6 +5607,113 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"] | components["schemas"]["ErrorResponse"] | components["schemas"]["PropertyValidationResponse"];
+                };
+            };
+            /** @description An address exceeded its request budget (FR-22): an anonymous caller its anonymous budget, or a caller whose credentials the API kept rejecting its budget for rejected credentials. Wait for the number of seconds in `Retry-After`, then try again. A valid credential is never counted. The body's `bulk_artefacts` names where to fetch the whole catalogue instead. */
+            429: {
+                headers: {
+                    /** @description Whole seconds until the caller's request budget is available again. */
+                    "Retry-After"?: number;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RateLimitedResponse"];
+                };
+            };
+            /** @description The service is misconfigured, not a caller mistake - a malformed `NPTC_TX_*` value. Retrying will not clear it. */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The terminology server's response could not be used. */
+            502: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The terminology server could not be reached, or a rate limit persisted through retries, or the platform has no outbound internet access to check the `reference_url`. Nothing was saved, and the same request can be sent again. May carry a `Retry-After` header. */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    create_amendment_api_v1_submissions_amendments_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CreateAmendmentRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SubmissionResponse"];
+                };
+            };
+            /** @description No credential, or one that could not be verified. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The caller is authenticated but does not hold `amendment.propose`, or has not accepted the current terms of use (the body then carries a `code` that says so). The current terms of use have not been accepted. The body carries `code: terms_acceptance_required`. Accept them with `POST /auth/terms/acceptance` and try again. Never carries `WWW-Authenticate`. */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"] | components["schemas"]["TermsAcceptanceRequiredResponse"];
+                };
+            };
+            /** @description No catalogue entry has the `entry_business_key`. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The entry exists but is not `active` (it is a draft, deprecated or withdrawn), so it cannot be amended. `detail` names the status. Nothing was saved. */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The request is not acceptable. `detail` says why for an amendment that proposes no change (no synonym and no code, every synonym already on the entry, or the code the entry already carries), for a synonym that cannot be cleaned, for a SNOMED CT code that is malformed, unknown to the AU edition, inactive, has no reported status or has no fully specified name, for `notes` or `organisation` that carry an invisible character, and for a `reference_url` that is not a usable web address, points at an internal address, answers with a failing status, redirects too often, times out or cannot be found. A malformed `entry_business_key`, an unrecognised field, or a part of the request over its size bound fails validation before the route runs. */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
             /** @description An address exceeded its request budget (FR-22): an anonymous caller its anonymous budget, or a caller whose credentials the API kept rejecting its budget for rejected credentials. Wait for the number of seconds in `Retry-After`, then try again. A valid credential is never counted. The body's `bulk_artefacts` names where to fetch the whole catalogue instead. */

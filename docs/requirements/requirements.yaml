@@ -172,7 +172,7 @@
   phase: p2
   title: "Provisional users, Members, Reviewers and Administrators can submit a proposed new test"
   status: in-progress
-  notes: "POST /api/v1/submissions stores a new-test submission in state Submitted, with the submitter and an editable copy of their organisation, for Provisional, Member, Reviewer and Administrator (backend/src/nptc/db/models/submission.py, migration 0027, backend/tests/test_api_submissions.py). Stays in-progress: the SPA submission form, amendments and the quota do not exist yet."
+  notes: "POST /api/v1/submissions stores a new-test submission in state Submitted, with the submitter and an editable copy of their organisation, for Provisional, Member, Reviewer and Administrator (backend/src/nptc/db/models/submission.py, migration 0027, backend/tests/test_api_submissions.py). Stays in-progress: the SPA submission form and the quota do not exist yet. Amendments have their own route (FR-35)."
 - id: "FR-24"
   priority: MUST
   phase: p2
@@ -243,8 +243,8 @@
   priority: MUST
   phase: p2
   title: "Any role that can submit (FR-23) can propose an amendment to an existing published entry, most commonly an additional synonym"
-  status: planned
-  notes: ""
+  status: implemented
+  notes: "POST /api/v1/submissions/amendments stores an amendment submission (kind amendment) linked to an active entry by entry_id, for Provisional, Member, Reviewer and Administrator through amendment.propose (backend/src/nptc/submissions/amendment.py, backend/src/nptc/api/routers/submissions.py, migration 0030). It proposes new synonyms, a SNOMED CT code looked up as for a new test (FR-26, FR-82), or both, with an optional reference checked as in FR-27. An unknown key is a 404, an entry that is not active is a 409 naming the status, and an amendment that changes nothing is a 422. Tests: backend/tests/test_api_submissions_amendment.py, test_submissions_amendment.py, test_db_submission.py. This is the API half: the Propose a change screen is a later issue, applying an approved amendment belongs to the triage work, and the amendment quota is counted with FR-43."
 - id: "FR-36"
   priority: MUST
   phase: p1

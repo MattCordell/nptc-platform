@@ -1460,14 +1460,16 @@ classifies every column in its audit policy.
 
 A user's proposal to add a test, or later to change one. It is its own record and not a
 `catalogue_entry` with another status (FR-29), so a proposed value is never mistaken for
-catalogue content. Only `POST /api/v1/submissions` writes it today, and only for a new test.
+catalogue content. Two routes write it today: `POST /api/v1/submissions` for a new test and
+`POST /api/v1/submissions/amendments` for an amendment (FR-35).
 
 | Column | Type | Notes |
 |---|---|---|
 | `id` | `UUID` | PK, `gen_random_uuid()` |
 | `kind` | `TEXT` | `NOT NULL`, `CHECK` in `new_test`, `amendment`. Amendments reuse the table, so they need no second one |
 | `state` | `TEXT` | `NOT NULL DEFAULT 'Submitted'`, `CHECK` in `Submitted`. The other FR-28 states arrive with the workflow |
-| `preferred_term` | `TEXT` | `NOT NULL`, `CHECK` not blank. Cleaned at entry like an entry's term (FR-63) |
+| `entry_id` | `UUID` | Nullable, FK to `catalogue_entry.id`, indexed. The entry an amendment proposes to change. `CHECK ((kind = 'amendment') = (entry_id IS NOT NULL))`, so an amendment has one and a new test has none (FR-35) |
+| `preferred_term` | `TEXT` | `NOT NULL`, `CHECK` not blank. Cleaned at entry like an entry's term (FR-63). On an amendment, a copy of the entry's preferred term when it was proposed |
 | `synonyms` | `JSONB` | `NOT NULL DEFAULT '[]'`, `CHECK` a JSON array. Each term is cleaned at entry. A term that folds to the same comparison key as an earlier one, or as `preferred_term`, is dropped, as `add_synonyms` drops it, so the list converts to designations without a duplicate |
 | `snomed_code` | `TEXT` | Nullable. `CHECK nptc_sctid_is_valid`, so the format and the check digit hold in the database (FR-06) |
 | `snomed_fsn` | `TEXT` | Nullable, `CHECK` not blank. Present exactly when `snomed_code` is: `CHECK ((snomed_code IS NULL) = (snomed_fsn IS NULL))`. The terminology server's label, stored as served (FR-82) |
@@ -1484,8 +1486,19 @@ catalogue content. Only `POST /api/v1/submissions` writes it today, and only for
 | `updated_at` | `TIMESTAMPTZ` | `NOT NULL`, `now()` |
 | `row_version` | `INTEGER` | `NOT NULL DEFAULT 1`, bumped by `version_id_col` on a mapped update, as on `catalogue_entry` |
 
-`ix_submission_submitter_id` serves "a user's own submissions" and `ix_submission_created_at`
-serves "newest first".
+`ix_submission_submitter_id` serves "a user's own submissions", `ix_submission_created_at`
+serves "newest first" and `ix_submission_entry_id` serves "the amendments proposed against one
+entry".
+
+**An amendment names its entry by id (FR-35).** `entry_id` is a foreign key, not the business
+key, so the link does not depend on the key's text. `preferred_term` is required on every row,
+so an amendment copies the entry's term. It tells a reviewer which entry the proposal was
+written against and is never a proposed rename. An amendment carries new synonyms, a SNOMED CT
+code, or both, in the same `synonyms`, `snomed_code` and `snomed_fsn` columns a new test uses,
+and a code goes through the same terminology lookup. It has an empty `property_values` and an
+empty `duplicate_matches`, because it takes neither. One `snomed_code` column cannot tell a new
+code from a replacement for the entry's current code, so a reviewer compares it with the entry.
+Only an `active` entry can be amended. Applying an amendment to the entry is a later step.
 
 **`property_values` is one JSONB document, not a child table.** It maps a property key to the
 complete value list for that property, each item `{"value": ..., "justification": ...}`. That is
@@ -1523,8 +1536,8 @@ column-level `UPDATE` on `state`, `updated_at` and `row_version` only. It holds 
 `TRUNCATE`, so a submission leaves the workflow through `state`. A column added later that must
 change gets its own grant constant, as `nptc.db.roles` explains.
 
-Each create emits a `submission.created` audit event carrying the content and naming
-`organisation` in `_redacted` (NFR-08). Every column is classified in the model's audit policy.
+Each create emits a `submission.created` audit event carrying the content, `kind` and `entry_id`,
+and naming `organisation` in `_redacted` (NFR-08). Every column is classified in the model's audit policy.
 
 ## Extensions
 
