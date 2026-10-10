@@ -2,7 +2,7 @@
 
 The platform fetches a URL a submitter typed, so the check is a server-side
 request forgery surface: a URL that resolves, directly or through a redirect, to
-an address inside the deployment must never be contacted. Four rules hold it:
+an address inside the deployment must never be contacted. Five rules hold it:
 
 - The host is resolved once per hop and every returned address must be public.
   The request then goes to a validated address, not to the name, so a DNS answer
@@ -11,6 +11,7 @@ an address inside the deployment must never be contacted. Four rules hold it:
 - Only the status is read. The response body is never read, stored or logged.
 - No proxy is used (`trust_env=False`): a proxy would resolve the name itself and
   bypass the pin.
+- One wall-clock deadline bounds the whole check, however slowly a server answers.
 
 `ReferenceChecker` is the seam routes depend on. `HttpReferenceChecker` takes its
 resolver, transport and probe as arguments so tests make no network call (NFR-37).
@@ -20,7 +21,9 @@ from __future__ import annotations
 
 import ipaddress
 import logging
+import queue
 import socket
+import threading
 import time
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
@@ -36,7 +39,7 @@ _logger = logging.getLogger(__name__)
 MAX_REDIRECTS: Final = 5
 CONNECT_TIMEOUT_SECONDS: Final = 5.0
 READ_TIMEOUT_SECONDS: Final = 5.0
-#: Covers every hop and every address tried, so a slow chain cannot hold a request open.
+#: The wall-clock limit on one `check`, covering every hop, address and the probe.
 OVERALL_DEADLINE_SECONDS: Final = 15.0
 MAX_URL_LENGTH: Final = 2048
 
@@ -91,7 +94,10 @@ class ReferenceCheckResult:
 
 
 class ReferenceChecker(Protocol):
-    def check(self, url: str) -> ReferenceCheckResult: ...
+    def check(self, url: str) -> ReferenceCheckResult:
+        """Blocking: it can take `OVERALL_DEADLINE_SECONDS`. An `async def` route must run it
+        through `run_in_threadpool`."""
+        ...
 
 
 #: Host and port in, address strings out. Raises `OSError` when the name does not resolve.
@@ -113,6 +119,11 @@ def tcp_probe(host: str, port: int, *, timeout: float = CONNECT_TIMEOUT_SECONDS)
 
 
 _NAT64_PREFIX: Final = ipaddress.IPv6Network("64:ff9b::/96")
+
+
+#: Deprecated IPv4-compatible addresses (`::127.0.0.1`). Python reports them as global, and
+#: no honest host publishes one.
+_IPV4_COMPATIBLE_PREFIX: Final = ipaddress.IPv6Network("::/96")
 
 
 def _unwrap_embedded_ipv4(
@@ -140,9 +151,12 @@ def is_public_address(raw: str) -> bool:
     `is_global` alone is not enough: it is true for IPv4 multicast.
     """
     try:
-        address = _unwrap_embedded_ipv4(ipaddress.ip_address(raw))
+        parsed = ipaddress.ip_address(raw)
     except ValueError:
         return False
+    if isinstance(parsed, ipaddress.IPv6Address) and parsed in _IPV4_COMPATIBLE_PREFIX:
+        return False
+    address = _unwrap_embedded_ipv4(parsed)
     return address.is_global and not address.is_multicast
 
 
@@ -186,10 +200,12 @@ def _parse_target(url: str) -> _Target:
     # the browser-style numeric forms (`2130706433`) reach the resolver check below anyway.
     if _is_ip_literal(host):
         raise invalid
-    # Headers and the TLS server name must be ASCII; `getaddrinfo` applies the same encoding.
+    # Headers and the TLS server name must be ASCII. httpx encodes with IDNA 2008, as browsers
+    # do; the `idna` codec in the standard library is IDNA 2003 and turns `straße.de` into
+    # `strasse.de`, a different site.
     try:
-        host = host.encode("idna").decode("ascii")
-    except UnicodeError:
+        host = httpx.URL(f"https://{host}/").raw_host.decode("ascii")
+    except httpx.InvalidURL, UnicodeError:
         raise invalid from None
     effective_port = _DEFAULT_PORTS[scheme] if port is None else port
     if effective_port not in _ALLOWED_PORTS:
@@ -232,19 +248,57 @@ class HttpReferenceChecker:
         self._monotonic = monotonic
 
     def check(self, url: str) -> ReferenceCheckResult:
+        """Blocks for up to `OVERALL_DEADLINE_SECONDS`, so call it from a plain `def` route or
+        through `run_in_threadpool`, never directly from an `async def` one.
+
+        The work runs in a daemon thread and the caller waits on it for the deadline. The
+        deadline is a wall-clock limit because neither httpx's read timeout (per socket read,
+        so a server that drips header bytes never trips it) nor the resolver (`getaddrinfo` has
+        no timeout) can supply one. On expiry the client is closed, which ends a stalled
+        request within one read timeout. A lookup the operating system resolver cannot abandon
+        holds its thread until the resolver gives up.
+        """
+        client = httpx.Client(transport=self._transport, follow_redirects=False, trust_env=False)
+        cancelled = threading.Event()
+        outcome: queue.Queue[tuple[ReferenceCheckResult | None, BaseException | None]] = (
+            queue.Queue(maxsize=1)
+        )
+
+        def work() -> None:
+            try:
+                outcome.put((self._follow(client, url, cancelled), None))
+            except BaseException as error:
+                outcome.put((None, error))
+            finally:
+                client.close()
+
+        threading.Thread(target=work, daemon=True, name="reference-check").start()
+        try:
+            result, error = outcome.get(timeout=OVERALL_DEADLINE_SECONDS)
+        except queue.Empty:
+            cancelled.set()
+            client.close()
+            raise ReferenceCheckFailedError(ReferenceFailure.TIMEOUT) from None
+        if error is not None:
+            raise error
+        assert result is not None
+        return result
+
+    def _follow(
+        self, client: httpx.Client, url: str, cancelled: threading.Event
+    ) -> ReferenceCheckResult:
         deadline = self._monotonic() + OVERALL_DEADLINE_SECONDS
         current = url
-        with httpx.Client(
-            transport=self._transport, follow_redirects=False, trust_env=False
-        ) as client:
-            for _hop in range(MAX_REDIRECTS + 1):
-                status, location = self._fetch_status(client, _parse_target(current), deadline)
-                if status in _REDIRECT_STATUSES and location:
-                    current = urljoin(current, location)
-                    continue
-                if 200 <= status < 300 or status in _PASSING_STATUSES:
-                    return ReferenceCheckResult(checked_at=self._clock(), status=status)
-                raise ReferenceCheckFailedError(ReferenceFailure.BAD_STATUS, status=status)
+        for _hop in range(MAX_REDIRECTS + 1):
+            if cancelled.is_set():
+                raise ReferenceCheckFailedError(ReferenceFailure.TIMEOUT)
+            status, location = self._fetch_status(client, _parse_target(current), deadline)
+            if status in _REDIRECT_STATUSES and location:
+                current = urljoin(current, location)
+                continue
+            if 200 <= status < 300 or status in _PASSING_STATUSES:
+                return ReferenceCheckResult(checked_at=self._clock(), status=status)
+            raise ReferenceCheckFailedError(ReferenceFailure.BAD_STATUS, status=status)
         raise ReferenceCheckFailedError(ReferenceFailure.TOO_MANY_REDIRECTS)
 
     def _addresses(self, target: _Target) -> list[str]:

@@ -38,7 +38,7 @@ from __future__ import annotations
 import importlib.util
 import sys
 from collections.abc import Callable, Iterator
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -134,7 +134,7 @@ class ApiTestApp:
     #: "exactly one upstream request" assertions FR-26/FR-52 both need.
     terminology: StubTerminologyClient
     #: Overridden onto `get_reference_checker`, so no app test can reach the network.
-    reference_checker: StubReferenceChecker = field(default_factory=StubReferenceChecker)
+    reference_checker: StubReferenceChecker
 
     def set_api_settings(self, **fields: Any) -> ApiSettings:
         """Replaces the `ApiSettings` this app serves for the rest of the

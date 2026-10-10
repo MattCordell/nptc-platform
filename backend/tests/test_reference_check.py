@@ -10,12 +10,15 @@ from __future__ import annotations
 
 import logging
 import socket
+import threading
+import time
 from collections.abc import Callable, Iterator, Mapping, Sequence
 from datetime import UTC, datetime
 
 import httpx
 import pytest
 
+from nptc.api import dependencies
 from nptc.submissions import reference_check
 from nptc.submissions.reference_check import (
     MAX_REDIRECTS,
@@ -28,6 +31,7 @@ from nptc.submissions.reference_check import (
     system_resolver,
     tcp_probe,
 )
+from nptc_shared.terminology import TerminologyConfigError
 
 pytestmark = pytest.mark.req("FR-27")
 
@@ -139,6 +143,10 @@ REFUSED_ADDRESSES = [
     pytest.param("64:ff9b::7f00:1", id="nat64-loopback"),
     pytest.param("2002:7f00:1::", id="6to4-loopback"),
     pytest.param("2002:a9fe:a9fe::1", id="6to4-metadata"),
+    pytest.param("::7f00:1", id="ipv4-compatible-loopback"),
+    pytest.param("::a9fe:a9fe", id="ipv4-compatible-metadata"),
+    pytest.param("::808:808", id="ipv4-compatible-public-embedded"),
+    pytest.param("64:ff9b:1::1", id="nat64-local-use"),
 ]
 
 
@@ -213,7 +221,7 @@ INVALID_URLS = [
     pytest.param("https://example.test/a b", id="space"),
     pytest.param("https://example.test/a\r\nHost: evil.test", id="control-characters"),
     pytest.param("https://example.test/" + "a" * 2100, id="too-long"),
-    pytest.param("https://" + "a" * 70 + ".test/", id="label-too-long-for-idna"),
+    pytest.param("https://☃.example/", id="character-idna-2008-forbids"),
 ]
 
 
@@ -267,6 +275,21 @@ def test_an_internationalised_host_name_is_sent_as_ascii() -> None:
 
     assert seen[0].headers["host"] == "xn--bcher-kva.example"
     assert seen[0].extensions["sni_hostname"] == "xn--bcher-kva.example"
+
+
+def test_a_host_name_is_encoded_as_browsers_encode_it() -> None:
+    """IDNA 2008 keeps the sharp s; the standard library's IDNA 2003 codec would fold it to
+    `ss` and check a different site."""
+    seen: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request)
+        return httpx.Response(200)
+
+    resolver = FakeResolver({"xn--strae-oqa.de": [PUBLIC_V4]})
+    make_checker(handler, resolver).check("https://straße.de/")
+
+    assert seen[0].headers["host"] == "xn--strae-oqa.de"
 
 
 # --- pinning ---------------------------------------------------------------
@@ -567,6 +590,90 @@ def test_a_request_timeout_never_exceeds_the_time_left() -> None:
     assert seen == [reference_check.READ_TIMEOUT_SECONDS, 1.0]
 
 
+@pytest.fixture
+def short_deadline(monkeypatch: pytest.MonkeyPatch) -> float:
+    seconds = 0.3
+    monkeypatch.setattr(reference_check, "OVERALL_DEADLINE_SECONDS", seconds)
+    return seconds
+
+
+def _wait_for_workers_to_end() -> None:
+    end = time.monotonic() + 5
+    while time.monotonic() < end:
+        if not [t for t in threading.enumerate() if t.name == "reference-check"]:
+            return
+        time.sleep(0.01)
+    raise AssertionError("a reference-check worker thread is still running")
+
+
+def test_a_server_that_never_finishes_answering_is_cut_off_at_the_deadline(
+    short_deadline: float,
+) -> None:
+    """A server dripping header bytes never trips a per-read timeout, so the limit must be
+    wall-clock. The blocked handler stands in for it."""
+    release = threading.Event()
+    requests = 0
+
+    def handler(_request: httpx.Request) -> httpx.Response:
+        nonlocal requests
+        requests += 1
+        release.wait(timeout=10)
+        return httpx.Response(302, headers={"Location": "https://example.test/next"})
+
+    started = time.monotonic()
+    try:
+        error = refusal_of(make_checker(handler), "https://example.test/")
+        elapsed = time.monotonic() - started
+    finally:
+        release.set()
+
+    assert error.reason is ReferenceFailure.TIMEOUT
+    assert elapsed < short_deadline + 2
+    _wait_for_workers_to_end()
+    assert requests == 1, "the abandoned worker must not follow the redirect"
+
+
+def test_a_lookup_that_never_returns_is_cut_off_at_the_deadline(short_deadline: float) -> None:
+    release = threading.Event()
+
+    def stuck_resolver(_host: str, _port: int) -> Sequence[str]:
+        release.wait(timeout=10)
+        return [PUBLIC_V4]
+
+    checker = HttpReferenceChecker(
+        resolver=stuck_resolver, transport=httpx.MockTransport(ok), probe=Probe(True)
+    )
+
+    try:
+        error = refusal_of(checker, "https://example.test/")
+    finally:
+        release.set()
+
+    assert error.reason is ReferenceFailure.TIMEOUT
+    _wait_for_workers_to_end()
+
+
+def test_a_probe_that_never_returns_is_cut_off_at_the_deadline(short_deadline: float) -> None:
+    release = threading.Event()
+
+    def stuck_probe() -> bool:
+        release.wait(timeout=10)
+        return True
+
+    resolver = FakeResolver({"example.test": socket.gaierror("no such host")})
+    checker = HttpReferenceChecker(
+        resolver=resolver, transport=httpx.MockTransport(ok), probe=stuck_probe
+    )
+
+    try:
+        error = refusal_of(checker, "https://example.test/")
+    finally:
+        release.set()
+
+    assert error.reason is ReferenceFailure.TIMEOUT
+    _wait_for_workers_to_end()
+
+
 # --- no outbound access ----------------------------------------------------
 
 
@@ -678,6 +785,56 @@ def test_the_system_resolver_returns_each_address_once(monkeypatch: pytest.Monke
     monkeypatch.setattr(socket, "getaddrinfo", fake_getaddrinfo)
 
     assert system_resolver("example.test", 443) == [PUBLIC_V4, PUBLIC_V6]
+
+
+class _CountingConfig:
+    from_env_calls = 0
+
+    def __init__(self, base_url: str) -> None:
+        self.base_url = base_url
+
+    @classmethod
+    def make(cls, base_url: str) -> type[_CountingConfig]:
+        cls.from_env_calls = 0
+        return type("Config", (cls,), {"_base_url": base_url})
+
+    @classmethod
+    def from_env(cls) -> _CountingConfig:
+        _CountingConfig.from_env_calls += 1
+        return _CountingConfig(cls._base_url)  # type: ignore[attr-defined]
+
+
+@pytest.mark.parametrize(
+    ("base_url", "expected"),
+    [
+        ("https://tx.example.test/fhir", ("tx.example.test", 443)),
+        ("http://tx.internal.test/fhir", ("tx.internal.test", 80)),
+        ("https://tx.example.test:8443/fhir", ("tx.example.test", 8443)),
+    ],
+)
+def test_the_probe_reads_the_terminology_config_once_and_connects_to_its_host(
+    monkeypatch: pytest.MonkeyPatch, base_url: str, expected: tuple[str, int]
+) -> None:
+    connections: list[tuple[str, int]] = []
+    monkeypatch.setattr(dependencies, "TerminologyConfig", _CountingConfig.make(base_url))
+    monkeypatch.setattr(
+        dependencies, "tcp_probe", lambda host, port: connections.append((host, port)) or True
+    )
+
+    probe = dependencies._outbound_probe()
+    assert probe() and probe()
+
+    assert _CountingConfig.from_env_calls == 1
+    assert connections == [expected, expected]
+
+
+def test_a_malformed_terminology_setting_fails_when_the_probe_is_built_not_during_a_check(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("NPTC_TX_TIMEOUT_SECONDS", "not-a-number")
+
+    with pytest.raises(TerminologyConfigError):
+        dependencies._outbound_probe()
 
 
 class _OpenConnection:

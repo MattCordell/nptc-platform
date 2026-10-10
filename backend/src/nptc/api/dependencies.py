@@ -95,22 +95,28 @@ def get_snomed_synonym_source() -> SnomedSynonymSource:
 SnomedSynonymSourceDep = Annotated[SnomedSynonymSource, Depends(get_snomed_synonym_source)]
 
 
-def _outbound_reachable() -> bool:
+def _outbound_probe() -> Callable[[], bool]:
     """The no-egress probe: can this deployment open a connection to the terminology server's host?
 
-    The platform already needs that host, so this adds no setting. It runs only after a link
-    failed to resolve or connect (`HttpReferenceChecker`), never on a healthy check."""
+    The platform already needs that host, so this adds no setting. `NPTC_TX_*` is read here,
+    once, so the probe itself cannot raise a configuration error in the middle of a check. It
+    proves internet access only while the host is on the internet: a self-hosted server
+    answers whatever the deployment's egress, and `deployment.md` says so."""
     base = urlsplit(TerminologyConfig.from_env().base_url)
     host = base.hostname
-    if not host:
-        return False
-    return tcp_probe(host, base.port or (80 if base.scheme == "http" else 443))
+    port = base.port or (80 if base.scheme == "http" else 443)
+
+    def probe() -> bool:
+        return host is not None and tcp_probe(host, port)
+
+    return probe
 
 
 @lru_cache(maxsize=1)
 def get_reference_checker() -> ReferenceChecker:
-    """The FR-27 link checker. Construction opens no socket, so building it lazily is safe."""
-    return HttpReferenceChecker(probe=_outbound_reachable)
+    """The FR-27 link checker, built once per process, and at start-up by `create_app`.
+    Construction opens no socket."""
+    return HttpReferenceChecker(probe=_outbound_probe())
 
 
 ReferenceCheckerDep = Annotated[ReferenceChecker, Depends(get_reference_checker)]

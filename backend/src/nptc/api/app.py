@@ -88,7 +88,11 @@ def create_app(
         app.dependency_overrides[get_terminology_client] = lambda: terminology_client
         app.dependency_overrides[get_snomed_synonym_source] = lambda: synonym_source
 
-    if reference_checker is not None:
+    # Built here for the same reason as the terminology client: it reads `NPTC_TX_*`, and a
+    # malformed value should stop start-up, not fail the first submission.
+    if reference_checker is None:
+        get_reference_checker()
+    else:
         app.dependency_overrides[get_reference_checker] = lambda: reference_checker
 
     # A current version with no file would refuse every contribution with nothing to show.

@@ -217,6 +217,16 @@ When a link does not resolve or connect, the backend tries to open a connection 
 deployment has no outbound internet access", and the submitter sees a 503 instead of a message
 about their link. Nothing is saved.
 
+This test proves internet access only while `NPTC_TX_BASE_URL` points at a host on the
+internet, as the default does. If you point it at a self-hosted Ontoserver, the connection
+succeeds even with no internet access. A link that cannot be reached then fails with a
+message about the link (a host that cannot be found, or a link that cannot be reached) and
+never with the 503. If you run a self-hosted Ontoserver on a network with no internet access,
+expect that wording and check the `backend` log for failed lookups.
+
+One check never takes longer than 15 seconds, however slowly the linked server answers.
+A check that runs out of time tells the submitter the link took too long to answer.
+
 ## Troubleshooting
 
 | Symptom | Likely cause and fix |
