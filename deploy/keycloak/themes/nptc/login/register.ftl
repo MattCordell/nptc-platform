@@ -30,6 +30,7 @@
                     <li>${msg("nptcRegisterNoticeCollect")}</li>
                     <li>${msg("nptcRegisterNoticeVisible")}</li>
                     <li>${msg("nptcRegisterNoticeRetention")}</li>
+                    <li>${msg("nptcRegisterNoticeOrganisation")}</li>
                     <li>${msg("nptcRegisterNoticeAccess")}</li>
                 </ul>
                 <#assign spaOrigin = ((realm.attributes.nptcFrontendBaseUrl)!'')?remove_ending('/')>
