@@ -25,12 +25,14 @@
   the catalogue search page and on the public entry page.
 - [Searching the audit log](searching-the-audit-log.md) — issue #447. The Administrator
   screen at `/admin/audit`: filters, paging and export.
+- [Submitting a new test](submitting-a-new-test.md) — issue #547. The form at
+  `/submissions/new` for Provisional users, Members, Reviewers and Administrators.
 - [Reading the preferred-term length distribution report](reading-the-length-distribution-report.md)
   — issue #152, API-only; there is no admin screen for this report yet.
 
-[Roles](roles.md) covers Administrator and Reviewer — Member and Provisional have no
-screen of their own yet, and Anonymous/Observer use is self-explanatory from the public
-catalogue itself.
+[Roles](roles.md) covers Administrator and Reviewer. Members and Provisional users have
+one screen so far, [Submitting a new test](submitting-a-new-test.md), and Anonymous/Observer
+use is self-explanatory from the public catalogue itself.
 
 Populated as the corresponding UI lands — see the documentation-impact table in
 [CONTRIBUTING.md](../../CONTRIBUTING.md).

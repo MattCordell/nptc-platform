@@ -8,6 +8,7 @@ from typing import ClassVar
 
 from nptc.db.models.catalogue_entry import CatalogueEntryStatus
 from nptc.submissions.duplicates import DuplicateMatch
+from nptc.terminology.errors import TerminologyUnavailableError, TerminologyUpstreamError
 
 __all__ = [
     "AmendmentEntryNotActiveError",
@@ -17,6 +18,8 @@ __all__ = [
     "FreeTextField",
     "FreeTextRefusedError",
     "SubmissionCodeRefusedError",
+    "SubmissionCodeUnavailableError",
+    "SubmissionCodeUpstreamError",
     "SubmissionDuplicatesFoundError",
 ]
 
@@ -43,6 +46,17 @@ class SubmissionCodeRefusedError(ValueError):
     def __init__(self, reason: CodeRefusal) -> None:
         self.reason = reason
         super().__init__(f"SNOMED CT code refused: {reason.value}")
+
+
+class SubmissionCodeUnavailableError(TerminologyUnavailableError):
+    """The terminology server could not be reached while checking the SNOMED CT code on a
+    submission. A subclass so the response can name the code field, which the shared
+    `TerminologyUnavailableError` handler cannot know."""
+
+
+class SubmissionCodeUpstreamError(TerminologyUpstreamError):
+    """The terminology server answered with something unusable while checking the SNOMED CT code
+    on a submission. A subclass for the same reason as `SubmissionCodeUnavailableError`."""
 
 
 class FreeTextField(StrEnum):

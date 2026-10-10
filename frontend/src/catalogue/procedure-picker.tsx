@@ -37,12 +37,15 @@ export function ProcedurePicker({
   id,
   label,
   error,
+  outageNote = "You can still change the rest of this entry.",
   onPick,
 }: {
   id: string;
   label: string;
   /** A refusal to show on the box, such as a code the server would not name. */
   error?: string;
+  /** What the user can still do while the search is down. */
+  outageNote?: string;
   onPick: (code: string) => void;
 }) {
   const [text, setText] = useState("");
@@ -76,7 +79,7 @@ export function ProcedurePicker({
       : outage
         ? `${
             refusalDetail(search.error) ?? "The code search could not be completed."
-          } You can still change the rest of this entry.`
+          } ${outageNote}`
         : noMatch
           ? "No procedure matches. Only concepts under Procedure can be bound."
           : truncated

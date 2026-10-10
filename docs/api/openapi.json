@@ -4385,13 +4385,16 @@
             }
           },
           "422": {
-            "description": "The request is not acceptable. `detail` says why for a term that cannot be cleaned and for a SNOMED CT code that is malformed, unknown to the AU edition, inactive, has no reported status or has no fully specified name, and for `notes` or `organisation` that carry an invisible character, and for a `reference_url` that is not a usable web address, points at an internal address, answers with a failing status, redirects too often, times out or cannot be found. `issues[]` names each property problem: an unknown, deprecated or out-of-scope property, a value its datatype refuses, or a property required for submission with no value. A missing `preferred_term`, an unrecognised field, or a part of the request over its size bound fails validation before the route runs.",
+            "description": "The request is not acceptable. `detail` says why for a term that cannot be cleaned and for a SNOMED CT code that is malformed, unknown to the AU edition, inactive, has no reported status or has no fully specified name, and for `notes` or `organisation` that carry an invisible character, and for a `reference_url` that is not a usable web address, points at an internal address, answers with a failing status, redirects too often, times out or cannot be found. `issues[]` names each property problem: an unknown, deprecated or out-of-scope property, a value its datatype refuses, or a property required for submission with no value. A refusal of one field carries `field`, the request field to mark: `preferred_term`, `synonyms`, `snomed_code`, `reference_url`, `notes` or `organisation`. A missing `preferred_term`, an unrecognised field, or a part of the request over its size bound fails validation before the route runs.",
             "content": {
               "application/json": {
                 "schema": {
                   "anyOf": [
                     {
                       "$ref": "#/components/schemas/HTTPValidationError"
+                    },
+                    {
+                      "$ref": "#/components/schemas/SubmissionFieldRefusalResponse"
                     },
                     {
                       "$ref": "#/components/schemas/ErrorResponse"
@@ -4443,21 +4446,37 @@
             }
           },
           "502": {
-            "description": "The terminology server's response could not be used.",
+            "description": "The terminology server's response could not be used. `field` is `snomed_code` when it was checking the `snomed_code`.",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/SubmissionFieldRefusalResponse"
+                    },
+                    {
+                      "$ref": "#/components/schemas/ErrorResponse"
+                    }
+                  ],
+                  "title": "Response 502 Create Submission Api V1 Submissions Post"
                 }
               }
             }
           },
           "503": {
-            "description": "The terminology server could not be reached, or a rate limit persisted through retries, or the platform has no outbound internet access to check the `reference_url`. Nothing was saved, and the same request can be sent again. May carry a `Retry-After` header.",
+            "description": "The terminology server could not be reached, or a rate limit persisted through retries, or the platform has no outbound internet access to check the `reference_url`. `field` is `snomed_code` for the first two and `reference_url` for the last. Nothing was saved, and the same request can be sent again. May carry a `Retry-After` header.",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/SubmissionFieldRefusalResponse"
+                    },
+                    {
+                      "$ref": "#/components/schemas/ErrorResponse"
+                    }
+                  ],
+                  "title": "Response 503 Create Submission Api V1 Submissions Post"
                 }
               }
             }
@@ -4541,11 +4560,19 @@
             }
           },
           "422": {
-            "description": "The request is not acceptable. `detail` says why for an amendment with nothing left to propose (no synonym and no code, or only synonyms and a code the entry already has), for a synonym that cannot be cleaned, for a SNOMED CT code that is malformed, unknown to the AU edition, inactive, has no reported status or has no fully specified name, for `notes` or `organisation` that carry an invisible character, and for a `reference_url` that is not a usable web address, points at an internal address, answers with a failing status, redirects too often, times out or cannot be found. A malformed `entry_business_key`, an unrecognised field, or a part of the request over its size bound fails validation before the route runs.",
+            "description": "The request is not acceptable. `detail` says why for an amendment with nothing left to propose (no synonym and no code, or only synonyms and a code the entry already has), for a synonym that cannot be cleaned, for a SNOMED CT code that is malformed, unknown to the AU edition, inactive, has no reported status or has no fully specified name, for `notes` or `organisation` that carry an invisible character, and for a `reference_url` that is not a usable web address, points at an internal address, answers with a failing status, redirects too often, times out or cannot be found. A refusal of one field carries `field`: `synonyms`, `snomed_code`, `reference_url`, `notes` or `organisation`. A malformed `entry_business_key`, an unrecognised field, or a part of the request over its size bound fails validation before the route runs.",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/SubmissionFieldRefusalResponse"
+                    },
+                    {
+                      "$ref": "#/components/schemas/ErrorResponse"
+                    }
+                  ],
+                  "title": "Response 422 Create Amendment Api V1 Submissions Amendments Post"
                 }
               }
             }
@@ -4588,21 +4615,37 @@
             }
           },
           "502": {
-            "description": "The terminology server's response could not be used.",
+            "description": "The terminology server's response could not be used. `field` is `snomed_code` when it was checking the `snomed_code`.",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/SubmissionFieldRefusalResponse"
+                    },
+                    {
+                      "$ref": "#/components/schemas/ErrorResponse"
+                    }
+                  ],
+                  "title": "Response 502 Create Amendment Api V1 Submissions Amendments Post"
                 }
               }
             }
           },
           "503": {
-            "description": "The terminology server could not be reached, or a rate limit persisted through retries, or the platform has no outbound internet access to check the `reference_url`. Nothing was saved, and the same request can be sent again. May carry a `Retry-After` header.",
+            "description": "The terminology server could not be reached, or a rate limit persisted through retries, or the platform has no outbound internet access to check the `reference_url`. `field` is `snomed_code` for the first two and `reference_url` for the last. Nothing was saved, and the same request can be sent again. May carry a `Retry-After` header.",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/SubmissionFieldRefusalResponse"
+                    },
+                    {
+                      "$ref": "#/components/schemas/ErrorResponse"
+                    }
+                  ],
+                  "title": "Response 503 Create Amendment Api V1 Submissions Amendments Post"
                 }
               }
             }
@@ -4666,7 +4709,7 @@
             }
           },
           "422": {
-            "description": "The request is not acceptable: a term that cannot be cleaned, a SNOMED CT code that is malformed or fails its check digit, a missing `preferred_term`, an unrecognised field, or a part of the request over its size bound.",
+            "description": "The request is not acceptable: a term that cannot be cleaned, a SNOMED CT code that is malformed or fails its check digit, a missing `preferred_term`, an unrecognised field, or a part of the request over its size bound. A refusal of a term or the code carries `field`, as on the create route.",
             "content": {
               "application/json": {
                 "schema": {
@@ -8701,6 +8744,33 @@
         ],
         "title": "SubmissionDuplicatesResponse",
         "description": "FR-25's 409 body: the matches the submitter must confirm before the submission is saved."
+      },
+      "SubmissionFieldRefusalResponse": {
+        "properties": {
+          "detail": {
+            "type": "string",
+            "title": "Detail"
+          },
+          "field": {
+            "type": "string",
+            "enum": [
+              "preferred_term",
+              "synonyms",
+              "snomed_code",
+              "reference_url",
+              "notes",
+              "organisation"
+            ],
+            "title": "Field"
+          }
+        },
+        "type": "object",
+        "required": [
+          "detail",
+          "field"
+        ],
+        "title": "SubmissionFieldRefusalResponse",
+        "description": "A refusal of one field of a submission, with the field named so a form can mark it without\nreading `detail`. `field` is one of the request's own field names."
       },
       "SubmissionPropertyValueRequest": {
         "properties": {

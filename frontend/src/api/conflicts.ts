@@ -101,6 +101,113 @@ export function asPropertyValidationError(error: unknown): PropertyValidationBod
   return Array.isArray(body.issues) ? (body as unknown as PropertyValidationBody) : null;
 }
 
+export type DuplicatesBody = components["schemas"]["SubmissionDuplicatesResponse"];
+export type DuplicateMatch = components["schemas"]["DuplicateMatchItem"];
+export type QuotaBody = components["schemas"]["SubmissionQuotaResponse"];
+export type SubmissionFieldRefusal =
+  components["schemas"]["SubmissionFieldRefusalResponse"];
+export type SubmissionField = SubmissionFieldRefusal["field"];
+
+/**
+ * A `Record`, so a field the server starts to name is a type error here until
+ * this list knows it, not a refusal the form silently drops.
+ */
+const SUBMISSION_FIELDS: Record<SubmissionField, true> = {
+  preferred_term: true,
+  synonyms: true,
+  snomed_code: true,
+  reference_url: true,
+  notes: true,
+  organisation: true,
+};
+
+const QUOTA_LIMITS: Record<QuotaBody["limit"], true> = {
+  hourly: true,
+  lifetime: true,
+  concurrent: true,
+};
+
+function bodyOf(
+  error: unknown,
+  statuses: readonly number[],
+): Record<string, unknown> | null {
+  if (!(error instanceof ApiError) || !statuses.includes(error.status)) {
+    return null;
+  }
+  if (typeof error.body !== "object" || error.body === null) {
+    return null;
+  }
+  return error.body as Record<string, unknown>;
+}
+
+/**
+ * A 422, 502 or 503 from a submission route that names the request field it
+ * concerns, or `null` if this refusal is anything else.
+ *
+ * Keyed on `field`, never on the wording of `detail`: the sentence is for
+ * people and the server may reword it. A status alone is not enough, because
+ * other routes send 422, 502 and 503 with no field.
+ */
+export function asFieldRefusal(error: unknown): SubmissionFieldRefusal | null {
+  const body = bodyOf(error, [422, 502, 503]);
+  if (
+    body === null ||
+    typeof body.detail !== "string" ||
+    typeof body.field !== "string" ||
+    !Object.hasOwn(SUBMISSION_FIELDS, body.field)
+  ) {
+    return null;
+  }
+  return body as unknown as SubmissionFieldRefusal;
+}
+
+/**
+ * The FR-25 409 that lists the matches a submitter must confirm, or `null` if
+ * this refusal is anything else. Keyed on `matches` being an array: `detail`
+ * is on every 409.
+ */
+export function asDuplicateMatches(error: unknown): DuplicatesBody | null {
+  const body = bodyOf(error, [409]);
+  if (body === null || !Array.isArray(body.matches)) {
+    return null;
+  }
+  return body as unknown as DuplicatesBody;
+}
+
+/**
+ * The FR-43 429 for a used-up submission quota, or `null` if this refusal is
+ * anything else, such as the request-budget 429, which has no `limit`.
+ */
+export function asQuotaRefusal(error: unknown): QuotaBody | null {
+  const body = bodyOf(error, [429]);
+  if (
+    body === null ||
+    typeof body.limit !== "string" ||
+    !Object.hasOwn(QUOTA_LIMITS, body.limit) ||
+    typeof body.maximum !== "number"
+  ) {
+    return null;
+  }
+  return body as unknown as QuotaBody;
+}
+
+/**
+ * The whole seconds a refusal's `Retry-After` header asks the caller to wait,
+ * or `null` if there is none or it is not a positive whole number. The server
+ * sends none for a lifetime quota, because waiting does not lift it.
+ */
+export function retryAfterSeconds(error: unknown): number | null {
+  if (!(error instanceof ApiError)) {
+    return null;
+  }
+  const raw = error.headers.get("Retry-After");
+  if (raw === null || !/^\d+$/.test(raw.trim())) {
+    return null;
+  }
+  const seconds = Number(raw.trim());
+  return seconds >= 1 ? seconds : null;
+}
+
 /** The `detail` sentence any refusal carries, or `null` if it has none. */
 export function refusalDetail(error: unknown): string | null {
   if (!(error instanceof ApiError)) {

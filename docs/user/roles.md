@@ -1,8 +1,9 @@
 # Roles
 
 What the Administrator and Reviewer roles can each do on the screens this platform has
-shipped so far. Every other authenticated role (Provisional, Member) has no screen of its
-own yet — see the PRD's permission matrix (§4.7) for what they will eventually reach.
+shipped so far. The other authenticated roles (Provisional, Member) have one screen of their
+own, [Submitting a new test](submitting-a-new-test.md) — see the PRD's permission matrix
+(§4.7) for what they will eventually reach.
 Anonymous and Observer use is self-explanatory from the public catalogue itself: browsing,
 searching and viewing what has already been published needs no account and no role
 beyond it.

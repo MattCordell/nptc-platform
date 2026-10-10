@@ -46,6 +46,7 @@ from nptc_shared.terminology import (
     LookupResult,
     Operation,
     StubConcept,
+    TerminologyProtocolError,
     TerminologyStatusError,
     TerminologyTimeoutError,
 )
@@ -474,6 +475,7 @@ def test_an_unknown_code_is_refused_with_a_reason(api: ApiTestApp) -> None:
 
     assert response.status_code == 422, response.text
     assert "not found" in response.json()["detail"]
+    assert response.json()["field"] == "snomed_code"
     assert _CODE not in response.text
     assert _submission_count(api, user) == 0
     assert _audit_event_count(api) == before
@@ -489,6 +491,7 @@ def test_an_inactive_code_is_refused_with_a_reason(api: ApiTestApp) -> None:
 
     assert response.status_code == 422, response.text
     assert "inactive" in response.json()["detail"]
+    assert response.json()["field"] == "snomed_code"
     assert _submission_count(api, user) == 0
 
 
@@ -514,6 +517,7 @@ def test_a_code_whose_active_status_is_not_reported_is_refused(api: ApiTestApp) 
 
     assert response.status_code == 422, response.text
     assert "did not say whether" in response.json()["detail"]
+    assert response.json()["field"] == "snomed_code"
     assert _submission_count(api, user) == 0
 
 
@@ -536,7 +540,41 @@ def test_a_code_with_no_served_fsn_is_refused(api: ApiTestApp) -> None:
 
     assert response.status_code == 422, response.text
     assert "fully specified name" in response.json()["detail"]
+    assert response.json()["field"] == "snomed_code"
     assert _submission_count(api, user) == 0
+
+
+@pytest.mark.req("FR-06")
+@pytest.mark.req("FR-26")
+@pytest.mark.integration
+@pytest.mark.parametrize("code", ["not-a-code", "391483009"], ids=["malformed", "bad_check_digit"])
+def test_a_malformed_code_names_the_code_field(api: ApiTestApp, code: str) -> None:
+    token, _ = _token(api, Role.PROVISIONAL)
+
+    created = _post(api, token, snomed_code=code)
+    checked = _check(api, token, snomed_code=code)
+
+    assert created.status_code == checked.status_code == 422
+    assert created.json()["field"] == checked.json()["field"] == "snomed_code"
+    assert code not in created.text + checked.text
+
+
+@pytest.mark.req("FR-54")
+@pytest.mark.req("FR-26")
+@pytest.mark.integration
+def test_an_unusable_terminology_answer_is_502_and_names_the_code_field(
+    api: ApiTestApp,
+) -> None:
+    api.terminology.seed_error(Operation.LOOKUP, TerminologyProtocolError("not a Parameters"))
+    token, user = _token(api, Role.PROVISIONAL)
+    before = _audit_event_count(api)
+
+    response = _post(api, token, snomed_code=_CODE)
+
+    assert response.status_code == 502, response.text
+    assert response.json()["field"] == "snomed_code"
+    assert _submission_count(api, user) == 0
+    assert _audit_event_count(api) == before
 
 
 @pytest.mark.req("FR-06")
@@ -568,6 +606,7 @@ def test_a_terminology_outage_is_503_and_nothing_is_stored(api: ApiTestApp) -> N
 
     assert response.status_code == 503, response.text
     assert "terminology server" in response.json()["detail"]
+    assert response.json()["field"] == "snomed_code"
     assert _submission_count(api, user) == 0
     assert _audit_event_count(api) == before
 
@@ -654,6 +693,7 @@ def test_a_link_that_fails_its_check_is_422_with_a_reason_and_nothing_is_stored(
 
     assert response.status_code == 422, response.text
     assert expected in response.json()["detail"]
+    assert response.json()["field"] == "reference_url"
     assert _REFERENCE_URL not in response.text
     assert _submission_count(api, user) == 0
     assert _audit_event_count(api) == before
@@ -673,6 +713,7 @@ def test_no_outbound_access_is_a_503_that_differs_from_a_broken_link(api: ApiTes
     assert broken.status_code == 422, broken.text
     assert unavailable.status_code == 503, unavailable.text
     assert unavailable.json()["detail"] != broken.json()["detail"]
+    assert unavailable.json()["field"] == broken.json()["field"] == "reference_url"
     assert _submission_count(api, user) == 0
     assert _audit_event_count(api) == before
 
@@ -961,10 +1002,34 @@ def test_free_text_with_an_invisible_character_is_422_with_a_fixed_reason(
     detail = response.json()["detail"]
     other = "organisation" if field == "notes" else "notes"
     assert "invisible character" in detail
+    assert response.json()["field"] == field
     assert field in detail
     assert other not in detail
     assert _ZERO_WIDTH_SPACE not in response.text
     assert "200B" not in response.text.upper()
+    assert _submission_count(api, user) == 0
+
+
+@pytest.mark.req("FR-63")
+@pytest.mark.integration
+@pytest.mark.parametrize(
+    ("body", "field"),
+    [
+        ({"preferred_term": "Serum" + chr(0x200B) + "sodium"}, "preferred_term"),
+        ({"synonyms": ["Na (serum)", "Serum" + chr(0x200B) + "sodium"]}, "synonyms"),
+    ],
+    ids=["preferred_term", "synonyms"],
+)
+def test_a_term_that_cannot_be_cleaned_names_the_field_it_came_from(
+    api: ApiTestApp, body: dict[str, object], field: str
+) -> None:
+    token, user = _token(api, Role.PROVISIONAL)
+
+    response = _post(api, token, **body)
+
+    assert response.status_code == 422, response.text
+    assert response.json()["field"] == field
+    assert chr(0x200B) not in response.text
     assert _submission_count(api, user) == 0
 
 
@@ -1179,6 +1244,21 @@ def test_a_term_that_cannot_be_cleaned_is_422_on_the_check(api: ApiTestApp, term
     response = _check(api, token, preferred_term=term)
 
     assert response.status_code == 422, response.text
+
+
+@pytest.mark.req("FR-63")
+@pytest.mark.integration
+def test_the_check_names_the_field_of_a_term_that_cannot_be_cleaned(api: ApiTestApp) -> None:
+    token, _ = _token(api, Role.PROVISIONAL)
+
+    in_name = _check(api, token, preferred_term="Serum" + chr(0x200B) + "sodium")
+    in_synonym = _check(
+        api, token, preferred_term="Sodium", synonyms=["Na" + chr(0x200B) + "(serum)"]
+    )
+
+    assert in_name.status_code == in_synonym.status_code == 422
+    assert in_name.json()["field"] == "preferred_term"
+    assert in_synonym.json()["field"] == "synonyms"
 
 
 @pytest.mark.req("FR-25")

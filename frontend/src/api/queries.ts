@@ -1324,3 +1324,55 @@ export function useExportAuditEvents() {
       ),
   });
 }
+
+type CreateSubmissionBody = components["schemas"]["CreateSubmissionRequest"];
+type DuplicateCheckBody = components["schemas"]["DuplicateCheckRequest"];
+
+/**
+ * The property definitions a new-test submission offers (FR-23, FR-24): every
+ * active property whose scope is `submission` or `both`.
+ *
+ * Its own query key, not `usePropertyDefinitions`' list, so an admin editing a
+ * definition and a submitter filling the form never share a cache entry. The
+ * server decides which properties are in scope and which are required for
+ * submission, so no property key is named here (FR-09).
+ */
+export function useSubmissionPropertyDefinitions() {
+  const client = useApiClient();
+  return useQuery({
+    queryKey: ["api", "/api/v1/registry/properties", { scope: "submission" }],
+    queryFn: async ({ signal }) =>
+      unwrap(
+        await client.GET("/api/v1/registry/properties", {
+          params: { query: { scope: "submission" } },
+          signal,
+        }),
+      ),
+  });
+}
+
+/**
+ * Ask which catalogue entries and open submissions a new test may duplicate
+ * (FR-25), before it is sent. A mutation, not a query: it is an action the
+ * submitter takes, and the answer must never be reused for different text.
+ */
+export function useDuplicateCheck() {
+  const client = useApiClient();
+  return useMutation({
+    mutationFn: async (body: DuplicateCheckBody) =>
+      unwrap(await client.POST("/api/v1/submissions/duplicate-check", { body })),
+  });
+}
+
+/**
+ * Submit a new test (FR-23). The caller passes `confirm_not_duplicate: true`
+ * only after the submitter has reviewed the matches. A refusal is thrown as an
+ * `ApiError` for `./conflicts.ts` to read, and nothing is cached by hand.
+ */
+export function useCreateSubmission() {
+  const client = useApiClient();
+  return useMutation({
+    mutationFn: async (body: CreateSubmissionBody) =>
+      unwrap(await client.POST("/api/v1/submissions", { body })),
+  });
+}

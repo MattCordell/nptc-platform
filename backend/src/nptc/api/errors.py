@@ -123,6 +123,8 @@ from nptc.submissions.errors import (
     FreeTextField,
     FreeTextRefusedError,
     SubmissionCodeRefusedError,
+    SubmissionCodeUnavailableError,
+    SubmissionCodeUpstreamError,
     SubmissionDuplicatesFoundError,
 )
 from nptc.submissions.reference_check import (
@@ -130,6 +132,7 @@ from nptc.submissions.reference_check import (
     ReferenceCheckUnavailableError,
     ReferenceFailure,
 )
+from nptc.submissions.terms import SubmissionCodeMalformedError, SubmissionTermRefusedError
 from nptc.terminology.errors import (
     ConceptNotFoundError,
     TerminologyUnavailableError,
@@ -329,6 +332,33 @@ class PropertyValidationResponse(BaseModel):
 
     detail: str
     issues: list[PropertyIssueItem]
+
+
+SubmissionField = Literal[
+    "preferred_term", "synonyms", "snomed_code", "reference_url", "notes", "organisation"
+]
+
+
+class SubmissionFieldRefusalResponse(BaseModel):
+    """A refusal of one field of a submission, with the field named so a form can mark it without
+    reading `detail`. `field` is one of the request's own field names."""
+
+    model_config = ConfigDict(frozen=True)
+
+    detail: str
+    field: SubmissionField
+
+
+def _field_refusal(
+    status_code: int,
+    detail: str,
+    field: SubmissionField,
+    headers: Mapping[str, str] | None = None,
+) -> JSONResponse:
+    body = SubmissionFieldRefusalResponse(detail=detail, field=field)
+    return JSONResponse(
+        status_code=status_code, content=body.model_dump(mode="json"), headers=headers
+    )
 
 
 #: ADR-0043: the SPA routes on `code` and never parses `detail`. Each is a one-member `Literal`
@@ -689,6 +719,16 @@ class _Refusal:
     headers: Mapping[str, str] | None = None
 
 
+def _retry_after_header(exc: TerminologyUnavailableError) -> dict[str, str] | None:
+    # `is not None`, not truthiness: a `retry_after` of `0.0` is a real value
+    # ("retry immediately"). `ceil` rather than truncation, so `0.4` never
+    # becomes `Retry-After: 0`; `max(1, ...)` is the floor for a delay worth
+    # sending and keeps a negative value from producing an invalid header.
+    if exc.retry_after is None:
+        return None
+    return {"Retry-After": str(max(1, math.ceil(exc.retry_after)))}
+
+
 def _handler_for(refusal: _Refusal) -> Callable[[Request, Exception], Awaitable[JSONResponse]]:
     async def handle(_request: Request, exc: Exception) -> JSONResponse:
         if refusal.log_message is not None:
@@ -921,8 +961,6 @@ _REFUSALS: Final[dict[type[Exception], _Refusal]] = {
         "terminology lookup refused, unusable response: %s",
         log_level=logging.ERROR,
     ),
-    # Not logged here: `HttpReferenceChecker` already logged the one warning that says why.
-    ReferenceCheckUnavailableError: _Refusal(_DETAIL_REFERENCE_CHECK_UNAVAILABLE, None),
 }
 
 
@@ -1102,10 +1140,32 @@ def register_exception_handlers(app: FastAPI, auth_settings: AuthSettings) -> No
         # INFO: the server answered and the answer rules the code out, an ordinary refusal. The
         # reason is a fixed enum, so it is safe to log; the code itself stays out of the log.
         _logger.info("submission code refused: %s", exc.reason.value)
-        return JSONResponse(
-            status_code=exc.http_status,
-            content={"detail": _DETAIL_SUBMISSION_CODE_REFUSED[exc.reason]},
+        return _field_refusal(
+            exc.http_status, _DETAIL_SUBMISSION_CODE_REFUSED[exc.reason], "snomed_code"
         )
+
+    @app.exception_handler(SubmissionCodeMalformedError)
+    async def _handle_submission_code_malformed(
+        _request: Request, exc: SubmissionCodeMalformedError
+    ) -> JSONResponse:
+        # The class name alone: the exception message quotes the caller's code.
+        _logger.info("SCTID refused: %s", type(exc).__name__)
+        return _field_refusal(422, _DETAIL_INVALID_SCTID, "snomed_code")
+
+    @app.exception_handler(SubmissionCodeUpstreamError)
+    async def _handle_submission_code_upstream(
+        _request: Request, exc: SubmissionCodeUpstreamError
+    ) -> JSONResponse:
+        _logger.error("terminology lookup refused, unusable response: %s", exc)
+        return _field_refusal(exc.http_status, _DETAIL_TERMINOLOGY_UPSTREAM, "snomed_code")
+
+    @app.exception_handler(SubmissionTermRefusedError)
+    async def _handle_submission_term_refused(
+        _request: Request, exc: SubmissionTermRefusedError
+    ) -> JSONResponse:
+        # The class name and field alone: the exception message quotes the caller's term.
+        _logger.info("submission term refused: %s", exc.field.value)
+        return _field_refusal(exc.http_status, _DETAIL_TERM_CLEANING, exc.field.value)
 
     @app.exception_handler(AmendmentRefusedError)
     async def _handle_amendment_refused(
@@ -1135,9 +1195,8 @@ def register_exception_handlers(app: FastAPI, auth_settings: AuthSettings) -> No
     ) -> JSONResponse:
         # Logged as the field alone: the exception message carries codepoints taken from caller text.
         _logger.info("free text refused: %s", exc.field.value)
-        return JSONResponse(
-            status_code=exc.http_status,
-            content={"detail": _DETAIL_FREE_TEXT_REFUSED[exc.field]},
+        return _field_refusal(
+            exc.http_status, _DETAIL_FREE_TEXT_REFUSED[exc.field], exc.field.value
         )
 
     @app.exception_handler(ReferenceCheckFailedError)
@@ -1147,7 +1206,14 @@ def register_exception_handlers(app: FastAPI, auth_settings: AuthSettings) -> No
         # The reason alone: the exception carries no URL, and the log must not either.
         _logger.info("reference link refused: %s", exc)
         detail = _REFERENCE_FAILURE_DETAILS[exc.reason].format(status=exc.status)
-        return JSONResponse(status_code=exc.http_status, content={"detail": detail})
+        return _field_refusal(exc.http_status, detail, "reference_url")
+
+    @app.exception_handler(ReferenceCheckUnavailableError)
+    async def _handle_reference_check_unavailable(
+        _request: Request, exc: ReferenceCheckUnavailableError
+    ) -> JSONResponse:
+        # Not logged here: `HttpReferenceChecker` already logged the one warning that says why.
+        return _field_refusal(exc.http_status, _DETAIL_REFERENCE_CHECK_UNAVAILABLE, "reference_url")
 
     @app.exception_handler(TerminologyUnavailableError)
     async def _handle_terminology_unavailable(
@@ -1157,17 +1223,20 @@ def register_exception_handlers(app: FastAPI, auth_settings: AuthSettings) -> No
         # unreachable, which is worth noticing. FR-54: nothing here degrades a
         # result; it tells the caller the live check could not run this time.
         _logger.warning("terminology lookup refused, server unavailable: %s", exc)
-        # `is not None`, not truthiness: a `retry_after` of `0.0` is a real value
-        # ("retry immediately"). `ceil` rather than truncation, so `0.4` never
-        # becomes `Retry-After: 0`; `max(1, ...)` is the floor for a delay worth
-        # sending and keeps a negative value from producing an invalid header.
-        headers = (
-            {"Retry-After": str(max(1, math.ceil(exc.retry_after)))}
-            if exc.retry_after is not None
-            else None
-        )
         return JSONResponse(
             status_code=TerminologyUnavailableError.http_status,
             content={"detail": _DETAIL_TERMINOLOGY_UNAVAILABLE},
-            headers=headers,
+            headers=_retry_after_header(exc),
+        )
+
+    @app.exception_handler(SubmissionCodeUnavailableError)
+    async def _handle_submission_code_unavailable(
+        _request: Request, exc: SubmissionCodeUnavailableError
+    ) -> JSONResponse:
+        _logger.warning("submission code check refused, terminology server unavailable: %s", exc)
+        return _field_refusal(
+            exc.http_status,
+            _DETAIL_TERMINOLOGY_UNAVAILABLE,
+            "snomed_code",
+            _retry_after_header(exc),
         )

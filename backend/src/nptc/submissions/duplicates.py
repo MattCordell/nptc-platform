@@ -36,10 +36,14 @@ from sqlalchemy.orm import Session
 
 from nptc.catalogue.queries import PUBLIC_STATUSES
 from nptc.catalogue.search import apply_similarity_threshold
-from nptc.catalogue.term_hygiene import clean_term
 from nptc.db.models.submission import CLOSED_SUBMISSION_STATES
-from nptc.submissions.terms import distinct_synonyms
-from nptc_shared.sctid import SCTID
+from nptc.submissions.terms import (
+    SubmissionCodeMalformedError,
+    TermField,
+    clean_submission_term,
+    distinct_synonyms,
+)
+from nptc_shared.sctid import SCTID, InvalidSCTIDError
 
 __all__ = [
     "MAX_MATCHES_PER_SOURCE",
@@ -242,10 +246,17 @@ def check_duplicates(
     `nptc.catalogue.term_hygiene.TermCleaningError` for a term that cannot be cleaned and
     `nptc_shared.sctid.InvalidSCTIDError` for a malformed code. The terminology server is not
     asked."""
-    cleaned = clean_term(preferred_term)
+    cleaned = clean_submission_term(preferred_term, TermField.PREFERRED_TERM)
     return find_duplicates(
         session,
         preferred_term=cleaned,
         synonyms=distinct_synonyms(cleaned, synonyms),
-        snomed_code=None if snomed_code is None else SCTID(snomed_code).value,
+        snomed_code=None if snomed_code is None else _checked_code(snomed_code),
     )
+
+
+def _checked_code(code: str) -> str:
+    try:
+        return SCTID(code).value
+    except InvalidSCTIDError as malformed:
+        raise SubmissionCodeMalformedError(str(malformed)) from None

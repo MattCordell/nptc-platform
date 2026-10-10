@@ -1,5 +1,6 @@
 import { refusalDetail } from "../api/conflicts.ts";
 import { useConceptLookup } from "../api/queries.ts";
+import { ApiError } from "../api/unwrap.ts";
 import { chosenConcept } from "./code-binding.ts";
 import type { ChosenConcept } from "./code-binding.ts";
 
@@ -13,7 +14,7 @@ import type { ChosenConcept } from "./code-binding.ts";
 export type CodeSelection =
   | { status: "none" }
   | { status: "checking"; code: string }
-  | { status: "unresolved"; code: string; message: string }
+  | { status: "unresolved"; code: string; message: string; unavailable: boolean }
   | { status: "ready"; concept: ChosenConcept };
 
 export function useCodeSelection(code: string | null): CodeSelection {
@@ -30,6 +31,8 @@ export function useCodeSelection(code: string | null): CodeSelection {
       code,
       message:
         refusalDetail(lookup.error) ?? "This code could not be checked. Try again.",
+      // FR-54: the server could not be reached, which is not a verdict on the code.
+      unavailable: lookup.error instanceof ApiError && lookup.error.status === 503,
     };
   }
   const concept = chosenConcept(lookup.data);
@@ -38,6 +41,7 @@ export function useCodeSelection(code: string | null): CodeSelection {
       status: "unresolved",
       code,
       message: `The terminology server did not return a name for ${code}. It cannot be bound until it does.`,
+      unavailable: false,
     };
   }
   return { status: "ready", concept };

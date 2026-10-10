@@ -54,7 +54,6 @@ from nptc.catalogue.property_values import (
     PropertyWriteIssue,
     check_property_values,
 )
-from nptc.catalogue.term_hygiene import clean_term
 from nptc.db.models.property_definition import PropertyDefinition, PropertyScope, PropertyStatus
 from nptc.db.models.submission import Submission, SubmissionKind, SubmissionState
 from nptc.registry.definitions import DeprecatedPropertyWriteError
@@ -66,7 +65,7 @@ from nptc.submissions.errors import (
 )
 from nptc.submissions.reference_check import ReferenceChecker
 from nptc.submissions.shared import clean_free_text, resolve_code
-from nptc.submissions.terms import distinct_synonyms
+from nptc.submissions.terms import TermField, clean_submission_term, distinct_synonyms
 from nptc_shared.terminology import TerminologyClient
 
 __all__ = ["NewTestSubmissionInput", "create_new_test_submission"]
@@ -119,7 +118,7 @@ def create_new_test_submission(
     if ctx.actor_user_id is None:
         raise ValueError("a submission needs a human submitter, but the audit context has none")
 
-    preferred_term = clean_term(content.preferred_term)
+    preferred_term = clean_submission_term(content.preferred_term, TermField.PREFERRED_TERM)
     synonyms = distinct_synonyms(preferred_term, content.synonyms)
     notes = clean_free_text(content.notes, field=FreeTextField.NOTES, multiline=True)
     organisation = (

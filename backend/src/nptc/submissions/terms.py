@@ -8,11 +8,50 @@ the one way.
 from __future__ import annotations
 
 from collections.abc import Sequence
+from enum import StrEnum
 
-from nptc.catalogue.term_hygiene import clean_term
+from nptc.catalogue.term_hygiene import TermCleaningError, clean_term
+from nptc_shared.sctid import InvalidSCTIDError
 from nptc_shared.similarity import collision_key
 
-__all__ = ["distinct_synonyms"]
+__all__ = [
+    "SubmissionCodeMalformedError",
+    "SubmissionTermRefusedError",
+    "TermField",
+    "clean_submission_term",
+    "distinct_synonyms",
+]
+
+
+class TermField(StrEnum):
+    """The term fields of a submission. A fixed set, so the API can name which one was refused."""
+
+    PREFERRED_TERM = "preferred_term"
+    SYNONYMS = "synonyms"
+
+
+class SubmissionTermRefusedError(TermCleaningError):
+    """A term of a submission cannot be cleaned (FR-63). Carries the field it came from, so the
+    response can name it. The message is the cleaning error's, which quotes no raw character."""
+
+    def __init__(self, field: TermField, cause: TermCleaningError) -> None:
+        self.field = field
+        super().__init__(str(cause))
+
+
+class SubmissionCodeMalformedError(InvalidSCTIDError):
+    """The SNOMED CT code on a submission is not a valid identifier. A subclass of
+    `InvalidSCTIDError`, which other routes raise with no field to name. Here beside the term
+    error because both the duplicate check and the create route need it, and this module imports
+    nothing else from the package."""
+
+
+def clean_submission_term(term: str, field: TermField) -> str:
+    """`clean_term`, refusing with the field the term came from."""
+    try:
+        return clean_term(term)
+    except TermCleaningError as refused:
+        raise SubmissionTermRefusedError(field, refused) from None
 
 
 def distinct_synonyms(preferred_term: str, terms: Sequence[str]) -> list[str]:
@@ -22,7 +61,7 @@ def distinct_synonyms(preferred_term: str, terms: Sequence[str]) -> list[str]:
     seen = {collision_key(preferred_term)}
     distinct: list[str] = []
     for term in terms:
-        cleaned = clean_term(term)
+        cleaned = clean_submission_term(term, TermField.SYNONYMS)
         key = collision_key(cleaned)
         if key not in seen:
             seen.add(key)

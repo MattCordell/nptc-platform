@@ -252,7 +252,8 @@ def test_every_reference_failure_is_a_422_with_its_own_sentence(reason: Referenc
     response = _client_raising(ReferenceCheckFailedError(reason, status=status)).get("/boom")
 
     assert response.status_code == 422
-    assert set(response.json()) == {"detail"}
+    assert set(response.json()) == {"detail", "field"}
+    assert response.json()["field"] == "reference_url"
     assert "{" not in response.json()["detail"]
 
 

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { MAX_TERMS_PER_BATCH } from "./limits.ts";
+import { MAX_TERMS_PER_BATCH, SUBMISSION_LIMITS } from "./limits.ts";
 import openapi from "../../../docs/api/openapi.json";
 
 /**
@@ -25,5 +25,28 @@ describe("MAX_TERMS_PER_BATCH", () => {
     // Asserted, not optional-chained into a pass: a document that stops
     // declaring the cap is itself the drift this test exists to catch.
     expect(terms.maxItems).toBe(MAX_TERMS_PER_BATCH);
+  });
+});
+
+describe("SUBMISSION_LIMITS", () => {
+  const { CreateSubmissionRequest: create, SubmissionPropertyValueRequest: value } =
+    openapi.components.schemas;
+  const properties = create.properties;
+
+  it("matches every bound the create body's OpenAPI schema declares", () => {
+    expect(properties.preferred_term.maxLength).toBe(SUBMISSION_LIMITS.termLength);
+    expect(properties.synonyms.items.maxLength).toBe(SUBMISSION_LIMITS.termLength);
+    expect(properties.synonyms.maxItems).toBe(SUBMISSION_LIMITS.synonyms);
+    expect(properties.reference_url.maxLength).toBe(SUBMISSION_LIMITS.referenceUrlLength);
+    expect(properties.notes.anyOf[0].maxLength).toBe(SUBMISSION_LIMITS.notesLength);
+    expect(properties.organisation.anyOf[0].maxLength).toBe(
+      SUBMISSION_LIMITS.organisationLength,
+    );
+    expect(properties.property_values.additionalProperties.maxItems).toBe(
+      SUBMISSION_LIMITS.valuesPerProperty,
+    );
+    expect(value.properties.justification.anyOf[0].maxLength).toBe(
+      SUBMISSION_LIMITS.justificationLength,
+    );
   });
 });
