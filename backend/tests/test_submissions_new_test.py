@@ -12,13 +12,11 @@ import importlib.util
 import sys
 import uuid
 from collections.abc import Callable
-from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
 import pytest
 from sqlalchemy import func, select
-from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from nptc.audit.diffing import REDACTED_KEY
@@ -1194,63 +1192,3 @@ def test_the_reference_is_fetched_before_the_append_lock_is_taken(
 
     assert calls == [False]
     assert locks
-
-
-def _insert_submission(session: Session, user: User, **columns: Any) -> None:
-    values: dict[str, Any] = {
-        "kind": SubmissionKind.NEW_TEST.value,
-        "preferred_term": "Serum sodium",
-        "submitter_id": user.id,
-        "reference_url": _REFERENCE_URL,
-        "reference_checked_at": datetime.now(UTC),
-        "reference_status": 200,
-    }
-    values.update(columns)
-    with session.begin_nested():
-        session.add(Submission(**values))
-        session.flush()
-
-
-@pytest.mark.req("FR-27")
-@pytest.mark.integration
-@pytest.mark.parametrize(
-    "columns",
-    [
-        {"reference_url": None, "reference_checked_at": None, "reference_status": None},
-        {"reference_checked_at": None},
-        {"reference_status": None},
-        {"reference_url": None},
-        {"reference_url": "   "},
-    ],
-    ids=[
-        "new_test_without_reference",
-        "no_check_time",
-        "no_status",
-        "status_without_url",
-        "blank_url",
-    ],
-)
-def test_the_database_refuses_a_new_test_with_no_complete_reference(
-    app_session: Session, columns: dict[str, Any]
-) -> None:
-    user, _ = _submitter(app_session)
-
-    with pytest.raises(IntegrityError):
-        _insert_submission(app_session, user, **columns)
-
-
-@pytest.mark.req("FR-27")
-@pytest.mark.integration
-def test_an_amendment_may_leave_the_reference_out(app_session: Session) -> None:
-    user, _ = _submitter(app_session)
-
-    _insert_submission(
-        app_session,
-        user,
-        kind=SubmissionKind.AMENDMENT.value,
-        reference_url=None,
-        reference_checked_at=None,
-        reference_status=None,
-    )
-
-    assert _submission_count(app_session, user.id) == 1

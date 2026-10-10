@@ -53,9 +53,9 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    op.drop_constraint("ck_submission_new_test_has_reference", "submission", type_="check")
-    op.drop_constraint("ck_submission_reference_check_complete", "submission", type_="check")
-    op.drop_constraint("ck_submission_reference_url_not_blank", "submission", type_="check")
+    op.drop_constraint(op.f("ck_submission_new_test_has_reference"), "submission", type_="check")
+    op.drop_constraint(op.f("ck_submission_reference_check_complete"), "submission", type_="check")
+    op.drop_constraint(op.f("ck_submission_reference_url_not_blank"), "submission", type_="check")
     op.drop_column("submission", "reference_status")
     op.drop_column("submission", "reference_checked_at")
     op.drop_column("submission", "reference_url")
