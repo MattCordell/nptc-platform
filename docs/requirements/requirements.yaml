@@ -723,7 +723,7 @@
   phase: p1
   title: "A privacy policy and a collection notice are presented at registration"
   status: in-progress
-  notes: "Issue #432 puts the collection notice and the links to the privacy policy and the terms on Keycloak's registration page (ADR-0043); backend/tests/test_keycloak_pkce_login.py asserts them against the pinned image. The SPA's acceptance gate (issue #435) repeats the same notice. Issue #546 adds one sentence to both copies: the organisation recorded on a submission stays with it after the account closes. The requirement stays in-progress because the policy text does not exist yet (issue #64, with the retention period pending OI-15) and the notice's own wording awaits the maintainer's review."
+  notes: "Issue #432 puts the collection notice and the links to the privacy policy and the terms on Keycloak's registration page (ADR-0043); backend/tests/test_keycloak_pkce_login.py asserts them against the pinned image. The SPA's acceptance gate (issue #435) repeats the same notice. Issue #546 adds one sentence to both copies: the organisation recorded on a submission stays with it after the account closes, and backend/tests/test_auth_account_closure.py::test_a_submission_keeps_its_organisation_after_the_account_closes proves it: closing the account clears the profile's organisation and leaves the submission's unchanged. The requirement stays in-progress because the policy text does not exist yet (issue #64, with the retention period pending OI-15) and the notice's own wording awaits the maintainer's review."
 - id: "NFR-15"
   priority: MUST
   phase: p1

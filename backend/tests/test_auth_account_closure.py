@@ -107,6 +107,7 @@ def test_close_account_does_not_delete_the_user_row(app_db: Connection) -> None:
 
 
 @pytest.mark.req("NFR-14")
+@pytest.mark.req("NFR-17")
 @pytest.mark.integration
 def test_a_submission_keeps_its_organisation_after_the_account_closes(app_db: Connection) -> None:
     session = Session(bind=app_db)
