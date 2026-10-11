@@ -8,6 +8,7 @@ why.
 from __future__ import annotations
 
 import uuid
+from datetime import UTC, datetime
 
 import pytest
 from sqlalchemy import text
@@ -20,6 +21,7 @@ from nptc.auth.errors_authorisation import LastAdministratorError
 from nptc.auth.grants import grant_role_unchecked, roles_for_user
 from nptc.auth.identity import close_account
 from nptc.auth.permissions import Role
+from nptc.db.models.submission import Submission, SubmissionKind, SubmissionState
 from nptc.db.models.user import User, UserStatus
 from nptc.db.models.user_identity import UserIdentity
 
@@ -102,6 +104,38 @@ def test_close_account_does_not_delete_the_user_row(app_db: Connection) -> None:
         text("SELECT count(*) FROM app_user WHERE id = :id"), {"id": user.id}
     ).scalar_one()
     assert remaining == 1
+
+
+@pytest.mark.req("NFR-14")
+@pytest.mark.req("NFR-17")
+@pytest.mark.integration
+def test_a_submission_keeps_its_organisation_after_the_account_closes(app_db: Connection) -> None:
+    session = Session(bind=app_db)
+    user = _create_active_user(session, "faye")
+    submission = Submission(
+        kind=SubmissionKind.NEW_TEST.value,
+        state=SubmissionState.SUBMITTED.value,
+        preferred_term="Serum sodium",
+        reference_url="https://example.org/evidence",
+        reference_checked_at=datetime.now(UTC),
+        reference_status=200,
+        submitter_id=user.id,
+        organisation="Example Pathology",
+    )
+    session.add(submission)
+    session.flush()
+
+    close_account(session, user.id, AuditContext.system())
+    session.flush()
+    session.expire_all()
+
+    closed = session.get(User, user.id)
+    kept = session.get(Submission, submission.id)
+    assert closed is not None
+    assert closed.status == UserStatus.CLOSED
+    assert closed.organisation is None
+    assert kept is not None
+    assert kept.organisation == "Example Pathology"
 
 
 @pytest.mark.req("NFR-17")
