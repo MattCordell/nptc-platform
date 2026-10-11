@@ -34,6 +34,7 @@ import {
   validatePropertyListSearch,
   validateReleaseCompareSearch,
   validateSignInSearch,
+  validateSubmissionNewSearch,
   type AdminCatalogueSearch,
   type AdminCatalogueSearchInput,
   type AuditSearch,
@@ -50,6 +51,8 @@ import {
   type ReleaseCompareSearchInput,
   type SignInSearch,
   type SignInSearchInput,
+  type SubmissionNewSearch,
+  type SubmissionNewSearchInput,
 } from "./search-params.ts";
 
 /**
@@ -278,8 +281,12 @@ const submissionListRoute = createRoute({
 const submissionNewRoute = createRoute({
   getParentRoute: () => submissionsRoute,
   path: "new",
+  validateSearch: validateSubmissionNewSearch as (
+    search: SubmissionNewSearchInput,
+  ) => SubmissionNewSearch,
   component: SubmissionNewPage,
-  head: titled("Submit a new test"),
+  head: ({ match }) =>
+    titled(match.search.entry === undefined ? "Submit a new test" : "Propose a change")(),
 });
 
 const submissionDetailRoute = createRoute({

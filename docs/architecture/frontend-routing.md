@@ -34,7 +34,7 @@ new screen adds a route here; it does not invent a path anywhere else. Full inve
 | `/exports`, `/about` | FR-62–FR-69, FR-78 |
 | `/terms` (issue #435, a real screen: `pages/terms.tsx`) | NFR-45, NFR-47 |
 | `/sign-in?redirect=`, `/sign-out`, `/register`, `/auth/callback` | issue #41 |
-| `/submissions`, `/submissions/new`, `/submissions/$submissionId` | FR-23–FR-31 |
+| `/submissions`, `/submissions/new` (+ `entry` search param opens amendment mode, issue #548), `/submissions/$submissionId` | FR-23–FR-31, FR-35 |
 | `/interest`, `/account` | FR-32–FR-34 |
 | `/admin`, `/admin/catalogue` (+ `q`, `after`, `filter.<key>` search params, issue #267), `/admin/catalogue{/new,/$businessKey/edit}` | FR-36–FR-39 |
 | `/admin/properties` (+ `deprecated=show` search param), `/admin/properties/$propertyKey`, `/admin/properties/$propertyKey/edit`, `/admin/properties/new` | FR-08–FR-13 |
